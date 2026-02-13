@@ -155,10 +155,15 @@ class StorageManager:
         """
         Background task to check for completed studies
         """
+        logger.info("Starting study completion checker")
         while True:
             now = time.time()
             logger.debug(f"Checking study completions at {now}")
-            logger.debug(f"Current study states: {self.study_states}")
+            logger.debug(f"Tracking {len(self.study_states)} active studies")
+            
+            if not self.study_states:
+                logger.debug("No active studies to check")
+                
             for study_uid, state in list(self.study_states.items()):
                 logger.debug(f"Study {study_uid} state: {state}")
                 if not state.completed and (now - state.last_received) > timeout:

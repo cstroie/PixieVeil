@@ -29,17 +29,17 @@ async def main():
     dashboard = Dashboard(settings, storage_manager)
 
     try:
-        # Start services
+        # Start services - wrap the storage_manager call in a task
         await asyncio.gather(
             dicom_server.start(),
             dashboard.start(),
-            storage_manager.check_study_completions()
+            asyncio.create_task(storage_manager.check_study_completions())
         )
     except asyncio.CancelledError:
         logger.info("Shutting down services...")
         await asyncio.gather(
             dicom_server.stop(),
-            dashboard.stop()
+            dashboard.stop(),
         )
 
 if __name__ == "__main__":
