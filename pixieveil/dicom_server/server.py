@@ -41,9 +41,9 @@ class DicomServer:
         self.ae.add_supported_context(MRImageStorage)
         self.ae.add_supported_context(SecondaryCaptureImageStorage)
 
-        # Register event handlers
-        self.ae.add_request_handler(1, self._handle_echo)  # C-ECHO
-        self.ae.add_request_handler(3, self._handle_c_store)  # C-STORE
+        # Register event handlers using the correct pynetdicom API
+        self.ae._handlers[1] = self._handle_echo  # C-ECHO
+        self.ae._handlers[3] = self._handle_c_store  # C-STORE
 
         # Bind the C-STORE handler to the event
         from pynetdicom.events import EVT_C_STORE
