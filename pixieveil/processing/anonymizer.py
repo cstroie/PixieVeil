@@ -4,6 +4,8 @@ import subprocess
 from pathlib import Path
 from typing import Dict, Any, Optional
 
+import pydicom
+
 from pixieveil.config import Settings
 
 logger = logging.getLogger(__name__)

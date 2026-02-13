@@ -6,6 +6,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 
+import pydicom
+
 from pixieveil.config import Settings
 
 logger = logging.getLogger(__name__)

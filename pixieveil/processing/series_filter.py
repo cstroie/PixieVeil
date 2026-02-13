@@ -2,6 +2,8 @@ import logging
 from pathlib import Path
 from typing import Dict, Any, List
 
+import pydicom
+
 from pixieveil.config import Settings
 
 logger = logging.getLogger(__name__)
