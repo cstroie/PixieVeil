@@ -152,7 +152,9 @@ class StorageManager:
         """
         while True:
             now = time.time()
+            print(now)
             for study_uid, state in list(self.study_states.items()):
+                print(study_uid, state)
                 if not state.completed and (now - state.last_received) > timeout:
                     # Process completed study
                     # Get numeric study ID from mapping
