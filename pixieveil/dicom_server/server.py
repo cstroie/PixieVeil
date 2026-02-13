@@ -4,8 +4,13 @@ from pathlib import Path
 from typing import Dict, Any, Optional
 
 import pynetdicom
-from pydicom.uid import ImplicitVRLittleEndian
-from pydicom.sop_class import VerificationSOPClass, CTImageStorage, MRImageStorage, SecondaryCaptureImageStorage
+from pynetdicom import AE, evt
+from pynetdicom.sop_class import (
+    Verification,
+    CTImageStorage,
+    MRImageStorage,
+    SecondaryCaptureImageStorage
+)
 from pydicom.dataset import Dataset
 
 from pixieveil.config.settings import Settings
@@ -24,10 +29,17 @@ class DicomServer:
         Start the DICOM server.
         """
         logger.info("Starting DICOM server")
-        self.ae = pynetdicom.AE(ae_title=self.settings.dicom_server["ae_title"])
+        self.ae = AE(ae_title=self.settings.dicom_server["ae_title"])
         self.ae.port = self.ae_port
-        self.ae.add_supported_context(ImplicitVRLittleEndian)
-        self.ae.add_scp_handler(VerificationSOPClass, self._handle_echo)
+        
+        # Add supported contexts
+        self.ae.add_supported_context(Verification)
+        self.ae.add_supported_context(CTImageStorage)
+        self.ae.add_supported_context(MRImageStorage)
+        self.ae.add_supported_context(SecondaryCaptureImageStorage)
+        
+        # Add SCP handlers
+        self.ae.add_scp_handler(Verification, self._handle_echo)
         self.ae.add_scp_handler(CTImageStorage, self._handle_c_store)
         self.ae.add_scp_handler(MRImageStorage, self._handle_c_store)
         self.ae.add_scp_handler(SecondaryCaptureImageStorage, self._handle_c_store)
