@@ -130,12 +130,15 @@ class StorageManager:
             
             # Update received image counter and study state
             image_counter.increment()
-            # Only create new StudyState if it doesn't exist
-            if study_uid not in self.study_states:
-                self.study_states[study_uid] = StudyState()
-            else:
-                # Update last received time for existing study
-                self.study_states[study_uid].last_received = time.time()
+            
+            # Thread-safe update of study_states
+            with self._lock:
+                # Only create new StudyState if it doesn't exist
+                if study_uid not in self.study_states:
+                    self.study_states[study_uid] = StudyState()
+                else:
+                    # Update last received time for existing study
+                    self.study_states[study_uid].last_received = time.time()
 
             logger.info(f"Processed image {image_id} for study {study_uid}")
 
@@ -164,10 +167,14 @@ class StorageManager:
             logger.debug(f"Checking study completions at {now}")
             logger.debug(f"Tracking {len(self.study_states)} active studies")
             
-            if not self.study_states:
+            # Thread-safe access to study_states
+            with self._lock:
+                study_states_copy = dict(self.study_states)
+            
+            if not study_states_copy:
                 logger.debug("No active studies to check")
                 
-            for study_uid, state in list(self.study_states.items()):
+            for study_uid, state in list(study_states_copy.items()):
                 logger.debug(f"Study {study_uid} state: {state}")
                 if not state.completed and (now - state.last_received) > timeout:
                     # Process completed study
@@ -180,7 +187,7 @@ class StorageManager:
                     study_dir = self.base_path / f"{study_number:04d}"
                     if study_dir.exists():
                         logger.info(f"Processing completed study: {study_number:04d} ({study_uid})")
-                    
+                        
                         # Create ZIP archive
                         zip_filename = f"{study_number:04d}"
                         zip_path = await self.zip_manager.create_zip(zip_filename, study_dir)
@@ -192,12 +199,15 @@ class StorageManager:
                             )
                             if success:
                                 logger.info(f"Uploaded study {study_number:04d}")
-                                state.completed = True
-                                self.completed_count += 1
-                                # Clean up files
-                                shutil.rmtree(study_dir)
-                                zip_path.unlink()
-                                del self.study_states[study_uid]
+                                # Thread-safe update of study_states
+                                with self._lock:
+                                    if study_uid in self.study_states:
+                                        self.study_states[study_uid].completed = True
+                                        self.completed_count += 1
+                                        # Clean up files
+                                        shutil.rmtree(study_dir)
+                                        zip_path.unlink()
+                                        del self.study_states[study_uid]
                             else:
                                 logger.error(f"Failed to upload study {study_uid}")
                         else:
