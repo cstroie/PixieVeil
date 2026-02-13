@@ -23,6 +23,7 @@ class DicomServer:
         self.settings = settings
         self.ae = None
         self.ae_port = settings.dicom_server.get("port", 11112)
+        self.server_task = None
 
     async def start(self):
         """
@@ -38,8 +39,19 @@ class DicomServer:
         self.ae.add_supported_context(MRImageStorage)
         self.ae.add_supported_context(SecondaryCaptureImageStorage)
 
+        # Start the server in a separate thread to avoid blocking the event loop
+        loop = asyncio.get_event_loop()
+        self.server_task = loop.run_in_executor(
+            None, 
+            self._start_blocking_server
+        )
+        logger.info(f"DICOM server starting on port {self.ae_port}")
+
+    def _start_blocking_server(self):
+        """
+        Start the DICOM server (blocking call).
+        """
         try:
-            # Use the correct method to start the server
             self.ae.start_server(('', self.ae_port))
             logger.info(f"DICOM server started on port {self.ae_port}")
         except Exception as e:
@@ -51,8 +63,18 @@ class DicomServer:
         Stop the DICOM server.
         """
         logger.info("Stopping DICOM server")
+        if self.server_task:
+            # Cancel the server task
+            self.server_task.cancel()
+            try:
+                await self.server_task
+            except asyncio.CancelledError:
+                pass
+        
         if self.ae:
-            self.ae.shutdown()
+            # Shutdown in executor to avoid blocking
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(None, self.ae.shutdown)
             self.ae = None
         logger.info("DICOM server stopped")
 
