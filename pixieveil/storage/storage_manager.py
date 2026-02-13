@@ -34,7 +34,14 @@ class StorageManager:
         self.completed_count = 0
         
         # Numbering counters
-        self.study_counter = 0
+        # Find the latest used study number from existing directories
+        existing_studies = [d.name for d in self.base_path.iterdir() if d.is_dir()]
+        study_numbers = []
+        for name in existing_studies:
+            if len(name) == 4 and name.isdigit():
+                study_numbers.append(int(name))
+        
+        self.study_counter = max(study_numbers) if study_numbers else 0
         self.study_map = {}  # StudyInstanceUID -> study_number
         self.series_map = {}  # (StudyInstanceUID, SeriesInstanceUID) -> (study_number, series_number)
         self.image_counters = {}  # (study_number, series_number) -> image_counter
@@ -74,13 +81,19 @@ class StorageManager:
                     self.study_map[study_uid] = self.study_counter
                 
                 study_number = self.study_map[study_uid]
-                
+            
                 # Assign series number
                 key = (study_uid, series_uid)
                 if key not in self.series_map:
-                    if study_number not in self.image_counters:
-                        self.image_counters[study_number] = {}
-                    series_count = len(self.image_counters[study_number]) + 1
+                    # Find highest existing series number for this study
+                    study_dir = self.base_path / f"{study_number:04d}"
+                    if study_dir.exists():
+                        existing_series = [d.name for d in study_dir.iterdir() if d.is_dir()]
+                        series_numbers = [int(name) for name in existing_series if len(name) == 4 and name.isdigit()]
+                        series_count = max(series_numbers) + 1 if series_numbers else 1
+                    else:
+                        series_count = 1
+                    
                     self.series_map[key] = (study_number, series_count)
                 
                 study_number, series_number = self.series_map[key]
