@@ -151,16 +151,16 @@ class StorageManager:
 
         return True
 
-    async def check_study_completions(self, interval=60, timeout=300):
+    async def check_study_completions(self, interval=10, timeout=10):
         """
         Background task to check for completed studies
         """
         while True:
             now = time.time()
-            print(now)
-            print(self.study_states)
+            logger.debug(f"Checking study completions at {now}")
+            logger.debug(f"Current study states: {self.study_states}")
             for study_uid, state in list(self.study_states.items()):
-                print(study_uid, state)
+                logger.debug(f"Study {study_uid} state: {state}")
                 if not state.completed and (now - state.last_received) > timeout:
                     # Process completed study
                     # Get numeric study ID from mapping
