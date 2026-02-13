@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Dict, Any, Optional
 
 import pydicom
-from pydicom.dataset import FileMetaDataset
+from pydicom.dataset import Dataset
 
 from pixieveil.config import Settings
 from pixieveil.storage import StorageManager
@@ -26,8 +26,24 @@ class CStoreSCPHandler:
             # Generate unique ID for the image
             image_id = str(uuid.uuid4())
 
+            # The info parameter contains the DICOM data
+            # In pynetdicom, the dataset is typically in info['dataset']
+            if 'dataset' not in info:
+                logger.error("No dataset found in C-STORE request")
+                return 0xC000  # Processing failure
+            
+            # Get the DICOM dataset
+            dataset = info['dataset']
+            
+            # Convert to bytes if it's not already
+            if hasattr(dataset, 'bytestream'):
+                pdv_data = dataset.bytestream
+            else:
+                # If it's already bytes, use it directly
+                pdv_data = dataset
+
             # Save the DICOM image temporarily
-            temp_path = self.storage.save_temp_image(info["pdvs"][0], image_id)
+            temp_path = self.storage.save_temp_image(pdv_data, image_id)
 
             # Process the image
             self.storage.process_image(temp_path, image_id)
