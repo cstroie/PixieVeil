@@ -22,8 +22,8 @@ class DicomServer:
         Start the DICOM server.
         """
         logger.info("Starting DICOM server")
-        self.ae = pynetdicom.AE(ae_title=self.settings.dicom_server["ae_title"],
-                                port=self.ae_port)
+        self.ae = pynetdicom.AE(ae_title=self.settings.dicom_server["ae_title"])
+        self.ae.port = self.ae_port
         self.ae.add_supported_context(pynetdicom.uid.ImplicitVRLittleEndian)
         self.ae.add_scp_handler(pynetdicom.sop_class.VerificationSOPClass,
                                 self._handle_echo)
