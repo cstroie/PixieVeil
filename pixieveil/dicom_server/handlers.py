@@ -5,6 +5,7 @@ from typing import Dict, Any, Optional
 
 import pydicom
 from pydicom.dataset import Dataset
+import pynetdicom
 
 from pixieveil.config import Settings
 from pixieveil.storage import StorageManager
