@@ -11,8 +11,8 @@ logger = logging.getLogger(__name__)
 class RemoteStorage:
     def __init__(self, settings: Settings):
         self.settings = settings
-        self.base_url = settings.get("remote_storage", {}).get("base_url")
-        self.auth_token = settings.get("remote_storage", {}).get("auth_token")
+        self.base_url = settings.storage.get("remote_storage", {}).get("base_url")
+        self.auth_token = settings.storage.get("remote_storage", {}).get("auth_token")
 
     async def upload_file(self, file_path: Path, remote_path: str) -> bool:
         """
