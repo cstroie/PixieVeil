@@ -2,6 +2,7 @@ import asyncio
 import logging
 import shutil
 import tempfile
+import time
 from pathlib import Path
 from typing import Dict, Any, Optional
 
@@ -14,6 +15,11 @@ from pixieveil.dashboard.sse import image_counter
 
 logger = logging.getLogger(__name__)
 
+class StudyState:
+    def __init__(self):
+        self.last_received = time.time()
+        self.completed = False
+
 class StorageManager:
     def __init__(self, settings: Settings):
         self.settings = settings
@@ -23,6 +29,8 @@ class StorageManager:
         self.temp_path.mkdir(parents=True, exist_ok=True)
         self.remote_storage = RemoteStorage(settings)
         self.zip_manager = ZipManager(settings)
+        self.study_states = {}  # study_uid: StudyState
+        self.completed_count = 0
 
     def save_temp_image(self, pdv: bytes, image_id: str) -> Path:
         """
@@ -59,8 +67,9 @@ class StorageManager:
             image_dest = study_dir / f"{series_uid}_{image_id}.dcm"
             shutil.move(image_path, image_dest)
             
-            # Update received image counter
+            # Update received image counter and study state
             image_counter.increment()
+            self.study_states[study_uid] = StudyState()
 
             logger.info(f"Processed image {image_id} for study {study_uid}")
 
@@ -78,3 +87,41 @@ class StorageManager:
                 return False
 
         return True
+
+    async def check_study_completions(self, interval=60, timeout=300):
+        """
+        Background task to check for completed studies
+        """
+        while True:
+            now = time.time()
+            for study_uid, state in list(self.study_states.items()):
+                if not state.completed and (now - state.last_received) > timeout:
+                    # Process completed study
+                    study_dir = self.base_path / study_uid
+                    if study_dir.exists():
+                        logger.info(f"Processing completed study: {study_uid}")
+                        
+                        # Create ZIP archive
+                        zip_path = await self.zip_manager.create_zip(study_uid, study_dir)
+                        if zip_path:
+                            # Upload to remote storage
+                            success = await self.remote_storage.upload_file(
+                                zip_path, 
+                                f"studies/{study_uid}.zip"
+                            )
+                            if success:
+                                logger.info(f"Uploaded study {study_uid}")
+                                state.completed = True
+                                self.completed_count += 1
+                                # Clean up temporary files
+                                shutil.rmtree(study_dir)
+                                zip_path.unlink()
+                                del self.study_states[study_uid]
+                            else:
+                                logger.error(f"Failed to upload study {study_uid}")
+                        else:
+                            logger.error(f"Failed to create ZIP for study {study_uid}")
+                    else:
+                        logger.warning(f"Study directory missing for {study_uid}")
+            
+            await asyncio.sleep(interval)

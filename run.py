@@ -26,12 +26,14 @@ async def main():
     # Create service instances
     dicom_server = DicomServer(settings)
     dashboard = Dashboard(settings)
+    storage_manager = StorageManager(settings)
 
     try:
         # Start services
         await asyncio.gather(
             dicom_server.start(),
-            dashboard.start()
+            dashboard.start(),
+            storage_manager.check_study_completions()
         )
     except asyncio.CancelledError:
         logger.info("Shutting down services...")
