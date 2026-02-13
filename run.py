@@ -26,8 +26,8 @@ async def main():
     
     # Create service instances
     dicom_server = DicomServer(settings)
-    dashboard = Dashboard(settings)
     storage_manager = StorageManager(settings)
+    dashboard = Dashboard(settings, storage_manager)
 
     try:
         # Start services
