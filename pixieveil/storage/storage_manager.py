@@ -39,8 +39,8 @@ class StorageManager:
         Process a received DICOM image.
         """
         try:
-            # Read the DICOM image
-            ds = pydicom.dcmread(image_path)
+            # Force reading the DICOM image even with missing meta headers
+            ds = pydicom.dcmread(image_path, force=True)
 
             # Validate the image
             if not self._validate_dicom(ds):
