@@ -41,8 +41,11 @@ class CStoreSCPHandler:
             ds.file_meta = file_meta
             ds.update(dataset)
             
-            # Get the dataset bytes
-            ds_bytes = ds.tobytes()
+            # Convert to bytes using pydicom's save_as
+            from io import BytesIO
+            buffer = BytesIO()
+            ds.save_as(buffer, write_like_original=False)
+            ds_bytes = buffer.getvalue()
             
             # Save the DICOM image temporarily
             temp_path = self.storage.save_temp_image(ds_bytes, image_id)
