@@ -71,15 +71,6 @@ class StorageManager:
             if not self._validate_dicom(ds):
                 logger.warning(f"Invalid DICOM image: {image_id}")
                 return
-                
-            # Anonymize the DICOM dataset
-            try:
-                ds = self.anonymizer.anonymize(ds)
-                # Save anonymized version back to temp file with new UIDs
-                ds.save_as(image_path, enforce_file_format=False)
-            except Exception as e:
-                logger.error(f"Failed to anonymize image {image_id}: {e}", exc_info=True)
-                return
 
             # Save original identifiers before anonymization
             original_study_uid = str(ds.StudyInstanceUID)
@@ -163,7 +154,7 @@ class StorageManager:
 
         return True
 
-    async def check_study_completions(self, interval=10, timeout=60):
+    async def check_study_completions(self, interval=30, timeout=120):
         """
         Background task to check for completed studies
         """
