@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Dict, Any, Optional
 
 import pynetdicom
-from pynetdicom import AE, evt
+from pynetdicom import AE
 from pynetdicom.sop_class import (
     Verification,
     CTImageStorage,
@@ -37,10 +37,6 @@ class DicomServer:
         self.ae.add_supported_context(CTImageStorage)
         self.ae.add_supported_context(MRImageStorage)
         self.ae.add_supported_context(SecondaryCaptureImageStorage)
-        
-        # Bind event handlers
-        self.ae.bind(evt.EVT_C_ECHO, self._handle_echo)
-        self.ae.bind(evt.EVT_C_STORE, self._handle_c_store)
 
         try:
             self.ae.start()
