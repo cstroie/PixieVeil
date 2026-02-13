@@ -39,7 +39,8 @@ class DicomServer:
         self.ae.add_supported_context(SecondaryCaptureImageStorage)
 
         try:
-            self.ae.start()
+            # Use the correct method to start the server
+            self.ae.start_server(('', self.ae_port))
             logger.info(f"DICOM server started on port {self.ae_port}")
         except Exception as e:
             logger.error(f"Failed to start DICOM server: {e}")
