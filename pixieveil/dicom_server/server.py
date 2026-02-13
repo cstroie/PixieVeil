@@ -38,11 +38,9 @@ class DicomServer:
         self.ae.add_supported_context(MRImageStorage)
         self.ae.add_supported_context(SecondaryCaptureImageStorage)
         
-        # Add SCP handlers
-        self.ae.add_scp_handler(Verification, self._handle_echo)
-        self.ae.add_scp_handler(CTImageStorage, self._handle_c_store)
-        self.ae.add_scp_handler(MRImageStorage, self._handle_c_store)
-        self.ae.add_scp_handler(SecondaryCaptureImageStorage, self._handle_c_store)
+        # Bind event handlers
+        self.ae.bind(evt.EVT_C_ECHO, self._handle_echo)
+        self.ae.bind(evt.EVT_C_STORE, self._handle_c_store)
 
         try:
             self.ae.start()
@@ -61,18 +59,14 @@ class DicomServer:
             self.ae = None
         logger.info("DICOM server stopped")
 
-    def _handle_echo(self, assoc: "pynetdicom.association.Association",
-                     context: "pynetdicom.presentation.PresentationContext",
-                     info: "pynetdicom.presentation.PresentationContextInfo") -> int:
+    def _handle_echo(self, event: "pynetdicom.events.Event") -> int:
         """
         Handle C-ECHO requests.
         """
         logger.info("Received C-ECHO request")
         return 0x0000  # Success
 
-    def _handle_c_store(self, assoc: "pynetdicom.association.Association",
-                        context: "pynetdicom.presentation.PresentationContext",
-                        info: "pynetdicom.presentation.PresentationContextInfo") -> int:
+    def _handle_c_store(self, event: "pynetdicom.events.Event") -> int:
         """
         Handle C-STORE requests.
         """
