@@ -11,12 +11,13 @@ from pixieveil.dashboard.sse import ServerSentEvents
 logger = logging.getLogger(__name__)
 
 class Dashboard:
-    def __init__(self, settings: Settings):
+    def __init__(self, settings: Settings, storage_manager):
         self.settings = settings
         self.app = web.Application()
         self.runner = None
         self.site = None
         self.sse = ServerSentEvents()
+        self.app['storage_manager'] = storage_manager
 
     async def start(self):
         logger.info("Starting dashboard")
