@@ -28,24 +28,24 @@ class CStoreSCPHandler:
             # Generate unique ID for the image
             image_id = str(uuid.uuid4())
 
-            # The info parameter contains the DICOM data
-            # In pynetdicom, the dataset is typically in info['dataset']
+            # Get the DICOM dataset from event info
             if 'dataset' not in info:
                 logger.error("No dataset found in C-STORE request")
                 return 0xC000  # Processing failure
             
-            # Get the DICOM dataset
             dataset = info['dataset']
+            file_meta = info.get('file_meta', {})
             
-            # Convert to bytes if it's not already
-            if hasattr(dataset, 'bytestream'):
-                pdv_data = dataset.bytestream
-            else:
-                # If it's already bytes, use it directly
-                pdv_data = dataset
-
+            # Create a new DICOM dataset with file meta and pixel data
+            ds = pydicom.Dataset()
+            ds.file_meta = file_meta
+            ds.update(dataset)
+            
+            # Get the dataset bytes
+            ds_bytes = ds.tobytes()
+            
             # Save the DICOM image temporarily
-            temp_path = self.storage.save_temp_image(pdv_data, image_id)
+            temp_path = self.storage.save_temp_image(ds_bytes, image_id)
 
             # Process the image
             self.storage.process_image(temp_path, image_id)

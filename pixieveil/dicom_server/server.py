@@ -109,7 +109,7 @@ class DicomServer:
             return self.c_store_handler.handle_c_store(
                 event.assoc, 
                 event.context, 
-                {"pdvs": [event.file_meta] + event.dataset}
+                {"dataset": event.dataset, "file_meta": event.file_meta}
             )
         except Exception as e:
             logger.error(f"Error handling C-STORE request: {e}")
