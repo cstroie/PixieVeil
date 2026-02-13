@@ -44,7 +44,8 @@ class CStoreSCPHandler:
             # Convert to bytes using pydicom's save_as
             from io import BytesIO
             buffer = BytesIO()
-            ds.save_as(buffer, write_like_original=False)
+            # Use new enforce_file_format parameter instead of deprecated write_like_original
+            ds.save_as(buffer, enforce_file_format=False)
             ds_bytes = buffer.getvalue()
             
             # Save the DICOM image temporarily
