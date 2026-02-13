@@ -127,7 +127,12 @@ class StorageManager:
             
             # Update received image counter and study state
             image_counter.increment()
-            self.study_states[study_uid] = StudyState()
+            # Only create new StudyState if it doesn't exist
+            if study_uid not in self.study_states:
+                self.study_states[study_uid] = StudyState()
+            else:
+                # Update last received time for existing study
+                self.study_states[study_uid].last_received = time.time()
 
             logger.info(f"Processed image {image_id} for study {study_uid}")
 
