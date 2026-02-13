@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=42"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pixieveil"
+version = "0.1.0"
+description = "DICOM anonymization server"
+authors = [
+    {name = "Costin Stroie", email = "costinstroie@eridu.eu.org"}
+]
+license = {text = "GPL-3.0"}
+readme = "README.md"
+requires-python = ">=3.8"
+dependencies = [
+    "pynetdicom>=2.0.0",
+    "pydicom>=2.0.0",
+    "aiohttp>=3.0.0",
+    "dicom_anonymization>=1.0.0"
+]
+
+[project.urls]
+Homepage = "https://github.com/cstroie/PixieVeil"
+Repository = "https://github.com/cstroie/PixieVeil.git"
