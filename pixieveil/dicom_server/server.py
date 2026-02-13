@@ -4,8 +4,8 @@ from pathlib import Path
 from typing import Dict, Any, Optional
 
 import pynetdicom
-from pynetdicom.uid import ImplicitVRLittleEndian
-from pynetdicom.sop_class import VerificationSOPClass, CTImageStorage, MRImageStorage, SecondaryCaptureImageStorage
+from pydicom.uid import ImplicitVRLittleEndian
+from pydicom.sop_class import VerificationSOPClass, CTImageStorage, MRImageStorage, SecondaryCaptureImageStorage
 from pydicom.dataset import Dataset
 
 from pixieveil.config.settings import Settings
