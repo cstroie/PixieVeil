@@ -14,6 +14,7 @@ from pynetdicom.sop_class import (
 from pydicom.dataset import Dataset
 
 from pixieveil.config.settings import Settings
+from pixieveil.dicom_server.handlers import CStoreSCPHandler
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +25,7 @@ class DicomServer:
         self.ae = None
         self.ae_port = settings.dicom_server.get("port", 11112)
         self.server_task = None
+        self.c_store_handler = CStoreSCPHandler(settings)
 
     async def start(self):
         """
@@ -38,6 +40,10 @@ class DicomServer:
         self.ae.add_supported_context(CTImageStorage)
         self.ae.add_supported_context(MRImageStorage)
         self.ae.add_supported_context(SecondaryCaptureImageStorage)
+
+        # Register event handlers
+        self.ae.add_request_handler(1, self._handle_echo)  # C-ECHO
+        self.ae.add_request_handler(3, self._handle_c_store)  # C-STORE
 
         # Start the server in a separate thread to avoid blocking the event loop
         loop = asyncio.get_event_loop()
@@ -90,5 +96,13 @@ class DicomServer:
         Handle C-STORE requests.
         """
         logger.info("Received C-STORE request")
-        # TODO: Implement C-STORE handling
-        return 0x0000  # Success
+        try:
+            # Use the C-STORE handler to process the request
+            return self.c_store_handler.handle_c_store(
+                event.assoc, 
+                event.context, 
+                {"pdvs": [event.file_meta] + event.dataset}
+            )
+        except Exception as e:
+            logger.error(f"Error handling C-STORE request: {e}")
+            return 0x0106  # Out of resources
