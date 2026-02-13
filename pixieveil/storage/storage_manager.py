@@ -151,7 +151,7 @@ class StorageManager:
 
         return True
 
-    async def check_study_completions(self, interval=10, timeout=10):
+    async def check_study_completions(self, interval=10, timeout=60):
         """
         Background task to check for completed studies
         """
