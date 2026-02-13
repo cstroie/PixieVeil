@@ -81,8 +81,20 @@ class StorageManager:
                 logger.error(f"Failed to anonymize image {image_id}: {e}", exc_info=True)
                 return
 
-            # Get study/series information
-            study_uid = str(ds.StudyInstanceUID)
+            # Save original identifiers before anonymization
+            original_study_uid = str(ds.StudyInstanceUID)
+            
+            # Anonymize the DICOM dataset
+            try:
+                ds = self.anonymizer.anonymize(ds)
+                # Save anonymized version back to temp file with new UIDs
+                ds.save_as(image_path, enforce_file_format=False)
+            except Exception as e:
+                logger.error(f"Failed to anonymize image {image_id}: {e}", exc_info=True)
+                return
+
+            # Use original study UID for tracking processing state
+            study_uid = original_study_uid
             series_uid = str(ds.SeriesInstanceUID)
 
             with self._lock:
