@@ -11,6 +11,7 @@ from pixieveil.storage import StorageManager
 
 logger = logging.getLogger(__name__)
 
+
 class CStoreSCPHandler:
     def __init__(self, settings: Settings):
         self.settings = settings
