@@ -36,14 +36,12 @@ class ServerSentEvents:
         
         try:
             while not request.transport.is_closing():
-                # Get completed studies from the StorageManager instance
-                from pixieveil.storage.storage_manager import StorageManager
-                # Send status update with image count
+                # Send status update with image count and completed studies
                 status = {
                     "status": "running",
                     "timestamp": datetime.now().isoformat(),
                     "image_count": image_counter.get_count(),
-                    "completed_studies": StorageManager().completed_count
+                    "completed_studies": request.app['storage_manager'].completed_count
                 }
                 await stream.write(f"data: {json.dumps(status)}\n\n".encode())
                 await asyncio.sleep(5)  # Send update every 5 seconds
