@@ -1,0 +1,36 @@
+import asyncio
+import logging
+import zipfile
+from pathlib import Path
+from typing import Dict, Any, Optional
+
+from pixieveil.config import Settings
+
+logger = logging.getLogger(__name__)
+
+class ZipManager:
+    def __init__(self, settings: Settings):
+        self.settings = settings
+
+    async def create_zip(self, study_uid: str, output_path: Path) -> Optional[Path]:
+        """
+        Create a zip file for a study.
+        """
+        try:
+            # Get study directory
+            study_dir = Path(self.settings.storage["base_path"]) / study_uid
+
+            # Create zip file
+            zip_path = output_path / f"{study_uid}.zip"
+            with zipfile.ZipFile(zip_path, "w") as zipf:
+                for file_path in study_dir.rglob("*"):
+                    if file_path.is_file():
+                        arcname = file_path.relative_to(study_dir)
+                        zipf.write(file_path, arcname)
+
+            logger.info(f"Created zip file for study {study_uid}: {zip_path}")
+            return zip_path
+
+        except Exception as e:
+            logger.error(f"Failed to create zip for study {study_uid}: {e}")
+            return None

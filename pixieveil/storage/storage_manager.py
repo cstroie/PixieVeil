@@ -8,6 +8,8 @@ from typing import Dict, Any, Optional
 import pydicom
 
 from pixieveil.config import Settings
+from pixieveil.storage.remote_storage import RemoteStorage
+from pixieveil.storage.zip_manager import ZipManager
 
 logger = logging.getLogger(__name__)
 
@@ -18,6 +20,8 @@ class StorageManager:
         self.temp_path = Path(settings.storage["temp_path"])
         self.base_path.mkdir(parents=True, exist_ok=True)
         self.temp_path.mkdir(parents=True, exist_ok=True)
+        self.remote_storage = RemoteStorage(settings)
+        self.zip_manager = ZipManager(settings)
 
     def save_temp_image(self, pdv: bytes, image_id: str) -> Path:
         """
