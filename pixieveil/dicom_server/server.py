@@ -42,12 +42,8 @@ class DicomServer:
         self.ae.add_supported_context(SecondaryCaptureImageStorage)
 
         # Register event handlers using the correct pynetdicom API
-        self.ae._handlers[1] = self._handle_echo  # C-ECHO
-        self.ae._handlers[3] = self._handle_c_store  # C-STORE
-
-        # Bind the C-STORE handler to the event
-        from pynetdicom.events import EVT_C_STORE
-        self.ae.bind(EVT_C_STORE, self._handle_c_store)
+        self.ae.add_notification_handler(1, self._handle_echo)  # C-ECHO
+        self.ae.add_notification_handler(3, self._handle_c_store)  # C-STORE
 
         # Start the server in a separate thread to avoid blocking the event loop
         loop = asyncio.get_event_loop()
