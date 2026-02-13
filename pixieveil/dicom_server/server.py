@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Dict, Any, Optional
 
 import pynetdicom
+from pynetdicom import uid, sop_class
 from pydicom.dataset import Dataset
 
 from pixieveil.config.settings import Settings
@@ -24,14 +25,14 @@ class DicomServer:
         logger.info("Starting DICOM server")
         self.ae = pynetdicom.AE(ae_title=self.settings.dicom_server["ae_title"])
         self.ae.port = self.ae_port
-        self.ae.add_supported_context(pynetdicom.UID.ImplicitVRLittleEndian)
-        self.ae.add_scp_handler(pynetdicom.sop_class.VerificationSOPClass,
+        self.ae.add_supported_context(uid.ImplicitVRLittleEndian)
+        self.ae.add_scp_handler(sop_class.VerificationSOPClass,
                                 self._handle_echo)
-        self.ae.add_scp_handler(pynetdicom.sop_class.CTImageStorage,
+        self.ae.add_scp_handler(sop_class.CTImageStorage,
                                 self._handle_c_store)
-        self.ae.add_scp_handler(pynetdicom.sop_class.MRImageStorage,
+        self.ae.add_scp_handler(sop_class.MRImageStorage,
                                 self._handle_c_store)
-        self.ae.add_scp_handler(pynetdicom.sop_class.SecondaryCaptureImageStorage,
+        self.ae.add_scp_handler(sop_class.SecondaryCaptureImageStorage,
                                 self._handle_c_store)
 
         try:
