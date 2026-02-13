@@ -26,12 +26,22 @@ async def main():
     # Create service instances
     dicom_server = DicomServer(settings)
     dashboard = Dashboard(settings)
-    
-    # Start services
-    await asyncio.gather(
-        dicom_server.start(),
-        dashboard.start()
-    )
+
+    try:
+        # Start services
+        await asyncio.gather(
+            dicom_server.start(),
+            dashboard.start()
+        )
+    except asyncio.CancelledError:
+        logger.info("Shutting down services...")
+        await asyncio.gather(
+            dicom_server.stop(),
+            dashboard.stop()
+        )
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        logger.info("Application shutdown by user")

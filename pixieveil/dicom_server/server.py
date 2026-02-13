@@ -71,23 +71,26 @@ class DicomServer:
 
     async def stop(self):
         """
-        Stop the DICOM server.
+        Stop the DICOM server gracefully.
         """
         logger.info("Stopping DICOM server")
-        if self.server_task:
-            # Cancel the server task
-            self.server_task.cancel()
-            try:
-                await self.server_task
-            except asyncio.CancelledError:
-                pass
-        
-        if self.ae:
-            # Shutdown in executor to avoid blocking
-            loop = asyncio.get_event_loop()
-            await loop.run_in_executor(None, self.ae.shutdown)
-            self.ae = None
-        logger.info("DICOM server stopped")
+        try:
+            if self.server_task:
+                if not self.server_task.done():
+                    self.server_task.cancel()
+                    try:
+                        await self.server_task
+                    except asyncio.CancelledError:
+                        logger.debug("DICOM server task cancelled")
+            
+            if self.ae:
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(None, self.ae.shutdown)
+                self.ae = None
+                logger.info("DICOM server stopped")
+        except Exception as e:
+            logger.error(f"Error stopping DICOM server: {e}")
+            raise
 
     def _handle_echo(self, event: "pynetdicom.events.Event") -> int:
         """
