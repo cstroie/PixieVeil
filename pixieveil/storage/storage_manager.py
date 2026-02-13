@@ -10,6 +10,7 @@ import pydicom
 from pixieveil.config import Settings
 from pixieveil.storage.remote_storage import RemoteStorage
 from pixieveil.storage.zip_manager import ZipManager
+from pixieveil.dashboard.sse import image_counter
 
 logger = logging.getLogger(__name__)
 
@@ -57,11 +58,14 @@ class StorageManager:
             # Save the image to study directory
             image_dest = study_dir / f"{series_uid}_{image_id}.dcm"
             shutil.move(image_path, image_dest)
+            
+            # Update received image counter
+            image_counter.increment()
 
             logger.info(f"Processed image {image_id} for study {study_uid}")
 
         except Exception as e:
-            logger.error(f"Failed to process image {image_id}: {e}")
+            logger.error(f"Failed to process image {image_id}: {e}", exc_info=True)
 
     def _validate_dicom(self, ds: pydicom.Dataset) -> bool:
         """
