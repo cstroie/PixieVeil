@@ -31,6 +31,13 @@ class StorageManager:
         self.zip_manager = ZipManager(settings)
         self.study_states = {}  # study_uid: StudyState
         self.completed_count = 0
+        
+        # Numbering counters
+        self.study_counter = 0
+        self.study_map = {}  # StudyInstanceUID -> study_number
+        self.series_map = {}  # (StudyInstanceUID, SeriesInstanceUID) -> (study_number, series_number)
+        self.image_counters = {}  # (study_number, series_number) -> image_counter
+        self._lock = threading.Lock()
 
     def save_temp_image(self, pdv: bytes, image_id: str) -> Path:
         """
@@ -55,18 +62,42 @@ class StorageManager:
                 logger.warning(f"Invalid DICOM image: {image_id}")
                 return
 
-            # Get study information
+            # Get study/series information
             study_uid = str(ds.StudyInstanceUID)
             series_uid = str(ds.SeriesInstanceUID)
 
-            # Create study directory if it doesn't exist
-            study_dir = self.base_path / study_uid
+            with self._lock:
+                # Assign study number
+                if study_uid not in self.study_map:
+                    self.study_counter += 1
+                    self.study_map[study_uid] = self.study_counter
+                
+                study_number = self.study_map[study_uid]
+                
+                # Assign series number
+                key = (study_uid, series_uid)
+                if key not in self.series_map:
+                    if study_number not in self.image_counters:
+                        self.image_counters[study_number] = {}
+                    series_count = len(self.image_counters[study_number]) + 1
+                    self.series_map[key] = (study_number, series_count)
+                
+                study_number, series_number = self.series_map[key]
+                
+                # Get next image number in series
+                if (study_number, series_number) not in self.image_counters:
+                    self.image_counters[(study_number, series_number)] = 0
+                self.image_counters[(study_number, series_number)] += 1
+                image_number = self.image_counters[(study_number, series_number)]
+
+            # Create numeric paths (4-digit padded)
+            study_dir = self.base_path / f"{study_number:04d}"
+            series_dir = study_dir / f"{series_number:04d}"
             study_dir.mkdir(exist_ok=True)
-            series_dir = study_dir / series_uid
             series_dir.mkdir(exist_ok=True)
 
-            # Save the image to study directory
-            image_dest = series_dir / f"{image_id}.dcm"
+            # Save image with numeric filename
+            image_dest = series_dir / f"{image_number:04d}.dcm"
             shutil.move(image_path, image_dest)
             
             # Update received image counter and study state
