@@ -62,9 +62,11 @@ class StorageManager:
             # Create study directory if it doesn't exist
             study_dir = self.base_path / study_uid
             study_dir.mkdir(exist_ok=True)
+            series_dir = study_dir / series_uid
+            series_dir.mkdir(exist_ok=True)
 
             # Save the image to study directory
-            image_dest = study_dir / f"{series_uid}_{image_id}.dcm"
+            image_dest = series_dir / f"{image_id}.dcm"
             shutil.move(image_path, image_dest)
             
             # Update received image counter and study state
