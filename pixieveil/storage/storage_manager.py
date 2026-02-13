@@ -13,6 +13,7 @@ from pixieveil.config import Settings
 from pixieveil.storage.remote_storage import RemoteStorage
 from pixieveil.storage.zip_manager import ZipManager
 from pixieveil.dashboard.sse import image_counter
+from pixieveil.processing.anonymizer import Anonymizer
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +31,7 @@ class StorageManager:
         self.temp_path.mkdir(parents=True, exist_ok=True)
         self.remote_storage = RemoteStorage(settings)
         self.zip_manager = ZipManager(settings)
+        self.anonymizer = Anonymizer(settings)
         self.study_states = {}  # study_uid: StudyState
         self.completed_count = 0
         
@@ -68,6 +70,15 @@ class StorageManager:
             # Validate the image
             if not self._validate_dicom(ds):
                 logger.warning(f"Invalid DICOM image: {image_id}")
+                return
+                
+            # Anonymize the DICOM dataset
+            try:
+                ds = self.anonymizer.anonymize(ds)
+                # Save anonymized version back to temp file with new UIDs
+                ds.save_as(image_path, enforce_file_format=False)
+            except Exception as e:
+                logger.error(f"Failed to anonymize image {image_id}: {e}", exc_info=True)
                 return
 
             # Get study/series information
