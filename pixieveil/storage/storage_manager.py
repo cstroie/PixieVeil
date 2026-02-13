@@ -155,23 +155,30 @@ class StorageManager:
             for study_uid, state in list(self.study_states.items()):
                 if not state.completed and (now - state.last_received) > timeout:
                     # Process completed study
-                    study_dir = self.base_path / study_uid
+                    # Get numeric study ID from mapping
+                    study_number = self.study_map.get(study_uid)
+                    if not study_number:
+                        logger.warning(f"No study number found for {study_uid}")
+                        continue
+                    
+                    study_dir = self.base_path / f"{study_number:04d}"
                     if study_dir.exists():
-                        logger.info(f"Processing completed study: {study_uid}")
-                        
+                        logger.info(f"Processing completed study: {study_number:04d} ({study_uid})")
+                    
                         # Create ZIP archive
-                        zip_path = await self.zip_manager.create_zip(study_uid, study_dir)
+                        zip_filename = f"{study_number:04d}"
+                        zip_path = await self.zip_manager.create_zip(zip_filename, study_dir)
                         if zip_path:
                             # Upload to remote storage
                             success = await self.remote_storage.upload_file(
                                 zip_path, 
-                                f"studies/{study_uid}.zip"
+                                f"studies/{zip_filename}.zip"
                             )
                             if success:
-                                logger.info(f"Uploaded study {study_uid}")
+                                logger.info(f"Uploaded study {study_number:04d}")
                                 state.completed = True
                                 self.completed_count += 1
-                                # Clean up temporary files
+                                # Clean up files
                                 shutil.rmtree(study_dir)
                                 zip_path.unlink()
                                 del self.study_states[study_uid]
