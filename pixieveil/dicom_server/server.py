@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Dict, Any, Optional
 
 import pynetdicom
-from pynetdicom import AE
+from pynetdicom import AE, evt
 from pynetdicom.sop_class import (
     Verification,
     CTImageStorage,
@@ -41,25 +41,29 @@ class DicomServer:
         self.ae.add_supported_context(MRImageStorage)
         self.ae.add_supported_context(SecondaryCaptureImageStorage)
 
-        # Register event handlers using the correct pynetdicom API
-        # Use the event IDs directly instead of add_notification_handler
-        self.ae._handlers[1] = self._handle_echo  # C-ECHO
-        self.ae._handlers[3] = self._handle_c_store  # C-STORE
+        # Add supported contexts (already present above)
+        
+        # Register event handlers using proper API
+        handlers = [
+            (evt.EVT_C_ECHO, self._handle_echo),
+            (evt.EVT_C_STORE, self._handle_c_store)
+        ]
 
         # Start the server in a separate thread to avoid blocking the event loop
         loop = asyncio.get_event_loop()
         self.server_task = loop.run_in_executor(
             None, 
-            self._start_blocking_server
+            self._start_blocking_server,
+            handlers  # Pass handlers to server starter
         )
         logger.info(f"DICOM server starting on port {self.ae_port}")
 
-    def _start_blocking_server(self):
+    def _start_blocking_server(self, handlers):
         """
         Start the DICOM server (blocking call).
         """
         try:
-            self.ae.start_server(('', self.ae_port))
+            self.ae.start_server(('', self.ae_port), evt_handlers=handlers)
             logger.info(f"DICOM server started on port {self.ae_port}")
         except Exception as e:
             logger.error(f"Failed to start DICOM server: {e}")
