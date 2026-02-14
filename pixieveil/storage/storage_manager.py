@@ -73,7 +73,8 @@ class StorageManager:
                 return
 
             # Save original identifiers before anonymization
-            original_study_uid = str(ds.StudyInstanceUID)
+            study_uid = str(ds.StudyInstanceUID)
+            series_uid = str(ds.SeriesInstanceUID)
             
             # Anonymize the DICOM dataset
             try:
@@ -83,10 +84,6 @@ class StorageManager:
             except Exception as e:
                 logger.error(f"Failed to anonymize image {image_id}: {e}", exc_info=True)
                 return
-
-            # Use original study UID for tracking processing state
-            study_uid = original_study_uid
-            series_uid = str(ds.SeriesInstanceUID)
 
             with self._lock:
                 # Assign study number
@@ -165,17 +162,17 @@ class StorageManager:
         while True:
             now = time.time()
             logger.debug(f"Checking study completions at {now}")
-            logger.debug(f"Tracking {len(self.study_states)} active studies")
             
             # Thread-safe access to study_states
             with self._lock:
                 study_states_copy = dict(self.study_states)
             
-            if not study_states_copy:
+            if study_states_copy:
+                logger.debug(f"Tracking {len(self.study_states)} active studies")
+            else:
                 logger.debug("No active studies to check")
                 
             for study_uid, state in list(study_states_copy.items()):
-                logger.debug(f"Study {study_uid} state: {state}")
                 if not state.completed and (now - state.last_received) > timeout:
                     # Process completed study
                     # Get numeric study ID from mapping
@@ -190,16 +187,25 @@ class StorageManager:
                         
                         # Create ZIP archive
                         zip_filename = f"{study_number:04d}"
-                        zip_path = await self.zip_manager.create_zip(zip_filename, study_dir)
+                        zip_path = await self.zip_manager.create_zip(zip_filename, self.base_path)
                         if zip_path:
                             # Upload to remote storage
                             success = await self.remote_storage.upload_file(
                                 zip_path, 
                                 f"studies/{zip_filename}.zip"
                             )
-                            if success:
-                                logger.info(f"Uploaded study {study_number:04d}")
+                            # If remote not configured
+                            if success is None:
                                 # Thread-safe update of study_states
+                                with self._lock:
+                                    if study_uid in self.study_states:
+                                        self.study_states[study_uid].completed = True
+                                        self.completed_count += 1
+                                        # Clean up files
+                                        del self.study_states[study_uid]
+                            elif success:
+                                logger.info(f"Uploaded study {study_number:04d}")
+                                # Thread-safe update of study_states and file cleanup
                                 with self._lock:
                                     if study_uid in self.study_states:
                                         self.study_states[study_uid].completed = True

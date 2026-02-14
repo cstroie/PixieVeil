@@ -21,7 +21,7 @@ class RemoteStorage:
         try:
             if not self.base_url:
                 logger.warning("Remote storage not configured")
-                return False
+                return None
 
             async with aiohttp.ClientSession() as session:
                 async with session.post(
