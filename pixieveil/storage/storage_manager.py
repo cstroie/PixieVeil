@@ -154,11 +154,14 @@ class StorageManager:
 
         return True
 
-    async def check_study_completions(self, interval=30, timeout=120):
+    async def check_study_completions(self, interval=30):
         """
         Background task to check for completed studies
         """
-        logger.info("Starting study completion checker")
+        # Get completion timeout from settings, default to 120 seconds if not specified
+        timeout = self.settings.study.get("completion_timeout", 120)
+        
+        logger.info(f"Starting study completion checker with timeout: {timeout}s")
         while True:
             now = time.time()
             logger.debug(f"Checking study completions at {now}")
