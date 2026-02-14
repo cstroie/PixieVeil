@@ -135,23 +135,50 @@ class Dashboard:
             web.Response: HTML response containing the dashboard page
         """
         html = """
-        <html>
-            <head>
-                <title>PixieVeil Dashboard</title>
-                <script>
-                    const eventSource = new EventSource("/events");
-                    eventSource.onmessage = function(event) {
-                        const data = JSON.parse(event.data);
-                        document.getElementById("status").innerText = data.status;
-                    };
-                </script>
-            </head>
-            <body>
-                <h1>PixieVeil Dashboard</h1>
-                <p>Status: <span id="status">Loading...</span></p>
-                <a href="/metrics">View Metrics</a>
-                <a href="/status">View Status</a>
-            </body>
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>PixieVeil Dashboard</title>
+            <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.classless.min.css">
+            <script>
+                const eventSource = new EventSource("/events");
+                eventSource.onmessage = function(event) {
+                    const data = JSON.parse(event.data);
+                    document.getElementById("status").innerText = data.status;
+                    document.getElementById("image-count").innerText = data.image_count;
+                    document.getElementById("completed-studies").innerText = data.completed_studies;
+                };
+            </script>
+        </head>
+        <body>
+            <main class="container">
+                <header>
+                    <h1>PixieVeil Dashboard</h1>
+                    <p>Real-time DICOM Anonymization Server</p>
+                </header>
+                
+                <section>
+                    <h2>System Status</h2>
+                    <div>
+                        <p><strong>Status:</strong> <span id="status">Loading...</span></p>
+                        <p><strong>Images Processed:</strong> <span id="image-count">0</span></p>
+                        <p><strong>Studies Completed:</strong> <span id="completed-studies">0</span></p>
+                    </div>
+                </section>
+                
+                <section>
+                    <h2>Navigation</h2>
+                    <nav>
+                        <ul>
+                            <li><a href="/metrics" role="button">View Metrics</a></li>
+                            <li><a href="/status" role="button">View Status</a></li>
+                        </ul>
+                    </nav>
+                </section>
+            </main>
+        </body>
         </html>
         """
         return web.Response(text=html, content_type="text/html")
@@ -175,26 +202,48 @@ class Dashboard:
         Returns:
             web.Response: HTML response containing the metrics page
         """
+        storage_manager = request.app['storage_manager']
         metrics = {
-            "studies_processed": 0,
-            "images_processed": 0,
+            "studies_processed": storage_manager.completed_count,
+            "images_processed": storage_manager.image_counters if hasattr(storage_manager, 'image_counters') else 0,
             "average_processing_time": 0
         }
 
         html = f"""
-        <html>
-            <head>
-                <title>PixieVeil Metrics</title>
-            </head>
-            <body>
-                <h1>PixieVeil Metrics</h1>
-                <ul>
-                    <li>Studies Processed: {metrics['studies_processed']}</li>
-                    <li>Images Processed: {metrics['images_processed']}</li>
-                    <li>Average Processing Time: {metrics['average_processing_time']}ms</li>
-                </ul>
-                <a href="/">Back to Dashboard</a>
-            </body>
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>PixieVeil Metrics</title>
+            <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.classless.min.css">
+        </head>
+        <body>
+            <main class="container">
+                <header>
+                    <h1>PixieVeil Metrics</h1>
+                    <p>Processing Statistics</p>
+                </header>
+                
+                <section>
+                    <h2>Performance Metrics</h2>
+                    <div>
+                        <p><strong>Studies Processed:</strong> {metrics['studies_processed']}</p>
+                        <p><strong>Images Processed:</strong> {metrics['images_processed']}</p>
+                        <p><strong>Average Processing Time:</strong> {metrics['average_processing_time']}ms</p>
+                    </div>
+                </section>
+                
+                <section>
+                    <h2>Navigation</h2>
+                    <nav>
+                        <ul>
+                            <li><a href="/" role="button">Back to Dashboard</a></li>
+                        </ul>
+                    </nav>
+                </section>
+            </main>
+        </body>
         </html>
         """
         return web.Response(text=html, content_type="text/html")
@@ -218,26 +267,48 @@ class Dashboard:
         Returns:
             web.Response: HTML response containing the status page
         """
+        storage_manager = request.app['storage_manager']
         status = {
             "server_status": "running",
-            "studies_in_progress": 0,
-            "total_studies": 0
+            "studies_in_progress": len(storage_manager.study_states) if hasattr(storage_manager, 'study_states') else 0,
+            "total_studies": storage_manager.completed_count + len(storage_manager.study_states) if hasattr(storage_manager, 'study_states') else storage_manager.completed_count
         }
 
         html = f"""
-        <html>
-            <head>
-                <title>PixieVeil Status</title>
-            </head>
-            <body>
-                <h1>PixieVeil Status</h1>
-                <ul>
-                    <li>Server Status: {status['server_status']}</li>
-                    <li>Studies in Progress: {status['studies_in_progress']}</li>
-                    <li>Total Studies: {status['total_studies']}</li>
-                </ul>
-                <a href="/">Back to Dashboard</a>
-            </body>
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>PixieVeil Status</title>
+            <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.classless.min.css">
+        </head>
+        <body>
+            <main class="container">
+                <header>
+                    <h1>PixieVeil Status</h1>
+                    <p>System Information</p>
+                </header>
+                
+                <section>
+                    <h2>Server Status</h2>
+                    <div>
+                        <p><strong>Server Status:</strong> {status['server_status']}</p>
+                        <p><strong>Studies in Progress:</strong> {status['studies_in_progress']}</p>
+                        <p><strong>Total Studies:</strong> {status['total_studies']}</p>
+                    </div>
+                </section>
+                
+                <section>
+                    <h2>Navigation</h2>
+                    <nav>
+                        <ul>
+                            <li><a href="/" role="button">Back to Dashboard</a></li>
+                        </ul>
+                    </nav>
+                </section>
+            </main>
+        </body>
         </html>
         """
         return web.Response(text=html, content_type="text/html")
