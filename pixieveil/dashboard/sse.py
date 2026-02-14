@@ -62,6 +62,10 @@ class ImageCounter:
             return self._count
 
 
+# Create a global instance of ImageCounter
+image_counter = ImageCounter()
+
+
 class ServerSentEvents:
     """
     Handles Server-Sent Events for real-time dashboard updates.
