@@ -1,0 +1,36 @@
+pixieveil/
+├── dicom_server/
+│   ├── __init__.py
+│   ├── server.py          # pynetdicom AE
+│   ├── handlers.py        # C-STORE handler
+│   └── storage.py         # Temporary storage
+├── processing/
+│   ├── __init__.py
+│   ├── pipeline.py        # Main processing pipeline
+│   ├── anonymizer.py      # Integration with dicom_anonymization
+│   ├── series_filter.py   # Series filtering logic
+│   └── study_manager.py   # Study assembly
+├── storage/
+│   ├── __init__.py
+│   ├── local.py           # Local filesystem storage
+│   ├── remote.py          # HTTP remote storage
+│   └── zip_manager.py     # Zip file creation
+├── dashboard/
+│   ├── __init__.py
+│   ├── main.py            # aiohttp app
+│   ├── templates/         # HTML templates
+│   │   ├── index.html
+│   │   ├── metrics.html
+│   │   └── status.html
+│   └── static/            # CSS/JS files
+├── config/
+│   ├── __init__.py
+│   ├── settings.py        # Settings management
+│   └── schemas.py         # Pydantic models
+├── utils/
+│   ├── __init__.py
+│   ├── logger.py          # Logging setup
+│   └── helpers.py         # Utility functions
+├── requirements.txt
+├── pyproject.toml
+└── run.py                 # Main entry point
