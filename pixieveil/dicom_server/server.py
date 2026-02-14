@@ -14,18 +14,20 @@ from pynetdicom.sop_class import (
 from pydicom.dataset import Dataset
 
 from pixieveil.config.settings import Settings
+from pixieveil.storage.storage_manager import StorageManager
 from pixieveil.dicom_server.handlers import CStoreSCPHandler
 
 logger = logging.getLogger(__name__)
 
 
 class DicomServer:
-    def __init__(self, settings: Settings):
+    def __init__(self, settings: Settings, storage_manager: StorageManager):
         self.settings = settings
+        self.storage_manager = storage_manager
         self.ae = None
         self.ae_port = settings.dicom_server.get("port", 11112)
         self.server_task = None
-        self.c_store_handler = CStoreSCPHandler(settings)
+        self.c_store_handler = CStoreSCPHandler(settings, storage_manager)
 
     async def start(self):
         """

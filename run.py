@@ -24,8 +24,8 @@ async def main():
     settings = Settings.load()
     
     # Create service instances
-    dicom_server = DicomServer(settings)
     storage_manager = StorageManager(settings)
+    dicom_server = DicomServer(settings, storage_manager)
     dashboard = Dashboard(settings, storage_manager)
 
     try:
