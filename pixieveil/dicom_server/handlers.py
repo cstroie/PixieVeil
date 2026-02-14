@@ -14,9 +14,9 @@ logger = logging.getLogger(__name__)
 
 
 class CStoreSCPHandler:
-    def __init__(self, settings: Settings):
+    def __init__(self, settings: Settings, storage_manager: StorageManager):
         self.settings = settings
-        self.storage = StorageManager(settings)
+        self.storage = storage_manager
 
     def handle_c_store(self, assoc: "pynetdicom.association.Association",
                       context: "pynetdicom.presentation.PresentationContext",
