@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PixieVeil Dashboard</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.classless.min.css">
+    <script>
+        const eventSource = new EventSource("/events");
+        eventSource.onmessage = function(event) {
+            const data = JSON.parse(event.data);
+            document.getElementById("status").innerText = data.status;
+            document.getElementById("image-count").innerText = data.image_count;
+            document.getElementById("completed-studies").innerText = data.completed_studies;
+        };
+    </script>
+</head>
+<body>
+    <main class="container">
+        <header>
+            <h1>PixieVeil Dashboard</h1>
+            <p>Real-time DICOM Anonymization Server</p>
+        </header>
+        
+        <section>
+            <h2>System Status</h2>
+            <div>
+                <p><strong>Status:</strong> <span id="status">Loading...</span></p>
+                <p><strong>Images Processed:</strong> <span id="image-count">0</span></p>
+                <p><strong>Studies Completed:</strong> <span id="completed-studies">0</span></p>
+            </div>
+        </section>
+        
+        <section>
+            <h2>Navigation</h2>
+            <nav>
+                <ul>
+                    <li><a href="/metrics" role="button">View Metrics</a></li>
+                    <li><a href="/status" role="button">View Status</a></li>
+                </ul>
+            </nav>
+        </section>
+    </main>
+</body>
+</html>
