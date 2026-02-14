@@ -1,9 +1,50 @@
+"""
+Configuration Settings Module
+
+This module provides configuration management for the PixieVeil application.
+It handles loading and validation of application settings from YAML configuration files.
+
+Classes:
+    Settings: Main configuration class that manages all application settings
+"""
+
 import yaml
 from pathlib import Path
 from typing import Dict, Any
 from pydantic import BaseModel, Field
 
 class Settings(BaseModel):
+    """
+    Main configuration class that manages all application settings.
+    
+    This class provides centralized configuration management for the PixieVeil application.
+    It uses Pydantic for data validation and type checking, ensuring that all configuration
+    values are properly validated against expected types and constraints.
+    
+    The configuration includes settings for:
+    - DICOM server configuration (port, AE title, etc.)
+    - Anonymization rules and preferences
+    - Storage paths and remote storage settings
+    - HTTP server configuration for the dashboard
+    - Study completion timeout settings
+    - Series filtering criteria
+    - Logging configuration
+    
+    Attributes:
+        dicom_server (Dict[str, Any]): Configuration for DICOM server settings
+        anonymization (Dict[str, Any]): Configuration for DICOM anonymization rules
+        storage (Dict[str, Any]): Configuration for storage paths and remote storage
+        http_server (Dict[str, Any]): Configuration for HTTP server settings
+        study (Dict[str, Any]): Configuration for study completion settings
+        series_filter (Dict[str, Any]): Configuration for series filtering criteria
+        logging (Dict[str, Any]): Configuration for logging settings
+        
+    Note:
+        All configuration sections use default empty dictionaries to ensure
+        the application can start even if specific sections are not defined
+        in the configuration file.
+    """
+    
     dicom_server: Dict[str, Any] = Field(default_factory=dict)
     anonymization: Dict[str, Any] = Field(default_factory=dict)
     storage: Dict[str, Any] = Field(default_factory=dict)
@@ -14,6 +55,34 @@ class Settings(BaseModel):
 
     @classmethod
     def load(cls, config_path: Path = None) -> "Settings":
+        """
+        Load application settings from a YAML configuration file.
+        
+        This class method loads and validates application settings from a YAML file.
+        It provides intelligent fallback behavior to ensure the application can
+        start even if the primary configuration file is missing.
+        
+        The method follows this priority order for configuration file loading:
+        1. Custom config_path if provided
+        2. config/settings.yaml if it exists
+        3. config/settings.yaml.example as fallback
+        
+        Args:
+            config_path (Path, optional): Custom path to configuration file.
+                                        If None, uses default locations.
+                
+        Returns:
+            Settings: A validated Settings instance containing all configuration data
+                
+        Raises:
+            FileNotFoundError: If no configuration file can be found
+            yaml.YAMLError: If the configuration file contains invalid YAML
+            ValidationError: If the configuration data doesn't match expected schema
+                
+        Note:
+            The method uses Pydantic's validation to ensure all configuration
+            values are properly typed and validated before returning the Settings instance.
+        """
         if config_path is None:
             config_path = Path("config/settings.yaml")
             if not config_path.exists():
