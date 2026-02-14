@@ -6,14 +6,15 @@ from pixieveil.dashboard.main import Dashboard
 from pixieveil.storage.storage_manager import StorageManager
 
 # Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(name)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler('pixieveil.log')
-    ]
-)
+def setup_logging(settings):
+    logging.basicConfig(
+        level=settings.logging.get("level", "INFO"),
+        format='%(asctime)s - %(levelname)s - %(name)s - %(message)s',
+        handlers=[
+            logging.StreamHandler(),
+            logging.FileHandler('pixieveil.log')
+        ]
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +23,9 @@ async def main():
     
     # Load settings
     settings = Settings.load()
+    
+    # Setup logging with settings
+    setup_logging(settings)
     
     # Create service instances
     storage_manager = StorageManager(settings)
