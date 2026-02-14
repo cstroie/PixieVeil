@@ -7,7 +7,7 @@ from pixieveil.storage.storage_manager import StorageManager
 
 # Configure logging
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(name)s - %(message)s',
     handlers=[
         logging.StreamHandler(),
