@@ -1,3 +1,13 @@
+"""
+DICOM Processing Pipeline Module
+
+This module provides a comprehensive processing pipeline for DICOM images,
+including validation, filtering, anonymization, and study management.
+
+Classes:
+    ProcessingPipeline: Orchestrates the complete DICOM image processing workflow
+"""
+
 import asyncio
 import logging
 from pathlib import Path
@@ -12,8 +22,36 @@ from pixieveil.processing.study_manager import StudyManager
 
 logger = logging.getLogger(__name__)
 
+
 class ProcessingPipeline:
+    """
+    Orchestrates the complete DICOM image processing workflow.
+    
+    This class provides a comprehensive processing pipeline for DICOM images,
+    coordinating multiple processing steps including validation, filtering,
+    anonymization, and study management.
+    
+    The pipeline processes images through the following stages:
+    1. DICOM validation
+    2. Series filtering (based on configured criteria)
+    3. Anonymization (removal of sensitive information)
+    4. Study management (tracking and completion monitoring)
+    
+    Attributes:
+        settings (Settings): Application configuration settings
+        anonymizer (Anonymizer): Handler for DICOM anonymization
+        series_filter (SeriesFilter): Handler for series filtering
+        study_manager (StudyManager): Handler for study management
+    """
+    
     def __init__(self, settings: Settings):
+        """
+        Initialize the ProcessingPipeline with application settings.
+        
+        Args:
+            settings: Application configuration settings containing processing
+                      pipeline configuration and component settings
+        """
         self.settings = settings
         self.anonymizer = Anonymizer(settings)
         self.series_filter = SeriesFilter(settings)
@@ -21,7 +59,29 @@ class ProcessingPipeline:
 
     async def process_image(self, image_path: Path, image_id: str) -> Optional[Path]:
         """
-        Process a received DICOM image through the pipeline.
+        Process a received DICOM image through the complete pipeline.
+        
+        This method orchestrates the complete processing workflow for a DICOM image,
+        including validation, filtering, anonymization, and study management.
+        
+        The processing pipeline consists of the following steps:
+        1. DICOM dataset validation
+        2. Series filtering based on configured criteria
+        3. Anonymization of sensitive information
+        4. Study management and tracking
+        
+        Args:
+            image_path (Path): Path to the DICOM file to process
+            image_id (str): Unique identifier for this DICOM image
+            
+        Returns:
+            Optional[Path]: Path to the processed DICOM file if successful,
+                          None if processing failed or image was filtered out
+                          
+        Note:
+            If any step in the pipeline fails, the method will return None
+            and log the error. The pipeline is designed to be fault-tolerant
+            and will continue processing subsequent images even if one fails.
         """
         try:
             # Read the DICOM image
@@ -55,7 +115,16 @@ class ProcessingPipeline:
 
     def _validate_dicom(self, ds: pydicom.Dataset) -> bool:
         """
-        Validate the DICOM image.
+        Validate the DICOM image for required fields and basic integrity.
+        
+        This method checks if the DICOM dataset contains all required fields
+        for proper processing and storage.
+        
+        Args:
+            ds (pydicom.Dataset): The DICOM dataset to validate
+            
+        Returns:
+            bool: True if the DICOM dataset is valid, False otherwise
         """
         # Basic validation
         required_fields = ["StudyInstanceUID", "SeriesInstanceUID", "SOPInstanceUID"]

@@ -1,3 +1,14 @@
+"""
+DICOM Anonymizer Module
+
+This module provides functionality for anonymizing DICOM datasets in compliance with
+DICOM PS3.15 standards. It removes or replaces sensitive patient information while
+maintaining the integrity of the medical imaging data.
+
+Classes:
+    Anonymizer: Handles DICOM dataset anonymization operations
+"""
+
 import logging
 from datetime import datetime
 import pydicom
@@ -7,22 +18,95 @@ from pixieveil.config import Settings
 
 logger = logging.getLogger(__name__)
 
+
 class Anonymizer:
+    """
+    Handles DICOM dataset anonymization operations.
+    
+    This class provides comprehensive DICOM field anonymization compliant with
+    DICOM PS3.15 standards. It removes or replaces sensitive patient information
+    while maintaining the integrity of the medical imaging data.
+    
+    The anonymization process includes:
+    - Patient information removal/replacement
+    - Study/Series information anonymization
+    - Institution and physician information removal
+    - Date/time anonymization
+    - Sensitive tag removal
+    - Private tag removal
+    - Overlay data removal
+    
+    Attributes:
+        settings (Settings): Application configuration settings
+    """
+    
     def __init__(self, settings: Settings):
+        """
+        Initialize the Anonymizer with application settings.
+        
+        Args:
+            settings: Application configuration settings containing anonymization
+                      rules and preferences
+        """
         self.settings = settings
         
     def _current_date(self):
+        """
+        Get current date in DICOM format (YYYYMMDD).
+        
+        Returns:
+            str: Current date formatted as YYYYMMDD
+        """
         return datetime.now().strftime("%Y%m%d")
     
     def _current_time(self):
+        """
+        Get current time in DICOM format (HHMMSS).
+        
+        Returns:
+            str: Current time formatted as HHMMSS
+        """
         return datetime.now().strftime("%H%M%S")
     
     def _generate_new_uid(self, prefix="2.25."):
+        """
+        Generate a new DICOM UID with the specified prefix.
+        
+        Args:
+            prefix (str): Prefix for the generated UID (default: "2.25.")
+            
+        Returns:
+            str: Newly generated DICOM UID
+        """
         return generate_uid(prefix=prefix)
 
     def anonymize(self, ds: pydicom.Dataset) -> pydicom.Dataset:
         """
-        Comprehensive DICOM field anonymization compliant with DICOM PS3.15
+        Comprehensive DICOM field anonymization compliant with DICOM PS3.15.
+        
+        This method performs comprehensive anonymization of a DICOM dataset,
+        removing or replacing sensitive information while maintaining data
+        integrity for medical imaging purposes.
+        
+        The anonymization process includes:
+        - Patient information anonymization (name, ID, demographics)
+        - Study/Series information anonymization (UIDs, descriptions)
+        - Institution and physician information removal
+        - Date/time fields anonymization with current values
+        - Sensitive tag removal
+        - Private tag removal
+        - Overlay data removal
+        - Burned-in annotation handling
+        
+        Args:
+            ds (pydicom.Dataset): The DICOM dataset to anonymize
+            
+        Returns:
+            pydicom.Dataset: The anonymized DICOM dataset
+            
+        Note:
+            This method modifies the dataset in-place and also returns it
+            for method chaining convenience.
         """
         # Patient Information
         ds.PatientName = "Anonymous"
