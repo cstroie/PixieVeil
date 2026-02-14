@@ -15,7 +15,6 @@ from pathlib import Path
 from typing import Dict, Any
 
 from aiohttp import web
-from aiohttp_jinja2 import setup as setup_jinja2, template
 
 from pixieveil.config import Settings
 from pixieveil.dashboard.sse import ServerSentEvents
@@ -80,9 +79,6 @@ class Dashboard:
         """
         logger.info("Starting dashboard")
 
-        # Setup Jinja2 templates
-        setup_jinja2(self.app, loader=web.FileLoader(Path(__file__).parent / 'templates'))
-
         # Setup routes
         self.app.add_routes([
             web.get("/", self.handle_index),
@@ -120,8 +116,7 @@ class Dashboard:
             await self.runner.cleanup()
         logger.info("Dashboard stopped")
 
-    @template('index.html')
-    async def handle_index(self, request: web.Request) -> Dict[str, Any]:
+    async def handle_index(self, request: web.Request) -> web.Response:
         """
         Handle the main dashboard page.
         
@@ -137,12 +132,58 @@ class Dashboard:
             request (web.Request): The incoming HTTP request
             
         Returns:
-            Dict[str, Any]: Template context data
+            web.Response: HTML response containing the dashboard page
         """
-        return {}
+        html = """
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>PixieVeil Dashboard</title>
+            <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.classless.min.css">
+            <script>
+                const eventSource = new EventSource("/events");
+                eventSource.onmessage = function(event) {
+                    const data = JSON.parse(event.data);
+                    document.getElementById("status").innerText = data.status;
+                    document.getElementById("image-count").innerText = data.image_count;
+                    document.getElementById("completed-studies").innerText = data.completed_studies;
+                };
+            </script>
+        </head>
+        <body>
+            <main class="container">
+                <header>
+                    <h1>PixieVeil Dashboard</h1>
+                    <p>Real-time DICOM Anonymization Server</p>
+                </header>
+                
+                <section>
+                    <h2>System Status</h2>
+                    <div>
+                        <p><strong>Status:</strong> <span id="status">Loading...</span></p>
+                        <p><strong>Images Processed:</strong> <span id="image-count">0</span></p>
+                        <p><strong>Studies Completed:</strong> <span id="completed-studies">0</span></p>
+                    </div>
+                </section>
+                
+                <section>
+                    <h2>Navigation</h2>
+                    <nav>
+                        <ul>
+                            <li><a href="/metrics" role="button">View Metrics</a></li>
+                            <li><a href="/status" role="button">View Status</a></li>
+                        </ul>
+                    </nav>
+                </section>
+            </main>
+        </body>
+        </html>
+        """
+        return web.Response(text=html, content_type="text/html")
 
-    @template('metrics.html')
-    async def handle_metrics(self, request: web.Request) -> Dict[str, Any]:
+    async def handle_metrics(self, request: web.Request) -> web.Response:
         """
         Handle the metrics page.
         
@@ -159,7 +200,7 @@ class Dashboard:
             request (web.Request): The incoming HTTP request
             
         Returns:
-            Dict[str, Any]: Template context data
+            web.Response: HTML response containing the metrics page
         """
         storage_manager = request.app['storage_manager']
         metrics = {
@@ -167,10 +208,47 @@ class Dashboard:
             "images_processed": len(storage_manager.image_counters) if hasattr(storage_manager, 'image_counters') else 0,
             "average_processing_time": 0
         }
-        return metrics
 
-    @template('status.html')
-    async def handle_status(self, request: web.Request) -> Dict[str, Any]:
+        html = f"""
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>PixieVeil Metrics</title>
+            <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.classless.min.css">
+        </head>
+        <body>
+            <main class="container">
+                <header>
+                    <h1>PixieVeil Metrics</h1>
+                    <p>Processing Statistics</p>
+                </header>
+                
+                <section>
+                    <h2>Performance Metrics</h2>
+                    <div>
+                        <p><strong>Studies Processed:</strong> {metrics['studies_processed']}</p>
+                        <p><strong>Images Processed:</strong> {metrics['images_processed']}</p>
+                        <p><strong>Average Processing Time:</strong> {metrics['average_processing_time']}ms</p>
+                    </div>
+                </section>
+                
+                <section>
+                    <h2>Navigation</h2>
+                    <nav>
+                        <ul>
+                            <li><a href="/" role="button">Back to Dashboard</a></li>
+                        </ul>
+                    </nav>
+                </section>
+            </main>
+        </body>
+        </html>
+        """
+        return web.Response(text=html, content_type="text/html")
+
+    async def handle_status(self, request: web.Request) -> web.Response:
         """
         Handle the status page.
         
@@ -187,7 +265,7 @@ class Dashboard:
             request (web.Request): The incoming HTTP request
             
         Returns:
-            Dict[str, Any]: Template context data
+            web.Response: HTML response containing the status page
         """
         storage_manager = request.app['storage_manager']
         status = {
@@ -195,4 +273,42 @@ class Dashboard:
             "studies_in_progress": len(storage_manager.study_states) if hasattr(storage_manager, 'study_states') else 0,
             "total_studies": storage_manager.completed_count + len(storage_manager.study_states) if hasattr(storage_manager, 'study_states') else storage_manager.completed_count
         }
-        return status
+
+        html = f"""
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>PixieVeil Status</title>
+            <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.classless.min.css">
+        </head>
+        <body>
+            <main class="container">
+                <header>
+                    <h1>PixieVeil Status</h1>
+                    <p>System Information</p>
+                </header>
+                
+                <section>
+                    <h2>Server Status</h2>
+                    <div>
+                        <p><strong>Server Status:</strong> {status['server_status']}</p>
+                        <p><strong>Studies in Progress:</strong> {status['studies_in_progress']}</p>
+                        <p><strong>Total Studies:</strong> {status['total_studies']}</p>
+                    </div>
+                </section>
+                
+                <section>
+                    <h2>Navigation</h2>
+                    <nav>
+                        <ul>
+                            <li><a href="/" role="button">Back to Dashboard</a></li>
+                        </ul>
+                    </nav>
+                </section>
+            </main>
+        </body>
+        </html>
+        """
+        return web.Response(text=html, content_type="text/html")
