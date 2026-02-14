@@ -1,3 +1,18 @@
+"""
+Storage Manager Module
+
+This module provides functionality for managing DICOM image storage, including:
+- Temporary storage of received DICOM images
+- Processing and organizing images into studies and series
+- Anonymization of DICOM data
+- Background monitoring of study completion
+- ZIP creation and remote storage upload
+
+Classes:
+    StudyState: Tracks the state of a DICOM study
+    StorageManager: Main class for managing DICOM image storage and processing
+"""
+
 import asyncio
 import logging
 import shutil
@@ -17,13 +32,56 @@ from pixieveil.processing.anonymizer import Anonymizer
 
 logger = logging.getLogger(__name__)
 
+
 class StudyState:
+    """
+    Tracks the state of a DICOM study.
+    
+    Attributes:
+        last_received (float): Timestamp of the last received image for this study
+        completed (bool): Flag indicating if the study has been completed and processed
+    """
+    
     def __init__(self):
+        """
+        Initialize a new StudyState instance.
+        """
         self.last_received = time.time()
         self.completed = False
 
+
 class StorageManager:
+    """
+    Manages DICOM image storage, processing, and study completion monitoring.
+    
+    This class handles the complete lifecycle of DICOM images from temporary storage
+    through processing, anonymization, organization into studies/series, and eventual
+    archiving and upload to remote storage.
+    
+    Attributes:
+        settings (Settings): Application configuration settings
+        base_path (Path): Base directory for storing organized DICOM studies
+        temp_path (Path): Temporary directory for storing incoming DICOM images
+        remote_storage (RemoteStorage): Handler for remote storage operations
+        zip_manager (ZipManager): Handler for ZIP archive creation
+        anonymizer (Anonymizer): Handler for DICOM anonymization
+        study_states (Dict[str, StudyState]): Dictionary tracking active studies
+        completed_count (int): Counter for completed studies
+        study_counter (int): Counter for assigning numeric study IDs
+        study_map (Dict[str, int]): Maps StudyInstanceUID to numeric study number
+        series_map (Dict[tuple, tuple]): Maps (StudyUID, SeriesUID) to (study_num, series_num)
+        image_counters (Dict[tuple, int]): Tracks image numbers within each series
+        _lock (threading.Lock): Thread lock for thread-safe operations
+    """
+    
     def __init__(self, settings: Settings):
+        """
+        Initialize the StorageManager with application settings.
+        
+        Args:
+            settings: Application configuration settings containing storage paths
+                      and other configuration options
+        """
         self.settings = settings
         self.base_path = Path(settings.storage["base_path"])
         self.temp_path = Path(settings.storage["temp_path"])
@@ -52,6 +110,19 @@ class StorageManager:
     def save_temp_image(self, pdv: bytes, image_id: str) -> Path:
         """
         Save a received DICOM image to temporary storage.
+        
+        This method saves incoming DICOM data to a temporary file for later processing.
+        The image is saved with a unique ID to prevent conflicts.
+        
+        Args:
+            pdv (bytes): DICOM pixel data received from the DICOM server
+            image_id (str): Unique identifier for this DICOM image
+            
+        Returns:
+            Path: Path to the saved temporary DICOM file
+            
+        Raises:
+            OSError: If the file cannot be written to temporary storage
         """
         temp_file = self.temp_path / f"{image_id}.dcm"
         with open(temp_file, "wb") as f:
@@ -61,7 +132,22 @@ class StorageManager:
 
     def process_image(self, image_path: Path, image_id: str):
         """
-        Process a received DICOM image.
+        Process a received DICOM image through the complete pipeline.
+        
+        This method handles the complete processing of a DICOM image:
+        1. Reads and validates the DICOM dataset
+        2. Anonymizes the DICOM data
+        3. Organizes the image into appropriate study/series structure
+        4. Assigns numeric identifiers and filenames
+        5. Moves the image to its final organized location
+        6. Updates study tracking and counters
+        
+        Args:
+            image_path (Path): Path to the temporary DICOM file to process
+            image_id (str): Unique identifier for this DICOM image
+            
+        Raises:
+            Exception: If any step in the processing pipeline fails
         """
         try:
             # Force reading the DICOM image even with missing meta headers
@@ -144,7 +230,16 @@ class StorageManager:
 
     def _validate_dicom(self, ds: pydicom.Dataset) -> bool:
         """
-        Validate the DICOM image.
+        Validate the DICOM image for required fields and basic integrity.
+        
+        This method checks if the DICOM dataset contains all required fields
+        for proper processing and storage.
+        
+        Args:
+            ds (pydicom.Dataset): The DICOM dataset to validate
+            
+        Returns:
+            bool: True if the DICOM dataset is valid, False otherwise
         """
         # Basic validation
         required_fields = ["StudyInstanceUID", "SeriesInstanceUID", "SOPInstanceUID"]
@@ -156,7 +251,22 @@ class StorageManager:
 
     async def check_study_completions(self, interval=30):
         """
-        Background task to check for completed studies
+        Background task to check for completed studies and process them.
+        
+        This method runs continuously in the background, checking if any active
+        studies have timed out (no new images received within the configured
+        timeout period). When a study is detected as complete, it:
+        1. Creates a ZIP archive of the study
+        2. Uploads the archive to remote storage (if configured)
+        3. Cleans up local files
+        4. Updates study tracking
+        
+        Args:
+            interval (int): Check interval in seconds (default: 30)
+            
+        Note:
+            This method is designed to be run as an asyncio background task
+            and will continue running until cancelled.
         """
         # Get completion timeout from settings, default to 120 seconds if not specified
         timeout = self.settings.study.get("completion_timeout", 120)

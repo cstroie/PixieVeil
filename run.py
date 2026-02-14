@@ -1,3 +1,15 @@
+"""
+PixieVeil Application Entry Point
+
+This module serves as the main entry point for the PixieVeil application.
+It initializes all services, sets up logging, and coordinates the startup
+and shutdown of all application components.
+
+Functions:
+    setup_logging: Configure application logging based on settings
+    main: Main application entry point that starts all services
+"""
+
 import asyncio
 import logging
 from pixieveil.config import Settings
@@ -7,6 +19,17 @@ from pixieveil.storage.storage_manager import StorageManager
 
 # Configure logging
 def setup_logging(settings):
+    """
+    Configure application logging based on settings.
+    
+    This function sets up the Python logging system with the configuration
+    specified in the application settings, including log level, format,
+    and output handlers.
+    
+    Args:
+        settings (Settings): Application configuration settings containing
+                            logging configuration
+    """
     logging.basicConfig(
         level=settings.logging.get("level", "INFO"),
         format='%(asctime)s - %(levelname)s - %(name)s - %(message)s',
@@ -19,6 +42,18 @@ def setup_logging(settings):
 logger = logging.getLogger(__name__)
 
 async def main():
+    """
+    Main application entry point.
+    
+    This function initializes all application services, starts them,
+    and manages their lifecycle. The services started include:
+    - DICOM server for receiving DICOM images
+    - Dashboard web interface
+    - Storage manager for processing and archiving images
+    
+    The function runs all services concurrently and handles graceful
+    shutdown when interrupted.
+    """
     logger.info("Starting PixieVeil application")
     
     # Load settings
