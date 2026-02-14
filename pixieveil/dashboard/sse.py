@@ -113,7 +113,11 @@ class ServerSentEvents:
         await stream.prepare(request)
         
         try:
-            while not request.transport.is_closing():
+            while True:
+                # Check if transport is available and not closing
+                if request.transport is None or request.transport.is_closing():
+                    break
+                
                 # Send status update with image count and completed studies
                 status = {
                     "status": "running",
