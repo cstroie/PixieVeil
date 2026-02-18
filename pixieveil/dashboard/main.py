@@ -17,7 +17,7 @@ from typing import Dict, Any
 from aiohttp import web
 
 from pixieveil.config import Settings
-from pixieveil.dashboard.sse import ServerSentEvents
+from pixieveil.dashboard.sse import image_counter
 
 logger = logging.getLogger(__name__)
 
@@ -28,20 +28,18 @@ class Dashboard:
     
     This class provides the web-based dashboard interface for the PixieVeil application.
     It manages the HTTP server, handles web routes, and provides real-time updates
-    through Server-Sent Events.
+    through periodic API calls.
     
     The dashboard provides:
-    - Main dashboard page with system status
-    - Metrics page showing processing statistics
-    - Status page with detailed system information
-    - Real-time updates via SSE connections
+    - Main dashboard page with system status and metrics
+    - JSON API endpoint for fetching current statistics
+    - Real-time updates via periodic JavaScript API calls
     
     Attributes:
         settings (Settings): Application configuration settings
         app (web.Application): aiohttp web application instance
         runner (web.AppRunner): Application runner for the web server
         site (web.TCPSite): TCP site for serving the web application
-        sse (ServerSentEvents): Handler for Server-Sent Events
     """
     
     def __init__(self, settings: Settings, storage_manager):
@@ -57,7 +55,6 @@ class Dashboard:
         self.app = web.Application()
         self.runner = None
         self.site = None
-        self.sse = ServerSentEvents()
         self.app['storage_manager'] = storage_manager
 
     async def start(self):
@@ -82,9 +79,7 @@ class Dashboard:
         # Setup routes
         self.app.add_routes([
             web.get("/", self.handle_index),
-            web.get("/metrics", self.handle_metrics),
-            web.get("/status", self.handle_status),
-            web.get("/events", self.sse.handle_events),
+            web.get("/stats", self.handle_stats),
         ])
 
         # Create runner and site
@@ -121,12 +116,13 @@ class Dashboard:
         Handle the main dashboard page.
         
         This method serves the main dashboard page which provides an overview
-        of the system status and navigation to other dashboard pages.
+        of the system status and all metrics in a single page.
         
         The page includes:
-        - System status display (updated via SSE)
-        - Navigation links to metrics and status pages
-        - Real-time status updates via JavaScript EventSource
+        - System status display
+        - Real-time metrics and statistics
+        - Navigation links
+        - JavaScript for periodic API calls to update data
         
         Args:
             request (web.Request): The incoming HTTP request
@@ -142,15 +138,42 @@ class Dashboard:
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
             <title>PixieVeil Dashboard</title>
             <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.classless.min.css">
-            <script>
-                const eventSource = new EventSource("/events");
-                eventSource.onmessage = function(event) {
-                    const data = JSON.parse(event.data);
-                    document.getElementById("status").innerText = data.status;
-                    document.getElementById("image-count").innerText = data.image_count;
-                    document.getElementById("completed-studies").innerText = data.completed_studies;
-                };
-            </script>
+            <style>
+                .metric-card {
+                    background: white;
+                    border-radius: 8px;
+                    padding: 1rem;
+                    margin: 0.5rem 0;
+                    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+                }
+                .metric-value {
+                    font-size: 2rem;
+                    font-weight: bold;
+                    color: #2563eb;
+                }
+                .metric-label {
+                    color: #6b7280;
+                    font-size: 0.875rem;
+                }
+                .status-indicator {
+                    display: inline-block;
+                    width: 12px;
+                    height: 12px;
+                    border-radius: 50%;
+                    margin-right: 0.5rem;
+                }
+                .status-running {
+                    background-color: #10b981;
+                }
+                .status-stopped {
+                    background-color: #ef4444;
+                }
+                .last-updated {
+                    font-size: 0.75rem;
+                    color: #9ca3af;
+                    text-align: right;
+                }
+            </style>
         </head>
         <body>
             <div class="container">
@@ -159,156 +182,165 @@ class Dashboard:
                     <p>Real-time DICOM Anonymization Server</p>
                 </header>
                 
-                <article>
+                <section>
                     <h2>System Status</h2>
-                    <div>
-                        <p><strong>Status:</strong> <span id="status">Loading...</span></p>
-                        <p><strong>Images Processed:</strong> <span id="image-count">0</span></p>
-                        <p><strong>Studies Completed:</strong> <span id="completed-studies">0</span></p>
+                    <div class="metric-card">
+                        <p><strong>Status:</strong> <span id="status"><span class="status-indicator status-stopped"></span>Loading...</span></p>
+                        <p class="last-updated>Last updated: <span id="last-updated">Never</span></p>
                     </div>
-                </article>
+                </section>
+                
+                <section>
+                    <h2>Processing Metrics</h2>
+                    <div class="metric-card">
+                        <p><strong>Images Processed:</strong> <span id="image-count" class="metric-value">0</span></p>
+                        <p class="metric-label">Total DICOM images processed</p>
+                    </div>
+                    
+                    <div class="metric-card">
+                        <p><strong>Studies Completed:</strong> <span id="completed-studies" class="metric-value">0</span></p>
+                        <p class="metric-label">DICOM studies fully processed</p>
+                    </div>
+                    
+                    <div class="metric-card">
+                        <p><strong>Studies in Progress:</strong> <span id="studies-in-progress" class="metric-value">0</span></p>
+                        <p class="metric-label">Currently being processed</p>
+                    </div>
+                </section>
+                
+                <section>
+                    <h2>Performance Metrics</h2>
+                    <div class="metric-card">
+                        <p><strong>Total Studies:</strong> <span id="total-studies" class="metric-value">0</span></p>
+                        <p class="metric-label">Studies processed + in progress</p>
+                    </div>
+                    
+                    <div class="metric-card">
+                        <p><strong>Average Processing Time:</strong> <span id="avg-processing-time" class="metric-value">0</span>ms</p>
+                        <p class="metric-label">Average time per image</p>
+                    </div>
+                </section>
                 
                 <section>
                     <h2>Navigation</h2>
                     <nav>
                         <ul>
-                            <li><a href="/metrics" role="button">View Metrics</a></li>
-                            <li><a href="/status" role="button">View Status</a></li>
+                            <li><button onclick="refreshData()" role="button">Refresh Data</button></li>
+                            <li><button onclick="toggleAutoRefresh()" id="auto-refresh-btn" role="button">Enable Auto Refresh</button></li>
                         </ul>
                     </nav>
                 </section>
             </div>
+
+            <script>
+                let autoRefreshInterval = null;
+                let isAutoRefreshEnabled = false;
+
+                async function fetchStats() {
+                    try {
+                        const response = await fetch('/stats');
+                        if (!response.ok) {
+                            throw new Error('Network response was not ok');
+                        }
+                        const data = await response.json();
+                        updateDashboard(data);
+                    } catch (error) {
+                        console.error('Error fetching stats:', error);
+                        document.getElementById('status').innerHTML = '<span class="status-indicator status-stopped"></span>Error';
+                    }
+                }
+
+                function updateDashboard(data) {
+                    // Update status
+                    const statusElement = document.getElementById('status');
+                    if (data.server_status === 'running') {
+                        statusElement.innerHTML = '<span class="status-indicator status-running"></span>Running';
+                    } else {
+                        statusElement.innerHTML = '<span class="status-indicator status-stopped"></span>Stopped';
+                    }
+
+                    // Update metrics
+                    document.getElementById('image-count').textContent = data.image_count || 0;
+                    document.getElementById('completed-studies').textContent = data.completed_studies || 0;
+                    document.getElementById('studies-in-progress').textContent = data.studies_in_progress || 0;
+                    document.getElementById('total-studies').textContent = data.total_studies || 0;
+                    document.getElementById('avg-processing-time').textContent = data.average_processing_time || 0;
+
+                    // Update timestamp
+                    const now = new Date();
+                    document.getElementById('last-updated').textContent = now.toLocaleTimeString();
+                }
+
+                function refreshData() {
+                    fetchStats();
+                }
+
+                function toggleAutoRefresh() {
+                    const btn = document.getElementById('auto-refresh-btn');
+                    
+                    if (isAutoRefreshEnabled) {
+                        // Disable auto refresh
+                        clearInterval(autoRefreshInterval);
+                        autoRefreshInterval = null;
+                        isAutoRefreshEnabled = false;
+                        btn.textContent = 'Enable Auto Refresh';
+                        btn.classList.remove('secondary');
+                    } else {
+                        // Enable auto refresh
+                        autoRefreshInterval = setInterval(fetchStats, 5000); // Refresh every 5 seconds
+                        isAutoRefreshEnabled = true;
+                        btn.textContent = 'Disable Auto Refresh';
+                        btn.classList.add('secondary');
+                    }
+                }
+
+                // Initial load
+                document.addEventListener('DOMContentLoaded', function() {
+                    fetchStats();
+                });
+            </script>
         </body>
         </html>
         """
         return web.Response(text=html, content_type="text/html")
 
-    async def handle_metrics(self, request: web.Request) -> web.Response:
+    async def handle_stats(self, request: web.Request) -> web.Response:
         """
-        Handle the metrics page.
+        Handle the JSON API endpoint for statistics.
         
-        This method serves the metrics page which displays processing
-        statistics and performance metrics.
+        This method provides current system statistics in JSON format
+        for the dashboard to consume and display.
         
-        The page includes:
-        - Number of studies processed
-        - Number of images processed
-        - Average processing time
-        - Navigation back to the main dashboard
+        The API returns:
+        - Server status
+        - Image processing metrics
+        - Study completion statistics
+        - Performance metrics
         
         Args:
             request (web.Request): The incoming HTTP request
             
         Returns:
-            web.Response: HTML response containing the metrics page
+            web.Response: JSON response containing current statistics
         """
         storage_manager = request.app['storage_manager']
-        metrics = {
-            "studies_processed": storage_manager.completed_count,
-            "images_processed": len(storage_manager.image_counters) if hasattr(storage_manager, 'image_counters') else 0,
-            "average_processing_time": 0
-        }
-
-        html = f"""
-        <!DOCTYPE html>
-        <html lang="en">
-        <head>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>PixieVeil Metrics</title>
-            <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.classless.min.css">
-        </head>
-        <body>
-            <main class="container">
-                <header>
-                    <h1>PixieVeil Metrics</h1>
-                    <p>Processing Statistics</p>
-                </header>
-                
-                <section>
-                    <h2>Performance Metrics</h2>
-                    <div>
-                        <p><strong>Studies Processed:</strong> {metrics['studies_processed']}</p>
-                        <p><strong>Images Processed:</strong> {metrics['images_processed']}</p>
-                        <p><strong>Average Processing Time:</strong> {metrics['average_processing_time']}ms</p>
-                    </div>
-                </section>
-                
-                <section>
-                    <h2>Navigation</h2>
-                    <nav>
-                        <ul>
-                            <li><a href="/" role="button">Back to Dashboard</a></li>
-                        </ul>
-                    </nav>
-                </section>
-            </main>
-        </body>
-        </html>
-        """
-        return web.Response(text=html, content_type="text/html")
-
-    async def handle_status(self, request: web.Request) -> web.Response:
-        """
-        Handle the status page.
         
-        This method serves the status page which provides detailed
-        information about the current system status.
+        # Get current metrics from storage manager
+        studies_in_progress = len(storage_manager.study_states) if hasattr(storage_manager, 'study_states') else 0
+        completed_studies = storage_manager.completed_count
+        total_studies = completed_studies + studies_in_progress
         
-        The page includes:
-        - Server status (running/stopped)
-        - Number of studies in progress
-        - Total number of studies
-        - Navigation back to the main dashboard
+        # Calculate average processing time (placeholder - implement actual calculation if needed)
+        average_processing_time = 0
         
-        Args:
-            request (web.Request): The incoming HTTP request
-            
-        Returns:
-            web.Response: HTML response containing the status page
-        """
-        storage_manager = request.app['storage_manager']
-        status = {
+        stats = {
             "server_status": "running",
-            "studies_in_progress": len(storage_manager.study_states) if hasattr(storage_manager, 'study_states') else 0,
-            "total_studies": storage_manager.completed_count + len(storage_manager.study_states) if hasattr(storage_manager, 'study_states') else storage_manager.completed_count
+            "image_count": image_counter.get_count(),
+            "completed_studies": completed_studies,
+            "studies_in_progress": studies_in_progress,
+            "total_studies": total_studies,
+            "average_processing_time": average_processing_time,
+            "timestamp": asyncio.get_event_loop().time()
         }
-
-        html = f"""
-        <!DOCTYPE html>
-        <html lang="en">
-        <head>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>PixieVeil Status</title>
-            <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.classless.min.css">
-        </head>
-        <body>
-            <main class="container">
-                <header>
-                    <h1>PixieVeil Status</h1>
-                    <p>System Information</p>
-                </header>
-                
-                <section>
-                    <h2>Server Status</h2>
-                    <div>
-                        <p><strong>Server Status:</strong> {status['server_status']}</p>
-                        <p><strong>Studies in Progress:</strong> {status['studies_in_progress']}</p>
-                        <p><strong>Total Studies:</strong> {status['total_studies']}</p>
-                    </div>
-                </section>
-                
-                <section>
-                    <h2>Navigation</h2>
-                    <nav>
-                        <ul>
-                            <li><a href="/" role="button">Back to Dashboard</a></li>
-                        </ul>
-                    </nav>
-                </section>
-            </main>
-        </body>
-        </html>
-        """
-        return web.Response(text=html, content_type="text/html")
+        
+        return web.json_response(stats)
