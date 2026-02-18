@@ -72,6 +72,7 @@ class StorageManager:
         series_map (Dict[tuple, tuple]): Maps (StudyUID, SeriesUID) to (study_num, series_num)
         image_counters (Dict[tuple, int]): Tracks image numbers within each series
         _lock (threading.Lock): Thread lock for thread-safe operations
+        counters (Dict[str, int]): Dictionary for tracking various statistics
     """
     
     def __init__(self, settings: Settings):
@@ -106,6 +107,57 @@ class StorageManager:
         self.series_map = {}  # (StudyInstanceUID, SeriesInstanceUID) -> (study_number, series_number)
         self.image_counters = {}  # (study_number, series_number) -> image_counter
         self._lock = threading.Lock()
+        
+        # Statistics counters
+        self.counters = {
+            # Reception counters
+            'received_studies': 0,
+            'received_images': 0,
+            'received_bytes': 0,
+            
+            # Processing counters
+            'processed_images': 0,
+            'processed_studies': 0,
+            'anonymized_images': 0,
+            'anonymization_errors': 0,
+            'validation_errors': 0,
+            'processing_errors': 0,
+            
+            # Storage counters
+            'stored_studies': 0,
+            'stored_series': 0,
+            'stored_images': 0,
+            
+            # Archive counters
+            'archived_studies': 0,
+            'archived_images': 0,
+            'archive_errors': 0,
+            
+            # Export counters
+            'exported_studies': 0,
+            'exported_images': 0,
+            'export_errors': 0,
+            
+            # Remote storage counters
+            'uploaded_studies': 0,
+            'uploaded_images': 0,
+            'upload_errors': 0,
+            'upload_bytes': 0,
+            
+            # Performance counters
+            'processing_time_total': 0,
+            'processing_time_count': 0,
+            'average_processing_time': 0,
+            
+            # Cleanup counters
+            'cleaned_studies': 0,
+            'cleaned_images': 0,
+            
+            # Error counters
+            'total_errors': 0,
+            'reconnection_attempts': 0,
+            'timeout_errors': 0
+        }
 
     def save_temp_image(self, pdv: bytes, image_id: str) -> Path:
         """
@@ -128,6 +180,15 @@ class StorageManager:
         with open(temp_file, "wb") as f:
             f.write(pdv)
 
+        # Update reception counters
+        with self._lock:
+            self.counters['received_images'] += 1
+            self.counters['received_bytes'] += len(pdv)
+            
+            # Check if this is the first image for a new study
+            # Note: We can't determine study UID until we read the DICOM file
+            # This will be updated in process_image method
+
         return temp_file
 
     def process_image(self, image_path: Path, image_id: str):
@@ -149,6 +210,9 @@ class StorageManager:
         Raises:
             Exception: If any step in the processing pipeline fails
         """
+        start_time = time.time()
+        study_uid = None
+        
         try:
             # Force reading the DICOM image even with missing meta headers
             ds = pydicom.dcmread(image_path, force=True)
@@ -156,19 +220,32 @@ class StorageManager:
             # Validate the image
             if not self._validate_dicom(ds):
                 logger.warning(f"Invalid DICOM image: {image_id}")
+                with self._lock:
+                    self.counters['validation_errors'] += 1
+                    self.counters['total_errors'] += 1
                 return
 
             # Save original identifiers before anonymization
             study_uid = str(ds.StudyInstanceUID)
             series_uid = str(ds.SeriesInstanceUID)
             
+            # Update reception counters for new studies
+            with self._lock:
+                if study_uid not in self.study_map:
+                    self.counters['received_studies'] += 1
+            
             # Anonymize the DICOM dataset
             try:
                 ds = self.anonymizer.anonymize(ds)
                 # Save anonymized version back to temp file with new UIDs
                 ds.save_as(image_path, enforce_file_format=False)
+                with self._lock:
+                    self.counters['anonymized_images'] += 1
             except Exception as e:
                 logger.error(f"Failed to anonymize image {image_id}: {e}", exc_info=True)
+                with self._lock:
+                    self.counters['anonymization_errors'] += 1
+                    self.counters['total_errors'] += 1
                 return
 
             with self._lock:
@@ -190,6 +267,9 @@ class StorageManager:
                         series_count = max(series_numbers) + 1 if series_numbers else 1
                     else:
                         series_count = 1
+                        with self._lock:
+                            self.counters['stored_studies'] += 1
+                            self.counters['stored_series'] += 1
                     
                     self.series_map[key] = (study_number, series_count)
                 
@@ -214,7 +294,7 @@ class StorageManager:
             # Update received image counter and study state
             image_counter.increment()
             
-            # Thread-safe update of study_states
+            # Thread-safe update of study_states and storage counters
             with self._lock:
                 # Only create new StudyState if it doesn't exist
                 if study_uid not in self.study_states:
@@ -222,11 +302,28 @@ class StorageManager:
                 else:
                     # Update last received time for existing study
                     self.study_states[study_uid].last_received = time.time()
+                
+                # Update storage counters
+                self.counters['stored_images'] += 1
+                self.counters['processed_images'] += 1
+                self.counters['processed_studies'] = len(self.study_map)
+
+            # Update processing time
+            processing_time = time.time() - start_time
+            with self._lock:
+                self.counters['processing_time_total'] += processing_time
+                self.counters['processing_time_count'] += 1
+                self.counters['average_processing_time'] = (
+                    self.counters['processing_time_total'] / self.counters['processing_time_count']
+                )
 
             logger.info(f"Processed image {image_id} for study {study_uid}")
 
         except Exception as e:
             logger.error(f"Failed to process image {image_id}: {e}", exc_info=True)
+            with self._lock:
+                self.counters['processing_errors'] += 1
+                self.counters['total_errors'] += 1
 
     def _validate_dicom(self, ds: pydicom.Dataset) -> bool:
         """
@@ -297,10 +394,22 @@ class StorageManager:
                     if study_dir.exists():
                         logger.info(f"Processing completed study: {study_number:04d} ({study_uid})")
                         
+                        # Update archive counters
+                        with self._lock:
+                            self.counters['archived_studies'] += 1
+                            # Count images in study
+                            image_count = sum(len(list(study_dir.rglob("*.dcm"))) for _ in [None])
+                            self.counters['archived_images'] += image_count
+                        
                         # Create ZIP archive
                         zip_filename = f"{study_number:04d}"
                         zip_path = await self.zip_manager.create_zip(zip_filename, self.base_path)
                         if zip_path:
+                            # Update export counters
+                            with self._lock:
+                                self.counters['exported_studies'] += 1
+                                self.counters['exported_images'] += image_count
+                            
                             # Upload to remote storage
                             success = await self.remote_storage.upload_file(
                                 zip_path, 
@@ -313,6 +422,8 @@ class StorageManager:
                                     if study_uid in self.study_states:
                                         self.study_states[study_uid].completed = True
                                         self.completed_count += 1
+                                        self.counters['cleaned_studies'] += 1
+                                        self.counters['cleaned_images'] += image_count
                                         # Clean up files
                                         del self.study_states[study_uid]
                             elif success:
@@ -322,15 +433,39 @@ class StorageManager:
                                     if study_uid in self.study_states:
                                         self.study_states[study_uid].completed = True
                                         self.completed_count += 1
+                                        self.counters['uploaded_studies'] += 1
+                                        self.counters['uploaded_images'] += image_count
+                                        self.counters['upload_bytes'] += zip_path.stat().st_size
+                                        self.counters['cleaned_studies'] += 1
+                                        self.counters['cleaned_images'] += image_count
                                         # Clean up files
                                         shutil.rmtree(study_dir)
                                         zip_path.unlink()
                                         del self.study_states[study_uid]
                             else:
                                 logger.error(f"Failed to upload study {study_uid}")
+                                with self._lock:
+                                    self.counters['upload_errors'] += 1
+                                    self.counters['archive_errors'] += 1
+                                    self.counters['total_errors'] += 1
                         else:
                             logger.error(f"Failed to create ZIP for study {study_uid}")
+                            with self._lock:
+                                self.counters['archive_errors'] += 1
+                                self.counters['total_errors'] += 1
                     else:
                         logger.warning(f"Study directory missing for {study_uid}")
+                        with self._lock:
+                            self.counters['total_errors'] += 1
             
             await asyncio.sleep(interval)
+    
+    def get_counters(self) -> Dict[str, Any]:
+        """
+        Get all current counters and statistics.
+        
+        Returns:
+            Dict[str, Any]: Dictionary containing all current counter values
+        """
+        with self._lock:
+            return dict(self.counters)
