@@ -1,6 +1,7 @@
 import aiohttp_jinja2
 import jinja2
 from aiohttp import web
+from pixieveil.config.settings import Settings
 
 class Dashboard:
     """
