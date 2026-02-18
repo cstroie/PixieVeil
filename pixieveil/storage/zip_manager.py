@@ -9,7 +9,6 @@ Classes:
     ZipManager: Handles ZIP archive creation for DICOM studies
 """
 
-import asyncio
 import logging
 import zipfile
 from pathlib import Path

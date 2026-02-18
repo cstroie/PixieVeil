@@ -27,7 +27,6 @@ import pydicom
 from pixieveil.config import Settings
 from pixieveil.storage.remote_storage import RemoteStorage
 from pixieveil.storage.zip_manager import ZipManager
-from pixieveil.dashboard.sse import image_counter
 from pixieveil.processing.anonymizer import Anonymizer
 
 logger = logging.getLogger(__name__)
@@ -287,9 +286,8 @@ class StorageManager:
                     else:
                         series_count = 1
                         logger.debug(f"Creating new series {series_count} for study {study_number}")
-                        with self._lock:
-                            self.counters['stored_studies'] += 1
-                            self.counters['stored_series'] += 1
+                        self.counters['stored_studies'] += 1
+                        self.counters['stored_series'] += 1
                     
                     self.series_map[key] = (study_number, series_count)
                     logger.debug(f"Assigned new series number {series_count} to series {series_uid}")
@@ -315,10 +313,6 @@ class StorageManager:
             image_dest = series_dir / f"{image_number:04d}.dcm"
             logger.debug(f"Moving image from {image_path} to {image_dest}")
             shutil.move(image_path, image_dest)
-            
-            # Update received image counter and study state
-            image_counter.increment()
-            logger.debug(f"Incremented global image counter to: {image_counter.get_count()}")
             
             # Thread-safe update of study_states and storage counters
             with self._lock:
