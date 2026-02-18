@@ -17,6 +17,7 @@ from typing import Dict, Any
 from aiohttp import web
 
 from pixieveil.config import Settings
+from pixieveil.dashboard.sse import image_counter, init_image_counter
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +56,8 @@ class Dashboard:
         self.runner = None
         self.site = None
         self.app['storage_manager'] = storage_manager
+        # Initialize the image counter when dashboard is created
+        init_image_counter()
 
     async def start(self):
         """
@@ -165,16 +168,64 @@ class Dashboard:
         completed_studies = storage_manager.completed_count
         total_studies = completed_studies + studies_in_progress
         
-        # Calculate average processing time (placeholder - implement actual calculation if needed)
-        average_processing_time = 0
+        # Get all counters from storage manager
+        counters = storage_manager.get_counters()
         
         stats = {
             "server_status": "running",
-            "image_count": 0,
+            "image_count": image_counter.get_count(),
             "completed_studies": completed_studies,
             "studies_in_progress": studies_in_progress,
             "total_studies": total_studies,
-            "average_processing_time": average_processing_time,
+            "average_processing_time": counters.get('average_processing_time', 0),
+            
+            # Reception metrics
+            "received_studies": counters.get('received_studies', 0),
+            "received_images": counters.get('received_images', 0),
+            "received_bytes": counters.get('received_bytes', 0),
+            
+            # Processing metrics
+            "processed_images": counters.get('processed_images', 0),
+            "processed_studies": counters.get('processed_studies', 0),
+            "anonymized_images": counters.get('anonymized_images', 0),
+            "validation_errors": counters.get('validation_errors', 0),
+            "anonymization_errors": counters.get('anonymization_errors', 0),
+            "processing_errors": counters.get('processing_errors', 0),
+            
+            # Storage metrics
+            "stored_studies": counters.get('stored_studies', 0),
+            "stored_series": counters.get('stored_series', 0),
+            "stored_images": counters.get('stored_images', 0),
+            
+            # Archive metrics
+            "archived_studies": counters.get('archived_studies', 0),
+            "archived_images": counters.get('archived_images', 0),
+            "archive_errors": counters.get('archive_errors', 0),
+            
+            # Export metrics
+            "exported_studies": counters.get('exported_studies', 0),
+            "exported_images": counters.get('exported_images', 0),
+            "export_errors": counters.get('export_errors', 0),
+            
+            # Remote storage metrics
+            "uploaded_studies": counters.get('uploaded_studies', 0),
+            "uploaded_images": counters.get('uploaded_images', 0),
+            "upload_errors": counters.get('upload_errors', 0),
+            "upload_bytes": counters.get('upload_bytes', 0),
+            
+            # Performance metrics
+            "processing_time_total": counters.get('processing_time_total', 0),
+            "processing_time_count": counters.get('processing_time_count', 0),
+            
+            # Cleanup metrics
+            "cleaned_studies": counters.get('cleaned_studies', 0),
+            "cleaned_images": counters.get('cleaned_images', 0),
+            
+            # Error metrics
+            "total_errors": counters.get('total_errors', 0),
+            "reconnection_attempts": counters.get('reconnection_attempts', 0),
+            "timeout_errors": counters.get('timeout_errors', 0),
+            
             "timestamp": asyncio.get_event_loop().time()
         }
         
