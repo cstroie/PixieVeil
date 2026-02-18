@@ -114,55 +114,58 @@ class StorageManager:
         self.image_counters = {}  # (study_number, series_number) -> image_counter
         self._lock = threading.Lock()
         
-        # Statistics counters
+        # Statistics counters - restructured into two levels
         self.counters = {
-            # Reception counters
-            'received_studies': 0,
-            'received_images': 0,
-            'received_bytes': 0,
-            
-            # Processing counters
-            'processed_images': 0,
-            'processed_studies': 0,
-            'anonymized_images': 0,
-            'anonymization_errors': 0,
-            'validation_errors': 0,
-            'processing_errors': 0,
-            
-            # Storage counters
-            'stored_studies': 0,
-            'stored_series': 0,
-            'stored_images': 0,
-            
-            # Archive counters
-            'archived_studies': 0,
-            'archived_images': 0,
-            'archive_errors': 0,
-            
-            # Export counters
-            'exported_studies': 0,
-            'exported_images': 0,
-            'export_errors': 0,
-            
-            # Remote storage counters
-            'uploaded_studies': 0,
-            'uploaded_images': 0,
-            'upload_errors': 0,
-            'upload_bytes': 0,
-            
-            # Performance counters
-            'processing_time_total': 0,
-            'processing_time_count': 0,
-            'average_processing_time': 0,
-            
-            # Cleanup counters
-            'cleaned_studies': 0,
-            'cleaned_images': 0,
-            
-            # Error counters
-            'total_errors': 0,
-            'reconnection_attempts': 0,
-            'timeout_errors': 0
+            'reception': {
+                'studies': 0,
+                'images': 0,
+                'bytes': 0
+            },
+            'processing': {
+                'images': 0,
+                'studies': 0,
+                'anonymized_images': 0,
+                'errors': {
+                    'anonymization': 0,
+                    'validation': 0,
+                    'processing': 0
+                }
+            },
+            'storage': {
+                'studies': 0,
+                'series': 0,
+                'images': 0
+            },
+            'archive': {
+                'studies': 0,
+                'images': 0,
+                'errors': 0
+            },
+            'export': {
+                'studies': 0,
+                'images': 0,
+                'errors': 0
+            },
+            'remote_storage': {
+                'studies': 0,
+                'images': 0,
+                'errors': 0,
+                'bytes': 0
+            },
+            'performance': {
+                'processing_time_total': 0,
+                'processing_time_count': 0,
+                'average_processing_time': 0
+            },
+            'cleanup': {
+                'studies': 0,
+                'images': 0
+            },
+            'errors': {
+                'total': 0,
+                'reconnection_attempts': 0,
+                'timeout_errors': 0
+            }
         }
         logger.debug("StorageManager initialization complete")
 
@@ -190,8 +193,8 @@ class StorageManager:
 
         # Update reception counters
         with self._lock:
-            self.counters['received_images'] += 1
-            self.counters['received_bytes'] += len(pdv)
+            self.counters['reception']['images'] += 1
+            self.counters['reception']['bytes'] += len(pdv)
             
             # Check if this is the first image for a new study
             # Note: We can't determine study UID until we read the DICOM file
@@ -233,8 +236,8 @@ class StorageManager:
             if not self._validate_dicom(ds):
                 logger.warning(f"Invalid DICOM image: {image_id}")
                 with self._lock:
-                    self.counters['validation_errors'] += 1
-                    self.counters['total_errors'] += 1
+                    self.counters['processing']['errors']['validation'] += 1
+                    self.counters['errors']['total'] += 1
                 return
 
             # Save original identifiers before anonymization
@@ -245,7 +248,7 @@ class StorageManager:
             # Update reception counters for new studies
             with self._lock:
                 if study_uid not in self.study_map:
-                    self.counters['received_studies'] += 1
+                    self.counters['reception']['studies'] += 1
                     logger.debug(f"New study detected: {study_uid}")
             
             # Anonymize the DICOM dataset
@@ -255,13 +258,13 @@ class StorageManager:
                 # Save anonymized version back to temp file with new UIDs
                 ds.save_as(image_path, enforce_file_format=False)
                 with self._lock:
-                    self.counters['anonymized_images'] += 1
+                    self.counters['processing']['anonymized_images'] += 1
                 logger.debug(f"Successfully anonymized image {image_id}")
             except Exception as e:
                 logger.error(f"Failed to anonymize image {image_id}: {e}", exc_info=True)
                 with self._lock:
-                    self.counters['anonymization_errors'] += 1
-                    self.counters['total_errors'] += 1
+                    self.counters['processing']['errors']['anonymization'] += 1
+                    self.counters['errors']['total'] += 1
                 return
 
             with self._lock:
@@ -286,8 +289,8 @@ class StorageManager:
                     else:
                         series_count = 1
                         logger.debug(f"Creating new series {series_count} for study {study_number}")
-                        self.counters['stored_studies'] += 1
-                        self.counters['stored_series'] += 1
+                        self.counters['storage']['studies'] += 1
+                        self.counters['storage']['series'] += 1
                     
                     self.series_map[key] = (study_number, series_count)
                     logger.debug(f"Assigned new series number {series_count} to series {series_uid}")
@@ -326,18 +329,18 @@ class StorageManager:
                     logger.debug(f"Updated last received time for study {study_uid}")
                 
                 # Update storage counters
-                self.counters['stored_images'] += 1
-                self.counters['processed_images'] += 1
-                self.counters['processed_studies'] = len(self.study_map)
-                logger.debug(f"Updated storage counters: stored_images={self.counters['stored_images']}, processed_studies={self.counters['processed_studies']}")
+                self.counters['storage']['images'] += 1
+                self.counters['processing']['images'] += 1
+                self.counters['processing']['studies'] = len(self.study_map)
+                logger.debug(f"Updated storage counters: storage_images={self.counters['storage']['images']}, processing_studies={self.counters['processing']['studies']}")
 
             # Update processing time
             processing_time = time.time() - start_time
             with self._lock:
-                self.counters['processing_time_total'] += processing_time
-                self.counters['processing_time_count'] += 1
-                self.counters['average_processing_time'] = (
-                    self.counters['processing_time_total'] / self.counters['processing_time_count']
+                self.counters['performance']['processing_time_total'] += processing_time
+                self.counters['performance']['processing_time_count'] += 1
+                self.counters['performance']['average_processing_time'] = (
+                    self.counters['performance']['processing_time_total'] / self.counters['performance']['processing_time_count']
                 )
             logger.debug(f"Image {image_id} processed in {processing_time:.3f}s")
 
@@ -346,8 +349,8 @@ class StorageManager:
         except Exception as e:
             logger.error(f"Failed to process image {image_id}: {e}", exc_info=True)
             with self._lock:
-                self.counters['processing_errors'] += 1
-                self.counters['total_errors'] += 1
+                self.counters['processing']['errors']['processing'] += 1
+                self.counters['errors']['total'] += 1
 
     def _validate_dicom(self, ds: pydicom.Dataset) -> bool:
         """
@@ -433,8 +436,8 @@ class StorageManager:
                         
                         # Update archive counters
                         with self._lock:
-                            self.counters['archived_studies'] += 1
-                            self.counters['archived_images'] += image_count
+                            self.counters['archive']['studies'] += 1
+                            self.counters['archive']['images'] += image_count
                         
                         # Create ZIP archive
                         zip_filename = f"{study_number:04d}"
@@ -444,8 +447,8 @@ class StorageManager:
                             logger.info(f"Created ZIP archive: {zip_path}")
                             # Update export counters
                             with self._lock:
-                                self.counters['exported_studies'] += 1
-                                self.counters['exported_images'] += image_count
+                                self.counters['export']['studies'] += 1
+                                self.counters['export']['images'] += image_count
                             
                             # Upload to remote storage
                             logger.debug(f"Uploading study {zip_filename} to remote storage")
@@ -461,8 +464,8 @@ class StorageManager:
                                     if study_uid in self.study_states:
                                         self.study_states[study_uid].completed = True
                                         self.completed_count += 1
-                                        self.counters['cleaned_studies'] += 1
-                                        self.counters['cleaned_images'] += image_count
+                                        self.counters['cleanup']['studies'] += 1
+                                        self.counters['cleanup']['images'] += image_count
                                         # Clean up files
                                         del self.study_states[study_uid]
                             elif success:
@@ -472,11 +475,11 @@ class StorageManager:
                                     if study_uid in self.study_states:
                                         self.study_states[study_uid].completed = True
                                         self.completed_count += 1
-                                        self.counters['uploaded_studies'] += 1
-                                        self.counters['uploaded_images'] += image_count
-                                        self.counters['upload_bytes'] += zip_path.stat().st_size
-                                        self.counters['cleaned_studies'] += 1
-                                        self.counters['cleaned_images'] += image_count
+                                        self.counters['remote_storage']['studies'] += 1
+                                        self.counters['remote_storage']['images'] += image_count
+                                        self.counters['remote_storage']['bytes'] += zip_path.stat().st_size
+                                        self.counters['cleanup']['studies'] += 1
+                                        self.counters['cleanup']['images'] += image_count
                                         # Clean up files
                                         logger.debug(f"Cleaning up study directory: {study_dir}")
                                         shutil.rmtree(study_dir)
@@ -485,18 +488,18 @@ class StorageManager:
                             else:
                                 logger.error(f"Failed to upload study {study_uid}")
                                 with self._lock:
-                                    self.counters['upload_errors'] += 1
-                                    self.counters['archive_errors'] += 1
-                                    self.counters['total_errors'] += 1
+                                    self.counters['remote_storage']['errors'] += 1
+                                    self.counters['archive']['errors'] += 1
+                                    self.counters['errors']['total'] += 1
                         else:
                             logger.error(f"Failed to create ZIP for study {study_uid}")
                             with self._lock:
-                                self.counters['archive_errors'] += 1
-                                self.counters['total_errors'] += 1
+                                self.counters['archive']['errors'] += 1
+                                self.counters['errors']['total'] += 1
                     else:
                         logger.warning(f"Study directory missing for {study_uid}")
                         with self._lock:
-                            self.counters['total_errors'] += 1
+                            self.counters['errors']['total'] += 1
             
             await asyncio.sleep(interval)
     
