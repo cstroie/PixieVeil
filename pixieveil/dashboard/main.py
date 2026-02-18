@@ -153,20 +153,20 @@ class Dashboard:
             </script>
         </head>
         <body>
-            <main class="container">
+            <div class="container">
                 <header>
                     <h1>PixieVeil Dashboard</h1>
                     <p>Real-time DICOM Anonymization Server</p>
                 </header>
                 
-                <section>
+                <article>
                     <h2>System Status</h2>
                     <div>
                         <p><strong>Status:</strong> <span id="status">Loading...</span></p>
                         <p><strong>Images Processed:</strong> <span id="image-count">0</span></p>
                         <p><strong>Studies Completed:</strong> <span id="completed-studies">0</span></p>
                     </div>
-                </section>
+                </article>
                 
                 <section>
                     <h2>Navigation</h2>
@@ -177,7 +177,7 @@ class Dashboard:
                         </ul>
                     </nav>
                 </section>
-            </main>
+            </div>
         </body>
         </html>
         """
