@@ -4,7 +4,7 @@
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>PixieVeil Dashboard</title>
-        <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.classless.min.css">
+        <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
         <style>
             .metric-card {
                 background: white;
@@ -43,60 +43,62 @@
         </style>
     </head>
     <body>
+        <nav></nav>
         <div class="container">
-            <header>
-                <h1>PixieVeil Dashboard</h1>
-                <p>Real-time DICOM Anonymization Server</p>
-            </header>
-            
-            <section>
-                <h2>System Status</h2>
-                <div class="metric-card">
-                    <p><strong>Status:</strong> <span id="status"><span class="status-indicator status-stopped"></span>Loading...</span></p>
-                    <p class="last-updated">Last updated: <span id="last-updated">Never</span></p>
-                </div>
-            </section>
-            
-            <section>
-                <h2>Processing Metrics</h2>
-                <div class="metric-card">
-                    <p><strong>Images Processed:</strong> <span id="image-count" class="metric-value">0</span></p>
-                    <p class="metric-label">Total DICOM images processed</p>
-                </div>
+            <article>
+                <hgroup>
+                    <h1>PixieVeil Dashboard</h1>
+                    <p>Real-time DICOM Anonymization Server</p>
+                </hgroup>
                 
-                <div class="metric-card">
-                    <p><strong>Studies Completed:</strong> <span id="completed-studies" class="metric-value">0</p>
-                    <p class="metric-label">DICOM studies fully processed</p>
-                </div>
+                <header>
+                    <h2>System Status</h2>
+                    <div class="metric-card">
+                        <p><strong>Status:</strong> <span id="status"><span class="status-indicator status-stopped"></span>Loading...</span></p>
+                        <p class="last-updated">Last updated: <span id="last-updated">Never</span></p>
+                    </div>
+                </header>
                 
-                <div class="metric-card">
-                    <p><strong>Studies in Progress:</strong> <span id="studies-in-progress" class="metric-value">0</span></p>
-                    <p class="metric-label">Currently being processed</p>
-                </div>
-            </section>
-            
-            <section>
-                <h2>Performance Metrics</h2>
-                <div class="metric-card">
-                    <p><strong>Total Studies:</strong> <span id="total-studies" class="metric-value">0</span></p>
-                    <p class="metric-label">Studies processed + in progress</p>
-                </div>
+                <main>
+                    <section>
+                        <h2>Processing Metrics</h2>
+
+                        <div class="metric-card">
+                            <p><strong>Images Processed:</strong> <span id="image-count" class="metric-value">0</span></p>
+                            <p class="metric-label">Total DICOM images processed</p>
+                        </div>
+                        
+                        <div class="metric-card">
+                            <p><strong>Studies Completed:</strong> <span id="completed-studies" class="metric-value">0</p>
+                            <p class="metric-label">DICOM studies fully processed</p>
+                        </div>
+                        
+                        <div class="metric-card">
+                            <p><strong>Studies in Progress:</strong> <span id="studies-in-progress" class="metric-value">0</span></p>
+                            <p class="metric-label">Currently being processed</p>
+                        </div>
+                    </section>
+                    
+                    <section>
+                        <h2>Performance Metrics</h2>
+
+                        <div class="metric-card">
+                            <p><strong>Total Studies:</strong> <span id="total-studies" class="metric-value">0</span></p>
+                            <p class="metric-label">Studies processed + in progress</p>
+                        </div>
+                        
+                        <div class="metric-card">
+                            <p><strong>Average Processing Time:</strong> <span id="avg-processing-time" class="metric-value">0</span>ms</p>
+                            <p class="metric-label">Average time per image</p>
+                        </div>
+                    </section>
+                </main>
                 
-                <div class="metric-card">
-                    <p><strong>Average Processing Time:</strong> <span id="avg-processing-time" class="metric-value">0</span>ms</p>
-                    <p class="metric-label">Average time per image</p>
-                </div>
-            </section>
-            
-            <section>
-                <h2>Navigation</h2>
-                <nav>
-                    <ul>
-                        <li><button onclick="refreshData()" role="button">Refresh Data</button></li>
-                        <li><button onclick="toggleAutoRefresh()" id="auto-refresh-btn" role="button">Enable Auto Refresh</button></li>
-                    </ul>
-                </nav>
-            </section>
+                <footer class="grid">
+                    <button onclick="refreshData()" role="button">Refresh Data</button>
+                    <button onclick="toggleAutoRefresh()" id="auto-refresh-btn" role="button">Enable Auto Refresh</button>
+                </footer>
+            </article>
         </div>
 
         <script>
