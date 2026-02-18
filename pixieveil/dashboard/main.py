@@ -42,14 +42,31 @@ class Dashboard:
         await self.app.shutdown()
         await self.app.cleanup()
 
-    @aiohttp_jinja2.template('index.html')
     async def handle_index(self, request: web.Request) -> web.Response:
-        return {}
+        template = self.load_template('index.html')
+        return web.Response(text=template, content_type='text/html')
 
-    @aiohttp_jinja2.template('metrics.html')
     async def handle_metrics(self, request: web.Request) -> web.Response:
-        return {}
+        template = self.load_template('metrics.html')
+        return web.Response(text=template, content_type='text/html')
 
-    @aiohttp_jinja2.template('status.html')
     async def handle_status(self, request: web.Request) -> web.Response:
-        return {}
+        template = self.load_template('status.html')
+        return web.Response(text=template, content_type='text/html')
+
+    def load_template(self, template_name: str, **kwargs) -> str:
+        """
+        Loads a template file and replaces placeholders with values from kwargs.
+
+        Args:
+            template_name (str): The name of the template file to load.
+            **kwargs: Key-value pairs to replace placeholders in the template.
+
+        Returns:
+            str: The rendered template with placeholders replaced.
+        """
+        with open(f'pixieveil/dashboard/templates/{template_name}', 'r') as file:
+            template = file.read()
+        for key, value in kwargs.items():
+            template = template.replace(f'{{{{{key}}}}}', str(value))
+        return template
