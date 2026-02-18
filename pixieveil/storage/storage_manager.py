@@ -274,8 +274,7 @@ class StorageManager:
         logger.info(f"Starting study completion checker with timeout: {timeout}s")
         while True:
             now = time.time()
-            logger.debug(f"Checking study completions at {now}")
-            
+
             # Thread-safe access to study_states
             with self._lock:
                 study_states_copy = dict(self.study_states)
