@@ -1,5 +1,3 @@
-import aiohttp_jinja2
-import jinja2
 from aiohttp import web
 from pixieveil.config.settings import Settings
 
@@ -22,15 +20,11 @@ class Dashboard:
         self.storage_manager = storage_manager
         self.app = web.Application()
         self.setup_routes()
-        self.setup_templates()
 
     def setup_routes(self):
         self.app.router.add_get('/', self.handle_index)
         self.app.router.add_get('/metrics', self.handle_metrics)
         self.app.router.add_get('/status', self.handle_status)
-
-    def setup_templates(self):
-        aiohttp_jinja2.setup(self.app, loader=jinja2.FileSystemLoader('pixieveil/dashboard/templates'))
 
     async def start(self):
         runner = web.AppRunner(self.app)
