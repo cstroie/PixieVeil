@@ -70,8 +70,8 @@ async def main():
     try:
         # Start services - wrap the storage_manager call in a task
         await asyncio.gather(
-            dicom_server.start(),
             dashboard.start(),
+            dicom_server.start(),
             asyncio.create_task(storage_manager.check_study_completions())
         )
     except asyncio.CancelledError:

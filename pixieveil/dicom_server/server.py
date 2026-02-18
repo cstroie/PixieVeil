@@ -77,7 +77,7 @@ class DicomServer:
         Raises:
             Exception: If the server fails to start
         """
-        logger.info("Starting DICOM server")
+        logger.info("Starting DICOM server...")
         self.ae = AE(ae_title=self.settings.dicom_server["ae_title"])
         self.ae.port = self.ae_port
         
@@ -102,7 +102,7 @@ class DicomServer:
             self._start_blocking_server,
             handlers  # Pass handlers to server starter
         )
-        logger.info(f"DICOM server starting on port {self.ae_port}")
+        logger.info(f"DICOM server running on port {self.ae_port}")
 
     def _start_blocking_server(self, handlers):
         """
