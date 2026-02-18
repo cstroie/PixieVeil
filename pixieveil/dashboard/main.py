@@ -17,7 +17,7 @@ from typing import Dict, Any
 from aiohttp import web
 
 from pixieveil.config import Settings
-from pixieveil.dashboard.sse import image_counter
+from pixieveil.dashboard.sse import image_counter, init_image_counter
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +56,8 @@ class Dashboard:
         self.runner = None
         self.site = None
         self.app['storage_manager'] = storage_manager
+        # Initialize the image counter when dashboard is created
+        init_image_counter()
 
     async def start(self):
         """
