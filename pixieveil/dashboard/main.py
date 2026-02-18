@@ -1,3 +1,4 @@
+import logging
 from aiohttp import web
 from pixieveil.config.settings import Settings
 
@@ -20,6 +21,7 @@ class Dashboard:
         self.storage_manager = storage_manager
         self.app = web.Application()
         self.setup_routes()
+        self.logger = logging.getLogger(__name__)
 
     def setup_routes(self):
         self.app.router.add_get('/', self.handle_index)
@@ -31,20 +33,25 @@ class Dashboard:
         await runner.setup()
         site = web.TCPSite(runner, 'localhost', self.settings.dashboard_port)
         await site.start()
+        self.logger.info(f"Dashboard started on port {self.settings.dashboard_port}")
 
     async def stop(self):
         await self.app.shutdown()
         await self.app.cleanup()
+        self.logger.info("Dashboard stopped")
 
     async def handle_index(self, request: web.Request) -> web.Response:
+        self.logger.info("Handling index request")
         template = self.load_template('index.html')
         return web.Response(text=template, content_type='text/html')
 
     async def handle_metrics(self, request: web.Request) -> web.Response:
+        self.logger.info("Handling metrics request")
         template = self.load_template('metrics.html')
         return web.Response(text=template, content_type='text/html')
 
     async def handle_status(self, request: web.Request) -> web.Response:
+        self.logger.info("Handling status request")
         template = self.load_template('status.html')
         return web.Response(text=template, content_type='text/html')
 
@@ -59,6 +66,7 @@ class Dashboard:
         Returns:
             str: The rendered template with placeholders replaced.
         """
+        self.logger.info(f"Loading template: {template_name}")
         with open(f'pixieveil/dashboard/templates/{template_name}', 'r') as file:
             template = file.read()
         for key, value in kwargs.items():
