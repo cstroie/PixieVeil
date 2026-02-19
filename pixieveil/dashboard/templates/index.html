@@ -253,39 +253,42 @@
 
                 // Update basic metrics
                 document.getElementById('image-count').textContent = data.image_count || 0;
-                document.getElementById('completed-studies').textContent = data.completed_studies || 0;
-                document.getElementById('studies-in-progress').textContent = data.studies_in_progress || 0;
-                document.getElementById('total-studies').textContent = data.total_studies || 0;
-                document.getElementById('avg-processing-time').textContent = data.average_processing_time || 0;
-
+                document.getElementById('completed-studies').textContent = data.studies?.completed || 0;
+                document.getElementById('studies-in-progress').textContent = data.studies?.in_progress || 0;
+                document.getElementById('total-studies').textContent = data.studies?.total || 0;
+                
+                // Get counters from the new hierarchical structure
+                const counters = data.counters || {};
+                
                 // Update reception metrics
-                document.getElementById('received-studies').textContent = data.received_studies || 0;
-                document.getElementById('received-images').textContent = data.received_images || 0;
-                document.getElementById('received-bytes').textContent = formatBytes(data.received_bytes || 0);
+                document.getElementById('received-studies').textContent = counters.reception?.studies || 0;
+                document.getElementById('received-images').textContent = counters.reception?.images || 0;
+                document.getElementById('received-bytes').textContent = formatBytes(counters.reception?.bytes || 0);
 
                 // Update storage metrics
-                document.getElementById('stored-studies').textContent = data.stored_studies || 0;
-                document.getElementById('stored-series').textContent = data.stored_series || 0;
-                document.getElementById('stored-images').textContent = data.stored_images || 0;
+                document.getElementById('stored-studies').textContent = counters.storage?.studies || 0;
+                document.getElementById('stored-series').textContent = counters.storage?.series || 0;
+                document.getElementById('stored-images').textContent = counters.storage?.images || 0;
 
                 // Update archive metrics
-                document.getElementById('archived-studies').textContent = data.archived_studies || 0;
-                document.getElementById('archived-images').textContent = data.archived_images || 0;
-                document.getElementById('uploaded-studies').textContent = data.uploaded_studies || 0;
-                document.getElementById('upload-bytes').textContent = formatBytes(data.upload_bytes || 0);
+                document.getElementById('archived-studies').textContent = counters.archive?.studies || 0;
+                document.getElementById('archived-images').textContent = counters.archive?.images || 0;
+                document.getElementById('uploaded-studies').textContent = counters.remote_storage?.studies || 0;
+                document.getElementById('upload-bytes').textContent = formatBytes(counters.remote_storage?.bytes || 0);
 
                 // Update performance metrics
-                document.getElementById('processing-time-total').textContent = formatSeconds(data.processing_time_total || 0);
-                document.getElementById('processed-images').textContent = data.processed_images || 0;
-                document.getElementById('anonymized-images').textContent = data.anonymized_images || 0;
+                document.getElementById('processing-time-total').textContent = formatSeconds(counters.performance?.processing_time_total || 0);
+                document.getElementById('processed-images').textContent = counters.processing?.images || 0;
+                document.getElementById('anonymized-images').textContent = counters.processing?.anonymized_images || 0;
+                document.getElementById('avg-processing-time').textContent = counters.performance?.average_processing_time || 0;
 
                 // Update error metrics
-                document.getElementById('total-errors').textContent = data.total_errors || 0;
-                document.getElementById('validation-errors').textContent = data.validation_errors || 0;
-                document.getElementById('anonymization-errors').textContent = data.anonymization_errors || 0;
-                document.getElementById('processing-errors').textContent = data.processing_errors || 0;
-                document.getElementById('archive-errors').textContent = data.archive_errors || 0;
-                document.getElementById('upload-errors').textContent = data.upload_errors || 0;
+                document.getElementById('total-errors').textContent = counters.errors?.total || 0;
+                document.getElementById('validation-errors').textContent = counters.processing?.errors?.validation || 0;
+                document.getElementById('anonymization-errors').textContent = counters.processing?.errors?.anonymization || 0;
+                document.getElementById('processing-errors').textContent = counters.processing?.errors?.processing || 0;
+                document.getElementById('archive-errors').textContent = counters.archive?.errors || 0;
+                document.getElementById('upload-errors').textContent = counters.remote_storage?.errors || 0;
 
                 // Update timestamp
                 const now = new Date();
