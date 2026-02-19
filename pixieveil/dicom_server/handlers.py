@@ -97,10 +97,12 @@ class CStoreSCPHandler:
             # Save the DICOM image temporarily
             temp_path = self.storage.save_temp_image(ds_bytes, image_id)
 
+            logger.info(f"Successfully received image {image_id}")
+
             # Process the image
             self.storage.process_image(temp_path, image_id)
 
-            logger.info(f"Successfully received image {image_id}")
+            # return success status
             return 0x0000  # Success
 
         except Exception as e:

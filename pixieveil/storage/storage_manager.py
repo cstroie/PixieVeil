@@ -16,7 +16,6 @@ Classes:
 import asyncio
 import logging
 import shutil
-import tempfile
 import time
 import threading
 from pathlib import Path
@@ -82,13 +81,13 @@ class StorageManager:
             settings: Application configuration settings containing storage paths
                       and other configuration options
         """
-        logger.debug("Initializing StorageManager")
+        logger.debug("Initializing StorageManager...")
         self.settings = settings
         self.base_path = Path(settings.storage["base_path"])
-        self.temp_path = Path(settings.storage["temp_path"])
         self.base_path.mkdir(parents=True, exist_ok=True)
-        self.temp_path.mkdir(parents=True, exist_ok=True)
         logger.debug(f"Created base directory: {self.base_path}")
+        self.temp_path = Path(settings.storage["temp_path"])
+        self.temp_path.mkdir(parents=True, exist_ok=True)
         logger.debug(f"Created temp directory: {self.temp_path}")
         
         self.remote_storage = RemoteStorage(settings)
@@ -114,7 +113,7 @@ class StorageManager:
         self.image_counters = {}  # (study_number, series_number) -> image_counter
         self._lock = threading.Lock()
         
-        # Statistics counters - restructured into two levels
+        # Statistics counters
         self.counters = {
             'reception': {
                 'studies': 0,
@@ -122,8 +121,8 @@ class StorageManager:
                 'bytes': 0
             },
             'processing': {
-                'images': 0,
                 'studies': 0,
+                'images': 0,
                 'anonymized_images': 0,
                 'errors': {
                     'anonymization': 0,
@@ -153,9 +152,9 @@ class StorageManager:
                 'bytes': 0
             },
             'performance': {
-                'processing_time_total': 0,
-                'processing_time_count': 0,
-                'average_processing_time': 0
+                'total_time': 0,
+                'count_time': 0,
+                'average_time': 0
             },
             'cleanup': {
                 'studies': 0,
@@ -242,7 +241,6 @@ class StorageManager:
             # Note: We can't determine study UID until we read the DICOM file
             # This will be updated in process_image method
 
-        logger.debug(f"Saved temporary image to: {temp_file}")
         return temp_file
 
     def process_image(self, image_path: Path, image_id: str):
@@ -316,6 +314,7 @@ class StorageManager:
                     self.study_map[study_uid] = self.study_counter
                     logger.debug(f"Assigned new study number {self.study_counter} to study {study_uid}")
                 
+                # Get assigned study number for this study UID
                 study_number = self.study_map[study_uid]
             
                 # Assign series number
@@ -336,7 +335,8 @@ class StorageManager:
                     
                     self.series_map[key] = (study_number, series_count)
                     logger.debug(f"Assigned new series number {series_count} to series {series_uid}")
-                
+
+                # Get assigned study and series numbers for this image
                 study_number, series_number = self.series_map[key]
                 
                 # Get next image number in series
@@ -379,10 +379,10 @@ class StorageManager:
             # Update processing time
             processing_time = time.time() - start_time
             with self._lock:
-                self.counters['performance']['processing_time_total'] += processing_time
-                self.counters['performance']['processing_time_count'] += 1
-                self.counters['performance']['average_processing_time'] = (
-                    self.counters['performance']['processing_time_total'] / self.counters['performance']['processing_time_count']
+                self.counters['performance']['total_time'] += processing_time
+                self.counters['performance']['count_time'] += 1
+                self.counters['performance']['average_time'] = (
+                    self.counters['performance']['total_time'] / self.counters['performance']['count_time']
                 )
             logger.debug(f"Image {image_id} processed in {processing_time:.3f}s")
 
@@ -439,9 +439,8 @@ class StorageManager:
         """
         # Get completion timeout from settings, default to 120 seconds if not specified
         timeout = self.settings.study.get("completion_timeout", 120)
-        logger.debug(f"Study completion timeout set to: {timeout}s")
-        
         logger.info(f"Starting study completion checker with timeout: {timeout}s")
+
         while True:
             now = time.time()
 
@@ -490,10 +489,10 @@ class StorageManager:
                                 self.counters['export']['images'] += image_count
                             
                             # Upload to remote storage
-                            logger.debug(f"Uploading study {zip_filename} to remote storage")
+                            logger.debug(f"Uploading study {zip_path} to remote storage")
                             success = await self.remote_storage.upload_file(
                                 zip_path, 
-                                f"studies/{zip_filename}.zip"
+                                f"{zip_path}.zip"
                             )
                             # If remote not configured
                             if success is None:

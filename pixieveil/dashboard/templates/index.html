@@ -280,7 +280,7 @@
                 document.getElementById('processing-time-total').textContent = formatSeconds(counters.performance?.processing_time_total || 0);
                 document.getElementById('processed-images').textContent = counters.processing?.images || 0;
                 document.getElementById('anonymized-images').textContent = counters.processing?.anonymized_images || 0;
-                document.getElementById('avg-processing-time').textContent = counters.performance?.average_processing_time || 0;
+                document.getElementById('avg-processing-time').textContent = counters.performance?.average_time || 0;
 
                 // Update error metrics
                 document.getElementById('total-errors').textContent = counters.errors?.total || 0;

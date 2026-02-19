@@ -87,4 +87,4 @@ def setup_logging(
         console_handler.setFormatter(formatter)
         root.addHandler(console_handler)
 
-    logging.info("Logging configured successfully")
+    logging.info("Logger configured successfully")

@@ -8,9 +8,7 @@ Classes:
     StudyManager: Manages DICOM studies and their completion status
 """
 
-import asyncio
 import logging
-import uuid
 from collections import defaultdict
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -109,9 +107,6 @@ class StudyManager:
             by the _process_complete_study method.
         """
         try:
-            # Get study images
-            study_images = self.studies[study_uid]
-
             # Check if study is complete
             last_received = self.study_completion_times[study_uid]
             if datetime.now() - last_received > self.completion_timeout:

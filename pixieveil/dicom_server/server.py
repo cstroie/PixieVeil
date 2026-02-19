@@ -77,7 +77,7 @@ class DicomServer:
         Raises:
             Exception: If the server fails to start
         """
-        logger.info("Starting DICOM server...")
+        logger.debug("Starting DICOM server...")
         self.ae = AE(ae_title=self.settings.dicom_server["ae_title"])
         self.ae.port = self.ae_port
         
@@ -102,7 +102,6 @@ class DicomServer:
             self._start_blocking_server,
             handlers  # Pass handlers to server starter
         )
-        logger.info(f"DICOM server running on port {self.ae_port}")
 
     def _start_blocking_server(self, handlers):
         """
@@ -119,7 +118,7 @@ class DicomServer:
         """
         try:
             self.ae.start_server(('', self.ae_port), evt_handlers=handlers)
-            logger.info(f"DICOM server started on port {self.ae_port}")
+            logger.info(f"DICOM server running on port {self.ae_port}")
         except Exception as e:
             logger.error(f"Failed to start DICOM server: {e}")
             raise
@@ -132,7 +131,7 @@ class DicomServer:
         including stopping the background task and shutting down the
         Association Entity.
         """
-        logger.info("Stopping DICOM server")
+        logger.debug("Stopping DICOM server...")
         try:
             if self.server_task:
                 if not self.server_task.done():
@@ -164,7 +163,7 @@ class DicomServer:
         Returns:
             int: DICOM status code (0x0000 for success)
         """
-        logger.info("Received C-ECHO request")
+        logger.debug("Received C-ECHO request")
         return 0x0000  # Success
 
     def _handle_c_store(self, event: "pynetdicom.events.Event") -> int:
@@ -181,7 +180,7 @@ class DicomServer:
         Returns:
             int: DICOM status code (0x0000 for success, 0x0106 for out of resources)
         """
-        logger.info("Received C-STORE request")
+        logger.debug("Received C-STORE request")
         try:
             # Use the C-STORE handler to process the request
             return self.c_store_handler.handle_c_store(

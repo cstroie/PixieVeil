@@ -120,9 +120,8 @@ class Anonymizer:
         if "PatientWeight" in ds: ds.PatientWeight = ""
         
         # Study/Series Information
-        new_study_uid = self._generate_new_uid()
         if "StudyInstanceUID" in ds: 
-            ds.StudyInstanceUID = new_study_uid
+            ds.StudyInstanceUID = self._generate_new_uid()
         if "SeriesInstanceUID" in ds: 
             ds.SeriesInstanceUID = self._generate_new_uid()
         if "SOPInstanceUID" in ds: 
@@ -173,4 +172,5 @@ class Anonymizer:
             if overlay_group in ds:
                 del ds[overlay_group]
         
+        # Return the modified dataset for chaining
         return ds
