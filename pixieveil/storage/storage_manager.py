@@ -444,7 +444,6 @@ class StorageManager:
         logger.info(f"Starting study completion checker with timeout: {timeout}s")
         while True:
             now = time.time()
-            logger.debug(f"Checking study completions at {time.ctime(now)}")
 
             # Thread-safe access to study_states
             with self._lock:
@@ -455,8 +454,6 @@ class StorageManager:
                 for study_uid, state in study_states_copy.items():
                     time_since_last = now - state.last_received
                     logger.debug(f"Study {study_uid}: last received {time_since_last:.1f}s ago")
-            else:
-                logger.debug("No active studies to check")
                 
             for study_uid, state in list(study_states_copy.items()):
                 if not state.completed and (now - state.last_received) > timeout:

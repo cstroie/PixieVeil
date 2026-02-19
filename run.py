@@ -14,7 +14,7 @@ import asyncio
 import logging
 from pixieveil.config import Settings
 from pixieveil.dicom_server.server import DicomServer
-from pixieveil.dashboard.main import Dashboard
+from pixieveil.dashboard.server import Dashboard
 from pixieveil.storage.storage_manager import StorageManager
 
 # Configure logging
