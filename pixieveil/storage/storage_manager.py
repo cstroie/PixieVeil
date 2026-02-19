@@ -169,6 +169,48 @@ class StorageManager:
         }
         logger.debug("StorageManager initialization complete")
 
+    def get_counter(self, category: str, subcategory: str = None, default: Any = 0) -> Any:
+        """
+        Get a counter value from the hierarchical counters structure.
+        
+        This method provides a safe way to access nested counter values
+        without repetitive nested dictionary access patterns.
+        
+        Args:
+            category (str): Top-level category name (e.g., 'reception', 'processing')
+            subcategory (str, optional): Subcategory name (e.g., 'images', 'errors')
+            default (Any, optional): Default value to return if counter not found
+            
+        Returns:
+            Any: The counter value or default if not found
+            
+        Example:
+            # Get reception images count
+            images = self.get_counter('reception', 'images')
+            
+            # Get validation errors
+            validation_errors = self.get_counter('processing', 'errors', 'validation')
+            
+            # Get top-level counter
+            total_errors = self.get_counter('errors', 'total')
+        """
+        with self._lock:
+            if category not in self.counters:
+                return default
+            
+            if subcategory is None:
+                return self.counters[category]
+            
+            if subcategory in self.counters[category]:
+                return self.counters[category][subcategory]
+            
+            # If subcategory is not found but we're looking for nested errors
+            if subcategory == 'errors' and 'errors' in self.counters[category]:
+                if isinstance(self.counters[category]['errors'], dict):
+                    return self.counters[category]['errors']
+            
+            return default
+
     def save_temp_image(self, pdv: bytes, image_id: str) -> Path:
         """
         Save a received DICOM image to temporary storage.
