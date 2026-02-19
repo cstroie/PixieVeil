@@ -170,60 +170,13 @@ class Dashboard:
         
         stats = {
             "server_status": "running",
-            "image_count": -1,
-            "completed_studies": completed_studies,
-            "studies_in_progress": studies_in_progress,
-            "total_studies": total_studies,
-            "average_processing_time": counters.get('performance', {}).get('average_processing_time', 0),
-            
-            # Reception metrics
-            "received_studies": counters.get('reception', {}).get('studies', 0),
-            "received_images": counters.get('reception', {}).get('images', 0),
-            "received_bytes": counters.get('reception', {}).get('bytes', 0),
-            
-            # Processing metrics
-            "processed_images": counters.get('processing', {}).get('images', 0),
-            "processed_studies": counters.get('processing', {}).get('studies', 0),
-            "anonymized_images": counters.get('processing', {}).get('anonymized_images', 0),
-            "validation_errors": counters.get('processing', {}).get('errors', {}).get('validation', 0),
-            "anonymization_errors": counters.get('processing', {}).get('errors', {}).get('anonymization', 0),
-            "processing_errors": counters.get('processing', {}).get('errors', {}).get('processing', 0),
-            
-            # Storage metrics
-            "stored_studies": counters.get('storage', {}).get('studies', 0),
-            "stored_series": counters.get('storage', {}).get('series', 0),
-            "stored_images": counters.get('storage', {}).get('images', 0),
-            
-            # Archive metrics
-            "archived_studies": counters.get('archive', {}).get('studies', 0),
-            "archived_images": counters.get('archive', {}).get('images', 0),
-            "archive_errors": counters.get('archive', {}).get('errors', 0),
-            
-            # Export metrics
-            "exported_studies": counters.get('export', {}).get('studies', 0),
-            "exported_images": counters.get('export', {}).get('images', 0),
-            "export_errors": counters.get('export', {}).get('errors', 0),
-            
-            # Remote storage metrics
-            "uploaded_studies": counters.get('remote_storage', {}).get('studies', 0),
-            "uploaded_images": counters.get('remote_storage', {}).get('images', 0),
-            "upload_errors": counters.get('remote_storage', {}).get('errors', 0),
-            "upload_bytes": counters.get('remote_storage', {}).get('bytes', 0),
-            
-            # Performance metrics
-            "processing_time_total": counters.get('performance', {}).get('processing_time_total', 0),
-            "processing_time_count": counters.get('performance', {}).get('processing_time_count', 0),
-            
-            # Cleanup metrics
-            "cleaned_studies": counters.get('cleanup', {}).get('studies', 0),
-            "cleaned_images": counters.get('cleanup', {}).get('images', 0),
-            
-            # Error metrics
-            "total_errors": counters.get('errors', {}).get('total', 0),
-            "reconnection_attempts": counters.get('errors', {}).get('reconnection_attempts', 0),
-            "timeout_errors": counters.get('errors', {}).get('timeout_errors', 0),
-            
-            "timestamp": asyncio.get_event_loop().time()
+            "timestamp": asyncio.get_event_loop().time(),
+            "counters": counters,
+            "studies": {
+                "completed": completed_studies,
+                "in_progress": studies_in_progress,
+                "total": total_studies
+            }
         }
         
         return web.json_response(stats)
