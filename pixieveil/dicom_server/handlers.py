@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Dict, Any, Optional
 
 import pydicom
+import pynetdicom
 
 from pixieveil.config import Settings
 from pixieveil.storage.storage_manager import StorageManager
