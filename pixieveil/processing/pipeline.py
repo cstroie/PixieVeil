@@ -109,7 +109,8 @@ class ProcessingPipeline:
             # Process study management
             await self.study_manager.process_image(anonymized_path, image_id)
 
-            logger.info(f"Successfully processed image {image_id} using profile '{self.anonymization_profile}'")
+            profile_info = f"using profile '{self.anonymization_profile}'" if self.anonymization_profile else "with default settings"
+            logger.info(f"Successfully processed image {image_id} {profile_info}")
             return anonymized_path
 
         except Exception as e:

@@ -42,31 +42,34 @@ class Anonymizer:
     
     Attributes:
         settings (Settings): Application configuration settings
-        profile (Optional[str]): Current anonymization profile name
+        profile_name (Optional[str]): Current anonymization profile name
         profile_config (Optional[Dict[str, Any]]): Current profile configuration
         pseudo_values (Dict[str, Dict[str, Any]]): Cache for persistent pseudo values
     """
     
-    def __init__(self, settings: Settings, profile: Optional[str] = None):
+    def __init__(self, settings: Settings, profile_name: Optional[str] = None):
         """
-        Initialize the Anonymizer with application settings and profile.
+        Initialize the Anonymizer with application settings and profile name.
         
         Args:
             settings: Application configuration settings containing anonymization
                       rules and preferences
-            profile: Name of the anonymization profile to use (optional)
+            profile_name: Name of the anonymization profile to use (optional)
         """
         self.settings = settings
-        self.profile = profile
+        self.profile_name = profile_name
         self.profile_config = None
         self.pseudo_values = {}
         
-        # Load profile configuration if specified
-        if profile and profile in settings.anonymization_profiles:
-            self.profile_config = settings.anonymization_profiles[profile]
-            logger.info(f"Using anonymization profile: {profile}")
+        # Load profile configuration using the new structure
+        self.profile_config = settings.get_anonymization_profile(profile_name)
+        
+        if profile_name and self.profile_config:
+            logger.info(f"Using anonymization profile: {profile_name}")
+        elif profile_name:
+            logger.warning(f"Anonymization profile '{profile_name}' not found, using default behavior")
         else:
-            logger.warning(f"Anonymization profile '{profile}' not found, using default behavior")
+            logger.info("Using default anonymization behavior")
     
     def _current_date(self):
         """
@@ -252,7 +255,8 @@ class Anonymizer:
             anonymized_path = image_path.parent / f"anonymized_{image_path.name}"
             ds.save_as(anonymized_path)
             
-            logger.info(f"Successfully anonymized image {image_id} using profile '{self.profile}'")
+            profile_info = f"using profile '{self.profile_name}'" if self.profile_name else "with default settings"
+            logger.info(f"Successfully anonymized image {image_id} {profile_info}")
             return anonymized_path
             
         except Exception as e:

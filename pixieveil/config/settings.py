@@ -56,6 +56,27 @@ class Settings(BaseModel):
     logging: Dict[str, Any] = Field(default_factory=dict)
     anonymization_profiles: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
 
+    def get_anonymization_profile(self, profile_name: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Get the anonymization profile configuration.
+        
+        Args:
+            profile_name (Optional[str]): Name of the profile to retrieve.
+                                        If None, uses the default profile from settings.
+                
+        Returns:
+            Dict[str, Any]: The anonymization profile configuration
+        """
+        if profile_name is None:
+            # Get default profile from settings
+            profile_name = self.anonymization.get("default", "RESEARCH")
+        
+        # Get profiles from nested structure
+        profiles = self.anonymization.get("profiles", {})
+        
+        # Return the requested profile or empty dict if not found
+        return profiles.get(profile_name, {})
+
     @classmethod
     def load(cls, config_path: Path = None) -> "Settings":
         """
