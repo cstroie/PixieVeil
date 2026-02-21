@@ -147,13 +147,13 @@ class StorageManager:
                 logger.info(f"Filtering out image {image_id} based on series criteria")
                 return
 
-            # Anonymize the image - FIXED: Added missing image_path and image_id arguments
+            # Anonymize the image
             anonymized_path = self.anonymizer.anonymize(ds, image_path, image_id)
             if not anonymized_path:
                 logger.warning(f"Failed to anonymize image: {image_id}")
                 return
 
-            # Process study management - FIXED: Added await for async method
+            # Process study management
             await self.study_manager.process_image(anonymized_path, image_id)
 
             logger.info(f"Successfully processed image {image_id}")

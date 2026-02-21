@@ -61,13 +61,17 @@ class Anonymizer:
         self.profile_config = None
         self.pseudo_values = {}
         
-        # Load profile configuration using the new structure
-        self.profile_config = settings.get_anonymization_profile(profile_name)
+        if self.profile_name is None:
+            # Get default profile from settings
+            self.profile_name = self.settings.anonymization.get("default", "RESEARCH")
         
-        if profile_name and self.profile_config:
-            logger.info(f"Using anonymization profile: {profile_name}")
-        elif profile_name:
-            logger.warning(f"Anonymization profile '{profile_name}' not found, using default behavior")
+        # Load profile configuration using the new structure
+        self.profile_config = settings.get_anonymization_profile(self.profile_name)
+        
+        if self.profile_name and self.profile_config:
+            logger.info(f"Using anonymization profile: {self.profile_name}")
+        elif self.profile_name:
+            logger.warning(f"Anonymization profile '{self.profile_name}' not found, using default behavior")
         else:
             logger.info("Using default anonymization behavior")
     
@@ -247,6 +251,13 @@ class Anonymizer:
                         ds.SeriesDate = current_date
                     if hasattr(ds, 'AcquisitionDate'):
                         ds.AcquisitionDate = current_date
+                    current_time = self._current_time()
+                    if hasattr(ds, 'StudyTime'):
+                        ds.StudyTime = current_time
+                    if hasattr(ds, 'SeriesTime'):
+                        ds.SeriesTime = current_time
+                    if hasattr(ds, 'AcquisitionTime'):
+                        ds.AcquisitionTime = current_time
             else:
                 # Fallback to default anonymization behavior
                 self._default_anonymization(ds)
