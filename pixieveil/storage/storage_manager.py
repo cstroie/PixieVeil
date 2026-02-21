@@ -122,7 +122,7 @@ class StorageManager:
             
         return temp_file
 
-    def process_image(self, image_path: Path, image_id: str):
+    async def process_image(self, image_path: Path, image_id: str):
         """
         Process a received DICOM image through the complete pipeline.
         
@@ -153,8 +153,8 @@ class StorageManager:
                 logger.warning(f"Failed to anonymize image: {image_id}")
                 return
 
-            # Process study management
-            self.study_manager.process_image(anonymized_path, image_id)
+            # Process study management - FIXED: Added await for async method
+            await self.study_manager.process_image(anonymized_path, image_id)
 
             logger.info(f"Successfully processed image {image_id}")
             
