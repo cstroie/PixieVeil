@@ -67,7 +67,6 @@ class CStoreSCPHandler:
         try:
             # Get a unique identifier for this image
             image_id = f"{dataset.SOPInstanceUID}"
-            print(f"Received C-STORE request for image ID: {image_id}")
 
             # Create a new DICOM dataset with file meta and pixel data
             ds = pydicom.Dataset()
@@ -75,8 +74,7 @@ class CStoreSCPHandler:
             ds.update(dataset)
             
             # Save the DICOM image to temporary storage
-            temp_path = self.storage_manager.save_temp_image(ds_bytes, image_id)
-            print(f"Saved incoming DICOM image to temporary path: {temp_path}")
+            temp_path = self.storage_manager.save_temp_image(ds, image_id)
 
             # Process the image through the storage manager
             self.storage_manager.process_image(temp_path, image_id)

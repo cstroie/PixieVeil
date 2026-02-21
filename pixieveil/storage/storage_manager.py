@@ -102,12 +102,12 @@ class StorageManager:
             
         return self.counters[key]
 
-    def save_temp_image(self, pdv: bytes, image_id: str) -> Path:
+    def save_temp_image(self, ds: pydicom.Dataset, image_id: str) -> Path:
         """
         Save a DICOM image to temporary storage.
         
         Args:
-            pdv (bytes): DICOM pixel data value
+            ds (pydicom.Dataset): The DICOM dataset to save
             image_id (str): Unique identifier for this DICOM image
             
         Returns:
@@ -117,19 +117,8 @@ class StorageManager:
         temp_dir.mkdir(parents=True, exist_ok=True)
         
         temp_file = temp_dir / f"{image_id}.dcm"
-        with open(temp_file, "wb") as f:
-            f.write(pdv)
-            
-            
-            # Convert to bytes using pydicom's save_as
-            from io import BytesIO
-            buffer = BytesIO()
-            # Use new enforce_file_format parameter instead of deprecated write_like_original
-            ds.save_as(buffer, enforce_file_format=False)
-            ds_bytes = buffer.getvalue()
-
-
-
+        # Use new enforce_file_format parameter instead of deprecated write_like_original
+        ds.save_as(temp_file, enforce_file_format=True)
 
         return temp_file
 
