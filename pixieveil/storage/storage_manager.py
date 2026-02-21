@@ -135,7 +135,7 @@ class StorageManager:
         """
         try:
             # Read the DICOM image
-            ds = pydicom.dcmread(image_path)
+            ds = pydicom.dcmread(image_path, force=True)
 
             # Validate the image
             if not self._validate_dicom(ds):
