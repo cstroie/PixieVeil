@@ -210,7 +210,7 @@ class StorageManager:
             
             return default
 
-    def save_temp_image(self, pdv: bytes, image_id: str) -> Path:
+    def save_temp_image(self, ds: pydicom.Dataset, image_id: str) -> Path:
         """
         Save a received DICOM image to temporary storage.
         
@@ -218,7 +218,7 @@ class StorageManager:
         The image is saved with a unique ID to prevent conflicts.
         
         Args:
-            pdv (bytes): DICOM pixel data received from the DICOM server
+            ds (pydicom.Dataset): The DICOM dataset to save
             image_id (str): Unique identifier for this DICOM image
             
         Returns:
@@ -227,15 +227,15 @@ class StorageManager:
         Raises:
             OSError: If the file cannot be written to temporary storage
         """
-        logger.debug(f"Saving temporary image {image_id} with size {len(pdv)} bytes")
+        logger.debug(f"Saving temporary image {image_id}")
         temp_file = self.temp_path / f"{image_id}.dcm"
         with open(temp_file, "wb") as f:
-            f.write(pdv)
+            ds.save_as(f, enforce_file_format=True)
 
         # Update reception counters
         with self._lock:
             self.counters['reception']['images'] += 1
-            self.counters['reception']['bytes'] += len(pdv)
+            self.counters['reception']['bytes'] += temp_file.stat().st_size
             
             # Check if this is the first image for a new study
             # Note: We can't determine study UID until we read the DICOM file
