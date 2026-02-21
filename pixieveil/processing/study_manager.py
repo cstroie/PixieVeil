@@ -51,7 +51,7 @@ class StudyManager:
         self.study_completion_times = {}
         self.completion_timeout = timedelta(seconds=settings.study.get("completion_timeout", 300))
 
-    async def process_image(self, image_path: Path, image_id: str):
+    def process_image(self, image_path: Path, image_id: str):
         """
         Process a DICOM image for study management purposes.
         
@@ -86,12 +86,12 @@ class StudyManager:
             self.study_completion_times[study_uid] = datetime.now()
 
             # Check if study is complete
-            await self._check_study_completion(study_uid)
+            self._check_study_completion(study_uid)
 
         except Exception as e:
             logger.error(f"Failed to process study management for image {image_id}: {e}")
 
-    async def _check_study_completion(self, study_uid: str):
+    def _check_study_completion(self, study_uid: str):
         """
         Check if a study is complete based on timeout settings.
         
@@ -111,12 +111,12 @@ class StudyManager:
             last_received = self.study_completion_times[study_uid]
             if datetime.now() - last_received > self.completion_timeout:
                 # Study is complete, process it
-                await self._process_complete_study(study_uid)
+                self._process_complete_study(study_uid)
 
         except Exception as e:
             logger.error(f"Error checking study completion for {study_uid}: {e}")
 
-    async def _process_complete_study(self, study_uid: str):
+    def _process_complete_study(self, study_uid: str):
         """
         Process a complete study.
         

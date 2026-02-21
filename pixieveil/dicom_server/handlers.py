@@ -46,9 +46,10 @@ class CStoreSCPHandler:
         self.settings = settings
         self.storage_manager = storage_manager
 
-    async def handle_c_store(self, assoc: "pynetdicom.association.Association",
+    def handle_c_store(self, assoc: "pynetdicom.association.Association",
                            context: "pynetdicom.presentation.PresentationContext",
-                           req: "pynetdicom.sop_class.SOPClass"):
+                           dataset: pydicom.Dataset,
+                           file_meta: pydicom.Dataset) -> int:
         """
         Handle a C-STORE request from a DICOM modality.
         
@@ -64,14 +65,21 @@ class CStoreSCPHandler:
             int: Status code indicating success or failure
         """
         try:
-            # Generate a unique identifier for this image
-            image_id = f"{req.SOPInstanceUID}"
+            # Get a unique identifier for this image
+            image_id = f"{dataset.SOPInstanceUID}"
+            print(f"Received C-STORE request for image ID: {image_id}")
+
+            # Create a new DICOM dataset with file meta and pixel data
+            ds = pydicom.Dataset()
+            ds.file_meta = file_meta
+            ds.update(dataset)
             
             # Save the DICOM image to temporary storage
-            temp_path = self.storage_manager.save_temp_image(req.file_meta, image_id)
-            
-            # Process the image through the storage manager - FIXED: Added await for async method
-            await self.storage_manager.process_image(temp_path, image_id)
+            temp_path = self.storage_manager.save_temp_image(ds_bytes, image_id)
+            print(f"Saved incoming DICOM image to temporary path: {temp_path}")
+
+            # Process the image through the storage manager
+            self.storage_manager.process_image(temp_path, image_id)
             
             logger.info(f"Successfully received image {image_id}")
             return 0x0000  # Success

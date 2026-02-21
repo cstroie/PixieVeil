@@ -120,9 +120,20 @@ class StorageManager:
         with open(temp_file, "wb") as f:
             f.write(pdv)
             
+            
+            # Convert to bytes using pydicom's save_as
+            from io import BytesIO
+            buffer = BytesIO()
+            # Use new enforce_file_format parameter instead of deprecated write_like_original
+            ds.save_as(buffer, enforce_file_format=False)
+            ds_bytes = buffer.getvalue()
+
+
+
+
         return temp_file
 
-    async def process_image(self, image_path: Path, image_id: str):
+    def process_image(self, image_path: Path, image_id: str):
         """
         Process a received DICOM image through the complete pipeline.
         
@@ -154,7 +165,7 @@ class StorageManager:
                 return
 
             # Process study management
-            await self.study_manager.process_image(anonymized_path, image_id)
+            self.study_manager.process_image(anonymized_path, image_id)
 
             logger.info(f"Successfully processed image {image_id}")
             
