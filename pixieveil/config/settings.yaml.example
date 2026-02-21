@@ -9,11 +9,6 @@ dicom_server:
   max_pdu: 16384
   network_timeout: 30
   storage_timeout: 30
-
-# Anonymization Configuration
-anonymization:
-  # Default anonymization settings when no specific profile is used
-  default_profile: "GDPR"
   
 # Storage Configuration
 storage:
@@ -32,7 +27,6 @@ storage:
 http_server:
   host: "0.0.0.0"
   port: 8080
- debug: false
 
 # Study Completion Configuration
 study:
@@ -61,43 +55,47 @@ logging:
 
 # Anonymization Profiles Configuration
 # These profiles define different anonymization strategies
-anonymization_profiles:
-  # GDPR-compliant anonymization profile
-  GDPR:
-    # Patient information removal
-    PatientName: null
-    PatientBirthDate: null
-    PatientSex: null
-    
-    # Institution information
-    InstitutionName: "DE-IDENTIFIED"
-    
-    # Study and series identifiers
-    StudyID: "ANON"
-    StudyInstanceUID: "PSEUDOUID"
-    SeriesInstanceUID: "PSEUDOUID"
-    FrameOfReferenceUID: "PSEUDOUID"
-    
-    # Global switches
-    PixelBlackout: true
-    KeepPrivateTags: false
-    RetainStudyDate: false
+anonymization:
+  # Anonymization profile in use
+  default: "RESEARCH"
+  # Available anonymization profiles
+  profiles:
+    # GDPR-compliant anonymization profile
+    GDPR:
+      # Patient information removal
+      PatientName: null
+      PatientBirthDate: null
+      PatientSex: null
+      
+      # Institution information
+      InstitutionName: "ANONYMOUS"
+      
+      # Study and series identifiers
+      StudyID: "ANONYMOUS"
+      StudyInstanceUID: "PSEUDO"
+      SeriesInstanceUID: "PSEUDO"
+      FrameOfReferenceUID: "PSEUDO"
+      
+      # Global switches
+      PixelBlackout: true
+      KeepPrivateTags: false
+      RetainStudyDate: false
 
-  # Research-friendly anonymization profile
-  RESEARCH:
-    # Patient information (partial removal)
-    PatientName: "PSEUDO"
-    PatientSex: "UNKNOWN"
-    
-    # Retain study date for research purposes
-    RetainStudyDate: true
-    
-    # Keep pixel data intact
-    PixelBlackout: false
-    
-    # Keep private tags for research
-    KeepPrivateTags: true
-    
-    # Generate persistent pseudo UIDs
-    StudyInstanceUID: "PSEUDOUID"
-    SeriesInstanceUID: "PSEUDOUID"
+    # Research-friendly anonymization profile
+    RESEARCH:
+      # Patient information (partial removal)
+      PatientName: "ANONYMOUS"
+      PatientSex: "UNKNOWN"
+      
+      # Retain study date for research purposes
+      RetainStudyDate: true
+      
+      # Keep pixel data intact
+      PixelBlackout: false
+      
+      # Keep private tags for research
+      KeepPrivateTags: true
+      
+      # Generate persistent pseudo UIDs
+      StudyInstanceUID: "PSEUDO"
+      SeriesInstanceUID: "PSEUDO"
