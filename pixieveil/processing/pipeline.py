@@ -34,7 +34,7 @@ class ProcessingPipeline:
     The pipeline processes images through the following stages:
     1. DICOM validation
     2. Series filtering (based on configured criteria)
-    3. Anonymization (removal of sensitive information)
+    3. Anonymization (removal of sensitive information using configurable profiles)
     4. Study management (tracking and completion monitoring)
     
     Attributes:
@@ -42,18 +42,21 @@ class ProcessingPipeline:
         anonymizer (Anonymizer): Handler for DICOM anonymization
         series_filter (SeriesFilter): Handler for series filtering
         study_manager (StudyManager): Handler for study management
+        anonymization_profile (Optional[str]): Current anonymization profile name
     """
     
-    def __init__(self, settings: Settings):
+    def __init__(self, settings: Settings, anonymization_profile: Optional[str] = None):
         """
-        Initialize the ProcessingPipeline with application settings.
+        Initialize the ProcessingPipeline with application settings and anonymization profile.
         
         Args:
             settings: Application configuration settings containing processing
                       pipeline configuration and component settings
+            anonymization_profile: Name of the anonymization profile to use (optional)
         """
         self.settings = settings
-        self.anonymizer = Anonymizer(settings)
+        self.anonymization_profile = anonymization_profile
+        self.anonymizer = Anonymizer(settings, anonymization_profile)
         self.series_filter = SeriesFilter(settings)
         self.study_manager = StudyManager(settings)
 
@@ -67,7 +70,7 @@ class ProcessingPipeline:
         The processing pipeline consists of the following steps:
         1. DICOM dataset validation
         2. Series filtering based on configured criteria
-        3. Anonymization of sensitive information
+        3. Anonymization of sensitive information using the configured profile
         4. Study management and tracking
         
         Args:
@@ -97,7 +100,7 @@ class ProcessingPipeline:
                 logger.info(f"Filtering out image {image_id} based on series criteria")
                 return None
 
-            # Anonymize the image
+            # Anonymize the image using the configured profile
             anonymized_path = await self.anonymizer.anonymize(ds, image_path, image_id)
             if not anonymized_path:
                 logger.warning(f"Failed to anonymize image: {image_id}")
@@ -106,7 +109,7 @@ class ProcessingPipeline:
             # Process study management
             await self.study_manager.process_image(anonymized_path, image_id)
 
-            logger.info(f"Successfully processed image {image_id}")
+            logger.info(f"Successfully processed image {image_id} using profile '{self.anonymization_profile}'")
             return anonymized_path
 
         except Exception as e:

@@ -10,7 +10,7 @@ Classes:
 
 import yaml
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from pydantic import BaseModel, Field
 
 class Settings(BaseModel):
@@ -29,6 +29,7 @@ class Settings(BaseModel):
     - Study completion timeout settings
     - Series filtering criteria
     - Logging configuration
+    - Anonymization profiles (GDPR, RESEARCH, etc.)
     
     Attributes:
         dicom_server (Dict[str, Any]): Configuration for DICOM server settings
@@ -38,6 +39,7 @@ class Settings(BaseModel):
         study (Dict[str, Any]): Configuration for study completion settings
         series_filter (Dict[str, Any]): Configuration for series filtering criteria
         logging (Dict[str, Any]): Configuration for logging settings
+        anonymization_profiles (Dict[str, Dict[str, Any]]): Configuration for anonymization profiles
         
     Note:
         All configuration sections use default empty dictionaries to ensure
@@ -52,6 +54,7 @@ class Settings(BaseModel):
     study: Dict[str, Any] = Field(default_factory=dict)
     series_filter: Dict[str, Any] = Field(default_factory=dict)
     logging: Dict[str, Any] = Field(default_factory=dict)
+    anonymization_profiles: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
 
     @classmethod
     def load(cls, config_path: Path = None) -> "Settings":
