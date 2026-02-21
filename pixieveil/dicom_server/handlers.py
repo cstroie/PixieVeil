@@ -1,24 +1,22 @@
 """
 DICOM Server Handlers Module
 
-This module provides handlers for DICOM server events, particularly for
-processing C-STORE requests received from DICOM modalities.
+This module provides handlers for DICOM server operations including C-STORE, C-ECHO,
+and other DICOM service class provider (SCP) operations.
 
 Classes:
-    CStoreSCPHandler: Handles C-STORE SCP (Service Class Provider) requests
+    CStoreSCPHandler: Handles C-STORE SCP requests for receiving DICOM images
 """
 
+import asyncio
 import logging
-import uuid
 from pathlib import Path
 from typing import Dict, Any, Optional
 
 import pydicom
-from pydicom.dataset import Dataset
-import pynetdicom
 
 from pixieveil.config import Settings
-from pixieveil.storage import StorageManager
+from pixieveil.storage.storage_manager import StorageManager
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +31,7 @@ class CStoreSCPHandler:
     
     Attributes:
         settings (Settings): Application configuration settings
-        storage (StorageManager): Storage manager for handling DICOM image processing
+        storage_manager (StorageManager): Storage manager for handling DICOM image processing
     """
     
     def __init__(self, settings: Settings, storage_manager: StorageManager):
@@ -42,79 +40,48 @@ class CStoreSCPHandler:
         
         Args:
             settings: Application configuration settings
-            storage_manager: Storage manager instance for handling image processing
+            storage_manager: Storage manager for handling DICOM image processing
         """
         self.settings = settings
-        self.storage = storage_manager
+        self.storage_manager = storage_manager
 
-    def handle_c_store(self, assoc: "pynetdicom.association.Association",
-                      context: "pynetdicom.presentation.PresentationContext",
-                      info: Dict[str, Any]) -> int:
+    async def handle_c_store(self, assoc: "pynetdicom.association.Association",
+                           context: "pynetdicom.presentation.PresentationContext",
+                           req: "pynetdicom.sop_class.SOPClass"):
         """
-        Handle C-STORE requests from DICOM modalities.
+        Handle a C-STORE request from a DICOM modality.
         
-        This method processes incoming DICOM images received via C-STORE requests.
-        It validates the DICOM data, converts it to proper format, and forwards
-        it to the storage manager for processing.
+        This method processes incoming DICOM images received via C-STORE requests,
+        validates them, and forwards them to the storage manager for further processing.
         
         Args:
-            assoc: DICOM association object containing connection information
+            assoc: DICOM association object
             context: Presentation context for the C-STORE request
-            info: Dictionary containing the DICOM dataset and metadata
+            req: C-STORE request object
             
         Returns:
-            int: DICOM status code (0x0000 for success, 0xC000 for processing failure,
-                 0x0106 for out of resources)
-                 
-        Note:
-            The method generates a unique ID for each received image to ensure
-            proper tracking and processing.
+            int: Status code indicating success or failure
         """
         try:
-            # Generate unique ID for the image
-            image_id = str(uuid.uuid4())
-
-            # Get the DICOM dataset from event info
-            if 'dataset' not in info:
-                logger.error("No dataset found in C-STORE request")
-                return 0xC000  # Processing failure
+            # Generate a unique identifier for this image
+            image_id = f"{req.SOPInstanceUID}"
             
-            dataset = info['dataset']
-            file_meta = info.get('file_meta', {})
+            # Save the DICOM image to temporary storage
+            temp_path = self.storage_manager.save_temp_image(req.file_meta, image_id)
             
-            # Create a new DICOM dataset with file meta and pixel data
-            ds = pydicom.Dataset()
-            ds.file_meta = file_meta
-            ds.update(dataset)
+            # Process the image through the storage manager - FIXED: Added await for async method
+            await self.storage_manager.process_image(temp_path, image_id)
             
-            # Convert to bytes using pydicom's save_as
-            from io import BytesIO
-            buffer = BytesIO()
-            # Use new enforce_file_format parameter instead of deprecated write_like_original
-            ds.save_as(buffer, enforce_file_format=False)
-            ds_bytes = buffer.getvalue()
-            
-            # Save the DICOM image temporarily
-            temp_path = self.storage.save_temp_image(ds_bytes, image_id)
-
             logger.info(f"Successfully received image {image_id}")
-
-            # Process the image
-            self.storage.process_image(temp_path, image_id)
-
-            # return success status
             return 0x0000  # Success
-
+            
         except Exception as e:
-            logger.error(f"Failed to receive image: {e}")
-            return 0x0106  # Out of resources
+            logger.error(f"Failed to process C-STORE request: {e}")
+            return 0xC000  # Failure
 
     def _validate_dicom(self, ds: pydicom.Dataset) -> bool:
         """
-        Validate the received DICOM image for basic integrity.
-        
-        This method checks if the DICOM dataset contains the minimum required
-        fields for proper processing.
+        Validate the DICOM image for required fields and basic integrity.
         
         Args:
             ds (pydicom.Dataset): The DICOM dataset to validate
@@ -123,7 +90,9 @@ class CStoreSCPHandler:
             bool: True if the DICOM dataset is valid, False otherwise
         """
         # Basic validation
-        if not hasattr(ds, "SOPClassUID") or not hasattr(ds, "SOPInstanceUID"):
-            return False
+        required_fields = ["StudyInstanceUID", "SeriesInstanceUID", "SOPInstanceUID"]
+        for field in required_fields:
+            if field not in ds:
+                return False
 
         return True
