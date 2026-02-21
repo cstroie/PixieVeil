@@ -70,6 +70,16 @@ class StorageManager:
         # Track counters
         self.counters = {}
 
+    @property
+    def completed_count(self) -> int:
+        """
+        Get the count of completed studies.
+        
+        Returns:
+            int: Number of completed studies
+        """
+        return sum(1 for study_state in self.study_states.values() if study_state.completed)
+
     def get_counter(self, category: str, subcategory: str = None, default: Any = 0) -> Any:
         """
         Get a counter value, initializing if necessary.
