@@ -1,0 +1,103 @@
+# PixieVeil Example Configuration File
+# This file contains example configuration settings for the PixieVeil application.
+# Copy this file to settings.yaml and modify as needed for your deployment.
+
+# DICOM Server Configuration
+dicom_server:
+  port: 11112
+  ae_title: "PIXIEVEIL"
+  max_pdu: 16384
+  network_timeout: 30
+  storage_timeout: 30
+
+# Anonymization Configuration
+anonymization:
+  # Default anonymization settings when no specific profile is used
+  default_profile: "GDPR"
+  
+# Storage Configuration
+storage:
+  # Base directory for storing DICOM studies
+  base_path: "./storage"
+  
+  # Remote storage configuration (optional)
+  remote_storage:
+    enabled: false
+    endpoint: "https://storage.example.com"
+    access_key: ""
+    secret_key: ""
+    bucket: "dicom-studies"
+
+# HTTP Server Configuration (for dashboard)
+http_server:
+  host: "0.0.0.0"
+  port: 8080
+ debug: false
+
+# Study Completion Configuration
+study:
+  # Timeout in minutes after which a study is considered complete
+  completion_timeout: 30
+  
+  # Interval in seconds for checking study completion
+  check_interval: 30
+
+# Series Filtering Configuration
+series_filter:
+  # Modalities to exclude from processing
+  exclude_modalities: []
+  
+  # Series descriptions to exclude
+  exclude_descriptions: []
+  
+  # Whether to filter out reconstructed series
+  exclude_reconstructed: false
+
+# Logging Configuration
+logging:
+  level: "INFO"
+  file: "pixieveil.log"
+  console: true
+
+# Anonymization Profiles Configuration
+# These profiles define different anonymization strategies
+anonymization_profiles:
+  # GDPR-compliant anonymization profile
+  GDPR:
+    # Patient information removal
+    PatientName: null
+    PatientBirthDate: null
+    PatientSex: null
+    
+    # Institution information
+    InstitutionName: "DE-IDENTIFIED"
+    
+    # Study and series identifiers
+    StudyID: "ANON"
+    StudyInstanceUID: "PSEUDOUID"
+    SeriesInstanceUID: "PSEUDOUID"
+    FrameOfReferenceUID: "PSEUDOUID"
+    
+    # Global switches
+    PixelBlackout: true
+    KeepPrivateTags: false
+    RetainStudyDate: false
+
+  # Research-friendly anonymization profile
+  RESEARCH:
+    # Patient information (partial removal)
+    PatientName: "PSEUDO"
+    PatientSex: "UNKNOWN"
+    
+    # Retain study date for research purposes
+    RetainStudyDate: true
+    
+    # Keep pixel data intact
+    PixelBlackout: false
+    
+    # Keep private tags for research
+    KeepPrivateTags: true
+    
+    # Generate persistent pseudo UIDs
+    StudyInstanceUID: "PSEUDOUID"
+    SeriesInstanceUID: "PSEUDOUID"
