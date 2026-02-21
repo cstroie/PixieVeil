@@ -13,6 +13,7 @@ import logging
 import random
 import string
 from datetime import datetime
+from pathlib import Path
 from typing import Dict, Any, Optional, Set
 import pydicom
 from pydicom.uid import generate_uid
