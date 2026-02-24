@@ -41,6 +41,8 @@ def setup_logging(settings: Settings) -> None:
     """
     log_cfg = settings.logging
     log_path = Path(log_cfg.get("file", "pixieveil.log"))
+    # Ensure the directory for the log file exists to avoid FileNotFoundError
+    log_path.parent.mkdir(parents=True, exist_ok=True)
 
     handlers = [
         logging.StreamHandler(),
