@@ -1,13 +1,20 @@
 """
 PixieVeil Application Entry Point
+=================================
 
-This module serves as the main entry point for the PixieVeil application.
-It initializes all services, sets up logging, and coordinates the startup
-and shutdown of all application components.
+This module is the executable entry point for the **PixieVeil** DICOM
+processing service. It is responsible for:
 
-Functions:
-    setup_logging: Configure application logging based on settings
-    main: Main application entry point that starts all services
+* Loading the application configuration via :class:`pixieveil.config.settings.Settings`.
+* Initialising structured, rotating‑file logging based on the configuration.
+* Instantiating core services – the :class:`~pixieveil.storage.storage_manager.StorageManager`,
+  the :class:`~pixieveil.dicom_server.server.DicomServer`, and the
+  :class:`~pixieveil.dashboard.server.Dashboard`.
+* Starting the services concurrently and handling graceful shutdown on
+  cancellation, keyboard interrupt, or unexpected errors.
+
+The module also provides a small ``_run`` helper that is used when the file
+is executed directly (``python run.py``) or via ``python -m pixieveil``.
 """
 
 import asyncio
@@ -22,7 +29,16 @@ from pixieveil.storage.storage_manager import StorageManager
 
 # Configure logging
 def setup_logging(settings: Settings) -> None:
-    """Configure application logging based on settings."""
+    """
+    Configure the root logger according to the ``logging`` section of the
+    :class:`~pixieveil.config.settings.Settings` instance.
+
+    The function creates a rotating file handler (default 5 MiB per file,
+    keeping three backups) and a stream handler that writes to ``stderr``.
+    Log level, format and the log file path are all driven by the user‑
+    supplied configuration, allowing the application to be customised
+    without code changes.
+    """
     log_cfg = settings.logging
     log_path = Path(log_cfg.get("file", "pixieveil.log"))
 
@@ -43,7 +59,7 @@ def setup_logging(settings: Settings) -> None:
     )
 
 
-async def main():
+async def main() -> None:
     """
     Main application entry point.
     
@@ -94,7 +110,14 @@ async def main():
         await storage_manager.stop()
 
 def _run() -> None:
-    """Entry‑point used when executing ``run.py`` directly."""
+    """
+    Entry‑point used when executing ``run.py`` directly.
+
+    It wraps :func:`asyncio.run` around :func:`main` and provides a minimal
+    fallback logger if the configuration cannot be loaded before the
+    ``KeyboardInterrupt`` is caught.  This ensures a clean shutdown message
+    is always emitted, even in error scenarios.
+    """
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
