@@ -168,6 +168,15 @@ class StorageManager:
         }
         logger.debug("StorageManager initialization complete")
 
+        # -----------------------------------------------------------------
+        # Background‑task handling for study‑completion checking
+        # -----------------------------------------------------------------
+        # These attributes are created here so that type‑checkers (mypy,
+        # pyright) know they exist, but they are initialised to ``None``.
+        # ``start()`` will create the task; ``stop()`` will cancel it.
+        self._completion_task: Optional[asyncio.Task] = None
+        self._stop_event: Optional[asyncio.Event] = None
+
     def get_counter(self, category: str, subcategory: str = None, default: Any = 0) -> Any:
         """
         Get a counter value from the hierarchical counters structure.
