@@ -177,6 +177,69 @@ class StorageManager:
         self._completion_task: Optional[asyncio.Task] = None
         self._stop_event: Optional[asyncio.Event] = None
 
+    # -----------------------------------------------------------------
+    # Public lifecycle helpers
+    # -----------------------------------------------------------------
+    async def start(self) -> None:
+        """
+        Launch the background coroutine that periodically checks for
+        completed studies. The coroutine runs until :meth:`stop` is called.
+        This method is idempotent – calling it multiple times will only
+        create a single task.
+        """
+        if self._completion_task is not None:
+            logger.debug("StorageManager.start() called but task already running")
+            return
+
+        logger.info("Starting StorageManager background study‑completion checker")
+        self._stop_event = asyncio.Event()
+        self._completion_task = asyncio.create_task(self._completion_loop())
+
+    async def stop(self) -> None:
+        """
+        Gracefully stop the background completion‑check task.
+        """
+        if self._completion_task is None:
+            logger.debug("StorageManager.stop() called but no task is running")
+            return
+
+        logger.info("Stopping StorageManager background study‑completion checker")
+        assert self._stop_event is not None
+        self._stop_event.set()
+        self._completion_task.cancel()
+        try:
+            await self._completion_task
+        except asyncio.CancelledError:
+            pass
+        finally:
+            self._completion_task = None
+            self._stop_event = None
+
+    # -----------------------------------------------------------------
+    # Internal helper that drives ``check_study_completions`` in a loop
+    # -----------------------------------------------------------------
+    async def _completion_loop(self) -> None:
+        """
+        Re‑run :meth:`check_study_completions` at the interval defined in the
+        configuration (default 30 s). The heavy‑weight ZIP creation is executed
+        in a thread‑pool so the event‑loop stays responsive.
+        """
+        interval = self.settings.study.get("completion_check_interval", 30)
+
+        while not self._stop_event.is_set():
+            try:
+                await asyncio.get_running_loop().run_in_executor(
+                    None,
+                    lambda: asyncio.run(self.check_study_completions(interval))
+                )
+            except Exception as exc:  # pragma: no‑cover
+                logger.error("Unexpected error in study‑completion loop: %s", exc)
+
+            try:
+                await asyncio.wait_for(self._stop_event.wait(), timeout=interval)
+            except asyncio.TimeoutError:
+                pass
+
     def get_counter(self, category: str, subcategory: str = None, default: Any = 0) -> Any:
         """
         Get a counter value from the hierarchical counters structure.
