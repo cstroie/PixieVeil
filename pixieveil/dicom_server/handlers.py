@@ -17,8 +17,8 @@ import pydicom
 from pydicom.dataset import Dataset
 import pynetdicom
 
-from pixieveil.config import Settings
-from pixieveil.storage import StorageManager
+from pixieveil.config.settings import Settings
+from pixieveil.storage.storage_manager import StorageManager
 
 logger = logging.getLogger(__name__)
 
