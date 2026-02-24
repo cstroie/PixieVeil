@@ -10,7 +10,7 @@ Classes:
 
 import yaml
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from pydantic import BaseModel, Field
 
 class Settings(BaseModel):
@@ -54,7 +54,7 @@ class Settings(BaseModel):
     logging: Dict[str, Any] = Field(default_factory=dict)
 
     @classmethod
-    def load(cls, config_path: Path = None) -> "Settings":
+    def load(cls, config_path: Optional[Path] = None) -> "Settings":
         """
         Load application settings from a YAML configuration file.
         
@@ -87,8 +87,12 @@ class Settings(BaseModel):
             config_path = Path("config/settings.yaml")
             if not config_path.exists():
                 config_path = Path("config/settings.yaml.example")
+        # After attempting fallbacks, ensure a file actually exists
+        if not config_path.exists():
+            raise FileNotFoundError(f"Configuration file not found: {config_path}")
 
         with open(config_path, "r") as f:
-            config_data = yaml.safe_load(f)
+            # yaml.safe_load may return None for empty files; default to empty dict
+            config_data = yaml.safe_load(f) or {}
 
         return cls(**config_data)
