@@ -228,10 +228,7 @@ class StorageManager:
 
         while not self._stop_event.is_set():
             try:
-                await asyncio.get_running_loop().run_in_executor(
-                    None,
-                    lambda: asyncio.run(self.check_study_completions(interval))
-                )
+                await self.check_study_completions(interval)
             except Exception as exc:  # pragma: no‑cover
                 logger.error("Unexpected error in study‑completion loop: %s", exc)
 
