@@ -93,17 +93,22 @@ async def main() -> None:
         # Start the background study‑completion checker first
         await storage_manager.start()
 
-        # Run the remaining services concurrently
-        await asyncio.gather(
-            dashboard.start(),
-            dicom_server.start(),
-        )
+        # Start services as background tasks
+        dashboard_task = asyncio.create_task(dashboard.start())
+        dicom_task = asyncio.create_task(dicom_server.start())
+
+        # Wait indefinitely until cancelled (e.g., Ctrl‑C)
+        await asyncio.Event().wait()
     except (asyncio.CancelledError, KeyboardInterrupt):
         logger.info("Shutdown requested by user / cancellation")
     except Exception as exc:
         logger.exception("Unexpected error – shutting down")
     finally:
         logger.info("Stopping services...")
+        # Cancel running service tasks if they are still active
+        for task in (dashboard_task, dicom_task):
+            if not task.done():
+                task.cancel()
         await asyncio.gather(
             dicom_server.stop(),
             dashboard.stop(),
