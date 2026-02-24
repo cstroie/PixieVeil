@@ -489,126 +489,114 @@ class StorageManager:
 
     async def check_study_completions(self, interval=30):
         """
-        Background task to check for completed studies and process them.
-        
-        This method runs continuously in the background, checking if any active
-        studies have timed out (no new images received within the configured
-        timeout period). When a study is detected as complete, it:
+        Check for completed studies and process them.
+
+        This method performs a single pass over active studies, identifying any
+        that have timed out (no new images received within the configured
+        timeout period). For each timed‑out study it:
         1. Creates a ZIP archive of the study
         2. Uploads the archive to remote storage (if configured)
         3. Cleans up local files
-        4. Updates study tracking
-        
+        4. Updates study tracking counters
+
         Args:
-            interval (int): Check interval in seconds (default: 30)
-            
-        Note:
-            This method is designed to be run as an asyncio background task
-            and will continue running until cancelled.
+            interval (int): Check interval in seconds (default: 30).  The
+                caller (the background loop) is responsible for sleeping
+                between calls.
         """
         # Get completion timeout from settings, default to 120 seconds if not specified
         timeout = self.settings.study.get("completion_timeout", 120)
-        logger.info(f"Starting study completion checker with timeout: {timeout}s")
+        logger.info(f"Running study completion check (timeout: {timeout}s)")
 
-        while True:
-            now = time.time()
+        now = time.time()
 
-            # Thread-safe access to study_states
-            with self._lock:
-                study_states_copy = dict(self.study_states)
-            
-            if study_states_copy:
-                logger.debug(f"Tracking {len(self.study_states)} active studies")
-                for study_uid, state in study_states_copy.items():
-                    time_since_last = now - state.last_received
-                    logger.debug(f"Study {study_uid}: last received {time_since_last:.1f}s ago")
-                
-            for study_uid, state in list(study_states_copy.items()):
-                if not state.completed and (now - state.last_received) > timeout:
-                    logger.info(f"Study {study_uid} timed out ({now - state.last_received:.1f}s since last image)")
-                    # Process completed study
-                    # Get numeric study ID from mapping
-                    study_number = self.study_map.get(study_uid)
-                    if not study_number:
-                        logger.warning(f"No study number found for {study_uid}")
-                        continue
-                    
-                    study_dir = self.base_path / f"{study_number:04d}"
-                    if study_dir.exists():
-                        logger.info(f"Processing completed study: {study_number:04d} ({study_uid})")
-                        
-                        # Count images in study
-                        image_count = sum(len(list(study_dir.rglob("*.dcm"))) for _ in [None])
-                        logger.debug(f"Study {study_number:04d} contains {image_count} images")
-                        
-                        # Update archive counters
-                        with self._lock:
-                            self.counters['archive']['studies'] += 1
-                            self.counters['archive']['images'] += image_count
-                        
-                        # Create ZIP archive
-                        zip_filename = f"{study_number:04d}"
-                        logger.debug(f"Creating ZIP archive for study {zip_filename}")
-                        zip_path = await self.zip_manager.create_zip(zip_filename, self.base_path)
-                        if zip_path:
-                            logger.info(f"Created ZIP archive: {zip_path}")
-                            # Update export counters
-                            with self._lock:
-                                self.counters['export']['studies'] += 1
-                                self.counters['export']['images'] += image_count
-                            
-                            # Upload to remote storage
-                            logger.debug(f"Uploading study {zip_path} to remote storage")
-                            success = await self.remote_storage.upload_file(
-                                zip_path, 
-                                f"{zip_path}.zip"
-                            )
-                            # If remote not configured
-                            if success is None:
-                                logger.info(f"Remote storage not configured, keeping local files for study {zip_filename}")
-                                # Thread-safe update of study_states
-                                with self._lock:
-                                    if study_uid in self.study_states:
-                                        self.study_states[study_uid].completed = True
-                                        self.completed_count += 1
-                                        self.counters['cleanup']['studies'] += 1
-                                        self.counters['cleanup']['images'] += image_count
-                                        # Clean up files
-                                        del self.study_states[study_uid]
-                            elif success:
-                                logger.info(f"Successfully uploaded study {study_number:04d}")
-                                # Thread-safe update of study_states and file cleanup
-                                with self._lock:
-                                    if study_uid in self.study_states:
-                                        self.study_states[study_uid].completed = True
-                                        self.completed_count += 1
-                                        self.counters['remote_storage']['studies'] += 1
-                                        self.counters['remote_storage']['images'] += image_count
-                                        self.counters['remote_storage']['bytes'] += zip_path.stat().st_size
-                                        self.counters['cleanup']['studies'] += 1
-                                        self.counters['cleanup']['images'] += image_count
-                                        # Clean up files
-                                        logger.debug(f"Cleaning up study directory: {study_dir}")
-                                        shutil.rmtree(study_dir)
-                                        zip_path.unlink()
-                                        del self.study_states[study_uid]
-                            else:
-                                logger.error(f"Failed to upload study {study_uid}")
-                                with self._lock:
-                                    self.counters['remote_storage']['errors'] += 1
-                                    self.counters['archive']['errors'] += 1
-                                    self.counters['errors']['total'] += 1
-                        else:
-                            logger.error(f"Failed to create ZIP for study {study_uid}")
-                            with self._lock:
-                                self.counters['archive']['errors'] += 1
-                                self.counters['errors']['total'] += 1
-                    else:
-                        logger.warning(f"Study directory missing for {study_uid}")
-                        with self._lock:
-                            self.counters['errors']['total'] += 1
-            
-            await asyncio.sleep(interval)
+        # Thread‑safe snapshot of current study states
+        with self._lock:
+            study_states_copy = dict(self.study_states)
+
+        if study_states_copy:
+            logger.debug(f"Tracking {len(self.study_states)} active studies")
+            for study_uid, state in self.study_states.items():
+                time_since_last = now - state.last_received
+                logger.debug(f"Study {study_uid}: last received {time_since_last:.1f}s ago")
+
+        for study_uid, state in list(study_states_copy.items()):
+            if not state.completed and (now - state.last_received) > timeout:
+                logger.info(f"Study {study_uid} timed out ({now - state.last_received:.1f}s since last image)")
+                # Process completed study
+                study_number = self.study_map.get(study_uid)
+                if not study_number:
+                    logger.warning(f"No study number found for {study_uid}")
+                    continue
+
+                study_dir = self.base_path / f"{study_number:04d}"
+                if not study_dir.exists():
+                    logger.warning(f"Study directory missing for {study_uid}")
+                    with self._lock:
+                        self.counters['errors']['total'] += 1
+                    continue
+
+                logger.info(f"Processing completed study: {study_number:04d} ({study_uid})")
+                image_count = sum(len(list(study_dir.rglob("*.dcm"))) for _ in [None])
+                logger.debug(f"Study {study_number:04d} contains {image_count} images")
+
+                # Update archive counters
+                with self._lock:
+                    self.counters['archive']['studies'] += 1
+                    self.counters['archive']['images'] += image_count
+
+                # Create ZIP archive
+                zip_filename = f"{study_number:04d}"
+                logger.debug(f"Creating ZIP archive for study {zip_filename}")
+                zip_path = await self.zip_manager.create_zip(zip_filename, self.base_path)
+                if not zip_path:
+                    logger.error(f"Failed to create ZIP for study {study_uid}")
+                    with self._lock:
+                        self.counters['archive']['errors'] += 1
+                        self.counters['errors']['total'] += 1
+                    continue
+
+                logger.info(f"Created ZIP archive: {zip_path}")
+
+                # Update export counters
+                with self._lock:
+                    self.counters['export']['studies'] += 1
+                    self.counters['export']['images'] += image_count
+
+                # Upload to remote storage
+                logger.debug(f"Uploading study {zip_path} to remote storage")
+                success = await self.remote_storage.upload_file(zip_path, f"{zip_path}.zip")
+
+                if success is None:
+                    logger.info(f"Remote storage not configured, keeping local files for study {zip_filename}")
+                    with self._lock:
+                        if study_uid in self.study_states:
+                            self.study_states[study_uid].completed = True
+                            self.completed_count += 1
+                            self.counters['cleanup']['studies'] += 1
+                            self.counters['cleanup']['images'] += image_count
+                            del self.study_states[study_uid]
+                elif success:
+                    logger.info(f"Successfully uploaded study {study_number:04d}")
+                    with self._lock:
+                        if study_uid in self.study_states:
+                            self.study_states[study_uid].completed = True
+                            self.completed_count += 1
+                            self.counters['remote_storage']['studies'] += 1
+                            self.counters['remote_storage']['images'] += image_count
+                            self.counters['remote_storage']['bytes'] += zip_path.stat().st_size
+                            self.counters['cleanup']['studies'] += 1
+                            self.counters['cleanup']['images'] += image_count
+                            logger.debug(f"Cleaning up study directory: {study_dir}")
+                            shutil.rmtree(study_dir)
+                            zip_path.unlink()
+                            del self.study_states[study_uid]
+                else:
+                    logger.error(f"Failed to upload study {study_uid}")
+                    with self._lock:
+                        self.counters['remote_storage']['errors'] += 1
+                        self.counters['archive']['errors'] += 1
+                        self.counters['errors']['total'] += 1
     
     def get_counters(self) -> Dict[str, Any]:
         """
