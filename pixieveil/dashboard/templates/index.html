@@ -252,7 +252,8 @@
                 }
 
                 // Update basic metrics
-                document.getElementById('image-count').textContent = data.image_count || 0;
+                // The total image count is now provided via counters.processing.images,
+                // so the dedicated 'image-count' element is updated elsewhere.
                 document.getElementById('completed-studies').textContent = data.studies?.completed || 0;
                 document.getElementById('studies-in-progress').textContent = data.studies?.in_progress || 0;
                 document.getElementById('total-studies').textContent = data.studies?.total || 0;
