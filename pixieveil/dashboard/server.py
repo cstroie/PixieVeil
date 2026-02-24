@@ -12,11 +12,12 @@ Classes:
 import asyncio
 import logging
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 from aiohttp import web
 
 from pixieveil.config import Settings
+from pixieveil.storage.storage_manager import StorageManager
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +42,7 @@ class Dashboard:
         site (web.TCPSite): TCP site for serving the web application
     """
     
-    def __init__(self, settings: Settings, storage_manager):
+    def __init__(self, settings: Settings, storage_manager: StorageManager) -> None:
         """
         Initialize the Dashboard with application settings and storage manager.
         
@@ -52,11 +53,11 @@ class Dashboard:
         """
         self.settings = settings
         self.app = web.Application()
-        self.runner = None
-        self.site = None
+        self.runner: Optional[web.AppRunner] = None
+        self.site: Optional[web.TCPSite] = None
         self.app['storage_manager'] = storage_manager
 
-    async def start(self):
+    async def start(self) -> None:
         """
         Start the dashboard web server.
         
@@ -79,6 +80,7 @@ class Dashboard:
         self.app.add_routes([
             web.get("/", self.handle_index),
             web.get("/stats", self.handle_stats),
+            web.get("/health", self.handle_health),
         ])
 
         # Create runner and site
@@ -180,3 +182,11 @@ class Dashboard:
         }
         
         return web.json_response(stats)
+
+    async def handle_health(self, request: web.Request) -> web.Response:
+        """
+        Simple health‑check endpoint.
+
+        Returns a JSON payload indicating that the service is alive.
+        """
+        return web.json_response({"status": "ok"})
