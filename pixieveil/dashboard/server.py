@@ -191,7 +191,7 @@ class Dashboard:
         # Build sections structure using get_counter method
         sections = [
             {
-                "title": "Processing Metrics",
+                "title": "Processed",
                 "metrics": [
                     {"label": "Images Processed", "value": storage_manager.get_counter('processing', 'images')},
                     {"label": "Studies Completed", "value": completed_studies},
@@ -200,7 +200,7 @@ class Dashboard:
                 ]
             },
             {
-                "title": "Reception Metrics",
+                "title": "Reception",
                 "metrics": [
                     {"label": "Studies Received", "value": storage_manager.get_counter('reception', 'studies')},
                     {"label": "Images Received", "value": storage_manager.get_counter('reception', 'images')},
@@ -208,7 +208,7 @@ class Dashboard:
                 ]
             },
             {
-                "title": "Storage Metrics",
+                "title": "Storage",
                 "metrics": [
                     {"label": "Studies Stored", "value": storage_manager.get_counter('storage', 'studies')},
                     {"label": "Series Stored", "value": storage_manager.get_counter('storage', 'series')},
@@ -216,7 +216,7 @@ class Dashboard:
                 ]
             },
             {
-                "title": "Archive Metrics",
+                "title": "Archive",
                 "metrics": [
                     {"label": "Studies Archived", "value": storage_manager.get_counter('archive', 'studies')},
                     {"label": "Images Archived", "value": storage_manager.get_counter('archive', 'images')},
@@ -225,16 +225,16 @@ class Dashboard:
                 ]
             },
             {
-                "title": "Performance Metrics",
+                "title": "Performance",
                 "metrics": [
-                    {"label": "Avg Processing Time", "value": storage_manager.get_counter('performance', 'average_time', 0) * 1000, "suffix": "ms"},
-                    {"label": "Total Processing Time", "value": storage_manager.get_counter('performance', 'total_time', 0) * 1000, "suffix": "ms"},
+                    {"label": "Avg Processing Time", "value": int(round(storage_manager.get_counter('performance', 'average_time', 0) * 1000)), "suffix": "ms"},
+                    {"label": "Total Processing Time", "value": int(round(storage_manager.get_counter('performance', 'total_time', 0) * 1000)), "suffix": "ms"},
                     {"label": "Images Processed", "value": storage_manager.get_counter('processing', 'images')},
                     {"label": "Images Anonymized", "value": storage_manager.get_counter('processing', 'anonymized_images')},
                 ]
             },
             {
-                "title": "Error Metrics",
+                "title": "Errors",
                 "class": "errors",
                 "metrics": [
                     {"label": "Total", "value": storage_manager.get_counter('errors', 'total')},
