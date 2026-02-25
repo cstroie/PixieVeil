@@ -130,18 +130,22 @@
                         article.appendChild(label);
 
                         const valueSpan = document.createElement('span');
-                        let displayValue;
+                        let formattedValue;
                         if (typeof metric.value === 'string') {
-                            displayValue = metric.value;
+                            formattedValue = metric.value;
                         } else if (metric.suffix === 'MB' || metric.suffix === 'ms') {
-                            displayValue = metric.value.toFixed(2) + ' ' + metric.suffix;
-                        } else if (metric.suffix) {
-                            displayValue = metric.value + ' ' + metric.suffix;
+                            formattedValue = metric.value.toFixed(2);
                         } else {
-                            displayValue = metric.value;
+                            formattedValue = metric.value;
                         }
-                        valueSpan.textContent = displayValue;
+                        valueSpan.textContent = formattedValue;
                         article.appendChild(valueSpan);
+
+                        if (metric.suffix) {
+                            const suffixSmall = document.createElement('small');
+                            suffixSmall.textContent = ' ' + metric.suffix;
+                            article.appendChild(suffixSmall);
+                        }
 
                         grid.appendChild(article);
                     });
