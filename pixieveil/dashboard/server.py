@@ -179,8 +179,6 @@ class Dashboard:
         completed_studies = storage_manager.completed_count
         total_studies = completed_studies + studies_in_progress
         
-        counters = storage_manager.get_counters()
-        
         # Helper functions for formatting
         def format_seconds(seconds):
             if seconds < 60:
@@ -192,12 +190,17 @@ class Dashboard:
         def bytes_to_mb(bytes_val):
             return round(bytes_val / (1024 * 1024), 2)
         
-        # Build sections structure
+        # Get processing errors dict for nested access
+        processing_errors = storage_manager.get_counter('processing', 'errors')
+        if not isinstance(processing_errors, dict):
+            processing_errors = {}
+        
+        # Build sections structure using get_counter method
         sections = [
             {
                 "title": "Processing Metrics",
                 "metrics": [
-                    {"label": "Images Processed", "value": counters.get('processing', {}).get('images', 0)},
+                    {"label": "Images Processed", "value": storage_manager.get_counter('processing', 'images')},
                     {"label": "Studies Completed", "value": completed_studies},
                     {"label": "Studies in Progress", "value": studies_in_progress},
                     {"label": "Total Studies", "value": total_studies},
@@ -206,47 +209,47 @@ class Dashboard:
             {
                 "title": "Reception Metrics",
                 "metrics": [
-                    {"label": "Studies Received", "value": counters.get('reception', {}).get('studies', 0)},
-                    {"label": "Images Received", "value": counters.get('reception', {}).get('images', 0)},
-                    {"label": "Data Received", "value": bytes_to_mb(counters.get('reception', {}).get('bytes', 0)), "suffix": "MB"},
+                    {"label": "Studies Received", "value": storage_manager.get_counter('reception', 'studies')},
+                    {"label": "Images Received", "value": storage_manager.get_counter('reception', 'images')},
+                    {"label": "Data Received", "value": bytes_to_mb(storage_manager.get_counter('reception', 'bytes')), "suffix": "MB"},
                 ]
             },
             {
                 "title": "Storage Metrics",
                 "metrics": [
-                    {"label": "Studies Stored", "value": counters.get('storage', {}).get('studies', 0)},
-                    {"label": "Series Stored", "value": counters.get('storage', {}).get('series', 0)},
-                    {"label": "Images Stored", "value": counters.get('storage', {}).get('images', 0)},
+                    {"label": "Studies Stored", "value": storage_manager.get_counter('storage', 'studies')},
+                    {"label": "Series Stored", "value": storage_manager.get_counter('storage', 'series')},
+                    {"label": "Images Stored", "value": storage_manager.get_counter('storage', 'images')},
                 ]
             },
             {
                 "title": "Archive Metrics",
                 "metrics": [
-                    {"label": "Studies Archived", "value": counters.get('archive', {}).get('studies', 0)},
-                    {"label": "Images Archived", "value": counters.get('archive', {}).get('images', 0)},
-                    {"label": "Uploads", "value": counters.get('remote_storage', {}).get('studies', 0)},
-                    {"label": "Upload Data", "value": bytes_to_mb(counters.get('remote_storage', {}).get('bytes', 0)), "suffix": "MB"},
+                    {"label": "Studies Archived", "value": storage_manager.get_counter('archive', 'studies')},
+                    {"label": "Images Archived", "value": storage_manager.get_counter('archive', 'images')},
+                    {"label": "Uploads", "value": storage_manager.get_counter('remote_storage', 'studies')},
+                    {"label": "Upload Data", "value": bytes_to_mb(storage_manager.get_counter('remote_storage', 'bytes')), "suffix": "MB"},
                 ]
             },
             {
                 "title": "Performance Metrics",
                 "metrics": [
-                    {"label": "Avg Processing Time", "value": round(counters.get('performance', {}).get('average_time', 0) * 1000, 2), "suffix": "ms"},
-                    {"label": "Total Processing Time", "value": format_seconds(counters.get('performance', {}).get('total_time', 0))},
-                    {"label": "Images Processed", "value": counters.get('processing', {}).get('images', 0)},
-                    {"label": "Images Anonymized", "value": counters.get('processing', {}).get('anonymized_images', 0)},
+                    {"label": "Avg Processing Time", "value": round(storage_manager.get_counter('performance', 'average_time', 0) * 1000, 2), "suffix": "ms"},
+                    {"label": "Total Processing Time", "value": format_seconds(storage_manager.get_counter('performance', 'total_time', 0))},
+                    {"label": "Images Processed", "value": storage_manager.get_counter('processing', 'images')},
+                    {"label": "Images Anonymized", "value": storage_manager.get_counter('processing', 'anonymized_images')},
                 ]
             },
             {
                 "title": "Error Metrics",
                 "class": "errors",
                 "metrics": [
-                    {"label": "Total", "value": counters.get('errors', {}).get('total', 0)},
-                    {"label": "Validation", "value": counters.get('processing', {}).get('errors', {}).get('validation', 0)},
-                    {"label": "Anonymization", "value": counters.get('processing', {}).get('errors', {}).get('anonymization', 0)},
-                    {"label": "Processing", "value": counters.get('processing', {}).get('errors', {}).get('processing', 0)},
-                    {"label": "Archive", "value": counters.get('archive', {}).get('errors', 0)},
-                    {"label": "Upload", "value": counters.get('remote_storage', {}).get('errors', 0)},
+                    {"label": "Total", "value": storage_manager.get_counter('errors', 'total')},
+                    {"label": "Validation", "value": processing_errors.get('validation', 0)},
+                    {"label": "Anonymization", "value": processing_errors.get('anonymization', 0)},
+                    {"label": "Processing", "value": processing_errors.get('processing', 0)},
+                    {"label": "Archive", "value": storage_manager.get_counter('archive', 'errors')},
+                    {"label": "Upload", "value": storage_manager.get_counter('remote_storage', 'errors')},
                 ]
             }
         ]
