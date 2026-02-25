@@ -130,15 +130,7 @@
                         article.appendChild(label);
 
                         const valueSpan = document.createElement('span');
-                        let formattedValue;
-                        if (typeof metric.value === 'string') {
-                            formattedValue = metric.value;
-                        } else if (metric.suffix === 'MB' || metric.suffix === 'ms') {
-                            formattedValue = metric.value.toFixed(2);
-                        } else {
-                            formattedValue = metric.value;
-                        }
-                        valueSpan.textContent = formattedValue;
+                        valueSpan.textContent = metric.value;
                         article.appendChild(valueSpan);
 
                         if (metric.suffix) {

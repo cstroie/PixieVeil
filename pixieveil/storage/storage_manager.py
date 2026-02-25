@@ -513,7 +513,6 @@ class StorageManager:
         """
         # Get completion timeout from settings, default to 120 seconds if not specified
         timeout = self.settings.study.get("completion_timeout", 120)
-        logger.info(f"Running study completion check (timeout: {timeout}s)")
 
         now = time.time()
 

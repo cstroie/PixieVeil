@@ -181,7 +181,7 @@ class Dashboard:
         
         def bytes_to_mb(bytes_val):
             # Convert bytes to MB and return as float for JS formatting
-            return bytes_val / (1024 * 1024)
+            return int(round(bytes_val / (1024 * 1024)))
         
         # Get processing errors dict for nested access
         processing_errors = storage_manager.get_counter('processing', 'errors')
