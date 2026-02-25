@@ -15,7 +15,7 @@
                 font-weight: bold;
                 color: #2563eb;
             }
-            .error-metrics article span {
+            .metrics.errors article span {
                 color: #ef4444;
             }
             .metrics article strong {
@@ -111,8 +111,8 @@
                 data.sections.forEach(section => {
                     const sectionEl = document.createElement('section');
                     sectionEl.className = 'metrics';
-                    if (section.title === 'Error Metrics') {
-                        sectionEl.classList.add('error-metrics');
+                    if (section.class) {
+                        sectionEl.classList.add(section.class);
                     }
 
                     const title = document.createElement('h3');
