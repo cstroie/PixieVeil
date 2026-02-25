@@ -64,141 +64,7 @@
         </header>
         
         <main>
-            <section class="metrics">
-                <h3>Processing Metrics</h3>
-                <div class="grid">
-                    <article>
-                        <strong>Images Processed</strong>
-                        <span id="image-count">0</span>
-                    </article>
-                    <article>
-                        <strong>Studies Completed</strong>
-                        <span id="completed-studies">0</span>
-                    </article>
-                    <article>
-                        <strong>Studies in Progress</strong>
-                        <span id="studies-in-progress">0</span>
-                    </article>
-                    <article>
-                        <strong>Total Studies</strong>
-                        <span id="total-studies">0</span>
-                    </article>
-                </div>
-            </section>
-            
-            <section class="metrics">
-                <h3>Reception Metrics</h3>
-                <div class="grid">
-                    <article>
-                        <strong>Studies Received</strong>
-                        <span id="received-studies">0</span>
-                    </article>
-                    <article>
-                        <strong>Images Received</strong>
-                        <span id="received-images">0</span>
-                    </article>
-                    <article>
-                        <strong>Data Received</strong>
-                        <span id="received-bytes">0</span>
-                        <small>MB</small>
-                    </article>
-                </div>
-            </section>
-            
-            <section class="metrics">
-                <h3>Storage Metrics</h3>
-                <div class="grid">
-                    <article>
-                        <strong>Studies Stored</strong>
-                        <span id="stored-studies">0</span>
-                    </article>
-                    <article>
-                        <strong>Series Stored</strong>
-                        <span id="stored-series">0</span>
-                    </article>
-                    <article>
-                        <strong>Images Stored</strong>
-                        <span id="stored-images">0</span>
-                    </article>
-                </div>
-            </section>
-            
-            <section class="metrics">
-                <h3>Archive Metrics</h3>
-                <div class="grid">
-                    <article>
-                        <strong>Studies Archived</strong>
-                        <span id="archived-studies">0</span>
-                    </article>
-                    <article>
-                        <strong>Images Archived</strong>
-                        <span id="archived-images">0</span>
-                    </article>
-                    <article>
-                        <strong>Uploads</strong>
-                        <span id="uploaded-studies">0</span>
-                    </article>
-                    <article>
-                        <strong>Upload Data</strong>
-                        <span id="upload-bytes">0</span>
-                        <small>MB</small>
-                    </article>
-                </div>
-            </section>
-            
-            <section class="metrics">
-                <h3>Performance Metrics</h3>
-                <div class="grid">
-                    <article>
-                        <strong>Avg Processing Time</strong>
-                        <span id="avg-processing-time">0</span>
-                        <small>ms</small>
-                    </article>
-                    <article>
-                        <strong>Total Processing Time</strong>
-                        <span id="processing-time-total">0</span>
-                        <small>s</small>
-                    </article>
-                    <article>
-                        <strong>Images Processed</strong>
-                        <span id="processed-images">0</span>
-                    </article>
-                    <article>
-                        <strong>Images Anonymized</strong>
-                        <span id="anonymized-images">0</span>
-                    </article>
-                </div>
-            </section>
-            
-            <section class="metrics error-metrics">
-                <h3>Error Metrics</h3>
-                <div class="grid">
-                    <article>
-                        <strong>Total</strong>
-                        <span id="total-errors">0</span>
-                    </article>
-                    <article>
-                        <strong>Validation</strong>
-                        <span id="validation-errors">0</span>
-                    </article>
-                    <article>
-                        <strong>Anonymization</strong>
-                        <span id="anonymization-errors">0</span>
-                    </article>
-                    <article>
-                        <strong>Processing</strong>
-                        <span id="processing-errors">0</span>
-                    </article>
-                    <article>
-                        <strong>Archive</strong>
-                        <span id="archive-errors">0</span>
-                    </article>
-                    <article>
-                        <strong>Upload</strong>
-                        <span id="upload-errors">0</span>
-                    </article>
-                </div>
-            </section>
+            <div id="metrics-container"></div>
         </main>
         
         <footer class="grid">
@@ -225,9 +91,6 @@
             }
 
             function updateDashboard(data) {
-                // Get counters from the new hierarchical structure FIRST
-                const counters = data.counters || {};
-                
                 // Update status
                 const statusElement = document.getElementById('status');
                 if (data.server_status === 'running') {
@@ -236,60 +99,56 @@
                     statusElement.innerHTML = '<span class="status-indicator status-stopped"></span>Stopped';
                 }
 
-                // Update basic metrics
-                // The total image count is now provided via counters.processing.images
-                document.getElementById('image-count').textContent = counters.processing?.images || 0;
-                document.getElementById('completed-studies').textContent = data.studies?.completed || 0;
-                document.getElementById('studies-in-progress').textContent = data.studies?.in_progress || 0;
-                document.getElementById('total-studies').textContent = data.studies?.total || 0;
-                
-                // Update reception metrics
-                document.getElementById('received-studies').textContent = counters.reception?.studies || 0;
-                document.getElementById('received-images').textContent = counters.reception?.images || 0;
-                document.getElementById('received-bytes').textContent = formatBytes(counters.reception?.bytes || 0);
-
-                // Update storage metrics
-                document.getElementById('stored-studies').textContent = counters.storage?.studies || 0;
-                document.getElementById('stored-series').textContent = counters.storage?.series || 0;
-                document.getElementById('stored-images').textContent = counters.storage?.images || 0;
-
-                // Update archive metrics
-                document.getElementById('archived-studies').textContent = counters.archive?.studies || 0;
-                document.getElementById('archived-images').textContent = counters.archive?.images || 0;
-                document.getElementById('uploaded-studies').textContent = counters.remote_storage?.studies || 0;
-                document.getElementById('upload-bytes').textContent = formatBytes(counters.remote_storage?.bytes || 0);
-
-                // Update performance metrics
-                document.getElementById('processing-time-total').textContent = formatSeconds(counters.performance?.total_time || 0);
-                document.getElementById('processed-images').textContent = counters.processing?.images || 0;
-                document.getElementById('anonymized-images').textContent = counters.processing?.anonymized_images || 0;
-                document.getElementById('avg-processing-time').textContent = counters.performance?.average_time || 0;
-
-                // Update error metrics
-                document.getElementById('total-errors').textContent = counters.errors?.total || 0;
-                document.getElementById('validation-errors').textContent = counters.processing?.errors?.validation || 0;
-                document.getElementById('anonymization-errors').textContent = counters.processing?.errors?.anonymization || 0;
-                document.getElementById('processing-errors').textContent = counters.processing?.errors?.processing || 0;
-                document.getElementById('archive-errors').textContent = counters.archive?.errors || 0;
-                document.getElementById('upload-errors').textContent = counters.remote_storage?.errors || 0;
-
                 // Update timestamp
                 const now = new Date();
                 document.getElementById('last-updated').textContent = now.toLocaleTimeString();
-            }
 
-            function formatBytes(bytes) {
-                if (bytes === 0) return '0';
-                const k = 1024;
-                const sizes = ['Bytes', 'KB', 'MB', 'GB'];
-                const i = Math.floor(Math.log(bytes) / Math.log(k));
-                return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-            }
+                // Clear and rebuild metrics container
+                const container = document.getElementById('metrics-container');
+                container.innerHTML = '';
 
-            function formatSeconds(seconds) {
-                if (seconds < 60) return seconds.toFixed(1) + 's';
-                if (seconds < 3600) return (seconds / 60).toFixed(1) + 'm';
-                return (seconds / 3600).toFixed(1) + 'h';
+                // Iterate over sections
+                data.sections.forEach(section => {
+                    const sectionEl = document.createElement('section');
+                    sectionEl.className = 'metrics';
+                    if (section.title === 'Error Metrics') {
+                        sectionEl.classList.add('error-metrics');
+                    }
+
+                    const title = document.createElement('h3');
+                    title.textContent = section.title;
+                    sectionEl.appendChild(title);
+
+                    const grid = document.createElement('div');
+                    grid.className = 'grid';
+
+                    section.metrics.forEach(metric => {
+                        const article = document.createElement('article');
+
+                        const label = document.createElement('strong');
+                        label.textContent = metric.label;
+                        article.appendChild(label);
+
+                        const valueSpan = document.createElement('span');
+                        let displayValue;
+                        if (typeof metric.value === 'string') {
+                            displayValue = metric.value;
+                        } else if (metric.suffix === 'MB' || metric.suffix === 'ms') {
+                            displayValue = metric.value.toFixed(2) + ' ' + metric.suffix;
+                        } else if (metric.suffix) {
+                            displayValue = metric.value + ' ' + metric.suffix;
+                        } else {
+                            displayValue = metric.value;
+                        }
+                        valueSpan.textContent = displayValue;
+                        article.appendChild(valueSpan);
+
+                        grid.appendChild(article);
+                    });
+
+                    sectionEl.appendChild(grid);
+                    container.appendChild(sectionEl);
+                });
             }
 
             function refreshData() {

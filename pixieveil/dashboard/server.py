@@ -154,13 +154,18 @@ class Dashboard:
         Handle the JSON API endpoint for statistics.
         
         This method provides current system statistics in JSON format
-        for the dashboard to consume and display.
+        for the dashboard to consume and display. The response structure
+        mirrors the dashboard layout with sections and metrics.
         
         The API returns:
-        - Server status
-        - Image processing metrics
-        - Study completion statistics
-        - Performance metrics
+        - server_status: "running" or "stopped"
+        - timestamp: current time
+        - sections: list of sections, each with title and metrics array
+        
+        Each metric has:
+        - label: display label
+        - value: numeric value (or formatted string for complex metrics)
+        - suffix: optional unit suffix (e.g., "MB", "ms")
         
         Args:
             request (web.Request): The incoming HTTP request
@@ -170,23 +175,85 @@ class Dashboard:
         """
         storage_manager = request.app['storage_manager']
         
-        # Get current metrics from storage manager
         studies_in_progress = len(storage_manager.study_states) if hasattr(storage_manager, 'study_states') else 0
         completed_studies = storage_manager.completed_count
         total_studies = completed_studies + studies_in_progress
         
-        # Get all counters from storage manager
         counters = storage_manager.get_counters()
+        
+        # Helper functions for formatting
+        def format_seconds(seconds):
+            if seconds < 60:
+                return f"{seconds:.1f}s"
+            if seconds < 3600:
+                return f"{seconds/60:.1f}m"
+            return f"{seconds/3600:.1f}h"
+        
+        def bytes_to_mb(bytes_val):
+            return round(bytes_val / (1024 * 1024), 2)
+        
+        # Build sections structure
+        sections = [
+            {
+                "title": "Processing Metrics",
+                "metrics": [
+                    {"label": "Images Processed", "value": counters.get('processing', {}).get('images', 0)},
+                    {"label": "Studies Completed", "value": completed_studies},
+                    {"label": "Studies in Progress", "value": studies_in_progress},
+                    {"label": "Total Studies", "value": total_studies},
+                ]
+            },
+            {
+                "title": "Reception Metrics",
+                "metrics": [
+                    {"label": "Studies Received", "value": counters.get('reception', {}).get('studies', 0)},
+                    {"label": "Images Received", "value": counters.get('reception', {}).get('images', 0)},
+                    {"label": "Data Received", "value": bytes_to_mb(counters.get('reception', {}).get('bytes', 0)), "suffix": "MB"},
+                ]
+            },
+            {
+                "title": "Storage Metrics",
+                "metrics": [
+                    {"label": "Studies Stored", "value": counters.get('storage', {}).get('studies', 0)},
+                    {"label": "Series Stored", "value": counters.get('storage', {}).get('series', 0)},
+                    {"label": "Images Stored", "value": counters.get('storage', {}).get('images', 0)},
+                ]
+            },
+            {
+                "title": "Archive Metrics",
+                "metrics": [
+                    {"label": "Studies Archived", "value": counters.get('archive', {}).get('studies', 0)},
+                    {"label": "Images Archived", "value": counters.get('archive', {}).get('images', 0)},
+                    {"label": "Uploads", "value": counters.get('remote_storage', {}).get('studies', 0)},
+                    {"label": "Upload Data", "value": bytes_to_mb(counters.get('remote_storage', {}).get('bytes', 0)), "suffix": "MB"},
+                ]
+            },
+            {
+                "title": "Performance Metrics",
+                "metrics": [
+                    {"label": "Avg Processing Time", "value": round(counters.get('performance', {}).get('average_time', 0) * 1000, 2), "suffix": "ms"},
+                    {"label": "Total Processing Time", "value": format_seconds(counters.get('performance', {}).get('total_time', 0))},
+                    {"label": "Images Processed", "value": counters.get('processing', {}).get('images', 0)},
+                    {"label": "Images Anonymized", "value": counters.get('processing', {}).get('anonymized_images', 0)},
+                ]
+            },
+            {
+                "title": "Error Metrics",
+                "metrics": [
+                    {"label": "Total", "value": counters.get('errors', {}).get('total', 0)},
+                    {"label": "Validation", "value": counters.get('processing', {}).get('errors', {}).get('validation', 0)},
+                    {"label": "Anonymization", "value": counters.get('processing', {}).get('errors', {}).get('anonymization', 0)},
+                    {"label": "Processing", "value": counters.get('processing', {}).get('errors', {}).get('processing', 0)},
+                    {"label": "Archive", "value": counters.get('archive', {}).get('errors', 0)},
+                    {"label": "Upload", "value": counters.get('remote_storage', {}).get('errors', 0)},
+                ]
+            }
+        ]
         
         stats = {
             "server_status": "running",
             "timestamp": asyncio.get_event_loop().time(),
-            "counters": counters,
-            "studies": {
-                "completed": completed_studies,
-                "in_progress": studies_in_progress,
-                "total": total_studies
-            }
+            "sections": sections
         }
         
         return web.json_response(stats)
