@@ -239,6 +239,7 @@ class Dashboard:
             },
             {
                 "title": "Error Metrics",
+                "class": "errors",
                 "metrics": [
                     {"label": "Total", "value": counters.get('errors', {}).get('total', 0)},
                     {"label": "Validation", "value": counters.get('processing', {}).get('errors', {}).get('validation', 0)},
