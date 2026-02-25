@@ -281,6 +281,104 @@ class StorageManager:
             
             return default
 
+    def set_counter(self, category: str, subcategory: str = None, value: Any = 0) -> None:
+        """
+        Set a counter to a specific value in the hierarchical counters structure.
+        
+        This method provides a thread-safe way to set counter values at any level
+        of the counters hierarchy. It will create intermediate dictionaries if needed.
+        
+        Args:
+            category (str): Top-level category name (e.g., 'reception', 'processing')
+            subcategory (str, optional): Subcategory name (e.g., 'images', 'errors')
+            value (Any, optional): Value to set the counter to (default: 0)
+            
+        Example:
+            # Set reception images count
+            storage_manager.set_counter('reception', 'images', 100)
+            
+            # Set a top-level counter
+            storage_manager.set_counter('errors', 'total', 5)
+            
+            # Set a nested error counter
+            storage_manager.set_counter('processing', 'errors', 'validation', 3)
+        """
+        with self._lock:
+            if category not in self.counters:
+                self.counters[category] = {}
+            
+            if subcategory is None:
+                # Set the entire category to the value (usually a dict)
+                self.counters[category] = value
+            else:
+                # Ensure the category is a dictionary
+                if not isinstance(self.counters[category], dict):
+                    self.counters[category] = {}
+                
+                # Special handling for 'errors' subcategory which may have nested structure
+                if subcategory == 'errors' and isinstance(value, dict):
+                    if 'errors' not in self.counters[category]:
+                        self.counters[category]['errors'] = {}
+                    self.counters[category]['errors'].update(value)
+                else:
+                    self.counters[category][subcategory] = value
+
+    def inc_counter(self, category: str, subcategory: str = None, increment: int = 1) -> None:
+        """
+        Increment a counter by a specified value in the hierarchical counters structure.
+        
+        This method provides a thread-safe way to increment counter values. If the
+        counter or any intermediate structure doesn't exist, it will be created with
+        an initial value of 0 before incrementing.
+        
+        Args:
+            category (str): Top-level category name (e.g., 'reception', 'processing')
+            subcategory (str, optional): Subcategory name (e.g., 'images', 'errors')
+            increment (int, optional): Value to add to the counter (default: 1)
+            
+        Example:
+            # Increment reception images count by 1
+            storage_manager.inc_counter('reception', 'images')
+            
+            # Increment by a specific amount
+            storage_manager.inc_counter('processing', 'images', 5)
+            
+            # Increment a nested error counter
+            storage_manager.inc_counter('processing', 'errors', 'validation', 1)
+        """
+        with self._lock:
+            if category not in self.counters:
+                self.counters[category] = {}
+            
+            if subcategory is None:
+                # Increment the category itself (should be a number)
+                if not isinstance(self.counters[category], (int, float)):
+                    self.counters[category] = 0
+                self.counters[category] += increment
+            else:
+                # Ensure the category is a dictionary
+                if not isinstance(self.counters[category], dict):
+                    self.counters[category] = {}
+                
+                # Special handling for 'errors' subcategory which may have nested structure
+                if subcategory == 'errors':
+                    if 'errors' not in self.counters[category]:
+                        self.counters[category]['errors'] = {}
+                    if not isinstance(self.counters[category]['errors'], dict):
+                        self.counters[category]['errors'] = {}
+                    # For errors, we need a third level: the specific error type
+                    # This is handled by passing the error type as subcategory in practice
+                    # But if someone calls inc_counter with subcategory='errors' directly,
+                    # we'll just increment a generic errors counter
+                    if 'total' in self.counters[category]['errors']:
+                        self.counters[category]['errors']['total'] += increment
+                    else:
+                        self.counters[category]['errors']['total'] = increment
+                else:
+                    if subcategory not in self.counters[category]:
+                        self.counters[category][subcategory] = 0
+                    self.counters[category][subcategory] += increment
+
     def save_temp_image(self, ds: pydicom.Dataset, image_id: str) -> Path:
         """
         Save a received DICOM image to temporary storage.
