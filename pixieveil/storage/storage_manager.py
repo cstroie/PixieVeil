@@ -554,7 +554,7 @@ class StorageManager:
                 self.inc_counter('performance', 'total_time', processing_time)
                 self.inc_counter('performance', 'count_time')
                 self.set_counter('performance', 'average_time', 
-                    self.get_counter('performance', 'total_time') / self.get_counter('performance', 'count_time')
+                    self.counters['performance']['total_time'] / self.counters['performance']['count_time']
                 )
             logger.debug(f"Image {image_id} processed in {processing_time:.3f}s")
 
