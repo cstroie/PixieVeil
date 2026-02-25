@@ -13,10 +13,10 @@
             .metrics article span {
                 font-size: 2rem;
                 font-weight: bold;
-                color: #2563eb;
+                color: var(--pico-primary);
             }
             .metrics.errors article span {
-                color: #ef4444;
+                color: var(--pico-form-element-invalid-focus-color);
             }
             .metrics article strong {
                 display: block;
@@ -25,7 +25,7 @@
                 color: var(--pico-muted-color);
             }
             .metrics article small {
-                color: #6b7280;
+                color: var(--pico-muted-color);
                 font-size: 0.875rem;
             }
             .status-indicator {
@@ -33,17 +33,17 @@
                 width: 12px;
                 height: 12px;
                 border-radius: 50%;
-                margin-right: 0.5rem;
+                margin: 0 0.5rem;
             }
             .status-running {
-                background-color: #10b981;
+                background-color: var(--pico-form-element-valid-focus-color);
             }
             .status-stopped {
-                background-color: #ef4444;
+                background-color: var(--pico-form-element-invalid-focus-color);
             }
             .last-updated {
                 font-size: 0.75rem;
-                color: #9ca3af;
+                color: var(--pico-muted-color);
                 text-align: right;
             }
         </style>
