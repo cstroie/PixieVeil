@@ -6,17 +6,25 @@
         <title>PixieVeil Dashboard</title>
         <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
         <style>
-            .metric-card {
-                border-radius: 8px;
-                padding: 1rem;
-                margin: 0.5rem 0;
+            .metrics article {
+                text-align: center;
+                padding: 1.25rem 1rem;
             }
-            .metric-value {
+            .metrics article span {
                 font-size: 2rem;
                 font-weight: bold;
                 color: #2563eb;
             }
-            .metric-label {
+            .error-metrics article span {
+                color: #ef4444;
+            }
+            .metrics article strong {
+                display: block;
+                font-size: 0.9rem;
+                margin-bottom: 0.5rem;
+                color: var(--pico-muted-color);
+            }
+            .metrics article small {
                 color: #6b7280;
                 font-size: 0.875rem;
             }
@@ -38,191 +46,165 @@
                 color: #9ca3af;
                 text-align: right;
             }
-            .metric-grid {
-                display: grid;
-                grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-                gap: 1rem;
-            }
-            .error-metric {
-                color: #ef4444;
-            }
         </style>
     </head>
-    <body>
+    <body class="container">
         <nav></nav>
-        <div class="container">
+        <hgroup>
+            <h1>PixieVeil Dashboard</h1>
+            <p>Real-time DICOM Anonymization Server</p>
+        </hgroup>
+        
+        <header>
+            <h2>System Status</h2>
             <article>
-                <hgroup>
-                    <h1>PixieVeil Dashboard</h1>
-                    <p>Real-time DICOM Anonymization Server</p>
-                </hgroup>
-                
-                <header>
-                    <h2>System Status</h2>
-                    <div class="metric-card">
-                        <p><strong>Status:</strong> <span id="status"><span class="status-indicator status-stopped"></span>Loading...</span></p>
-                        <p class="last-updated">Last updated: <span id="last-updated">Never</span></p>
-                    </div>
-                </header>
-                
-                <main>
-                    <section>
-                        <h2>Processing Metrics</h2>
-                        <div class="metric-grid">
-                            <div class="metric-card">
-                                <p><strong>Images Processed:</strong> <span id="image-count" class="metric-value">0</span></p>
-                                <p class="metric-label">Total DICOM images processed</p>
-                            </div>
-                            
-                            <div class="metric-card">
-                                <p><strong>Studies Completed:</strong> <span id="completed-studies" class="metric-value">0</span></p>
-                                <p class="metric-label">DICOM studies fully processed</p>
-                            </div>
-                            
-                            <div class="metric-card">
-                                <p><strong>Studies in Progress:</strong> <span id="studies-in-progress" class="metric-value">0</span></p>
-                                <p class="metric-label">Currently being processed</p>
-                            </div>
-                            
-                            <div class="metric-card">
-                                <p><strong>Total Studies:</strong> <span id="total-studies" class="metric-value">0</span></p>
-                                <p class="metric-label">Studies processed + in progress</p>
-                            </div>
-                        </div>
-                    </section>
-                    
-                    <section>
-                        <h2>Reception Metrics</h2>
-                        <div class="metric-grid">
-                            <div class="metric-card">
-                                <p><strong>Studies Received:</strong> <span id="received-studies" class="metric-value">0</span></p>
-                                <p class="metric-label">New DICOM studies received</p>
-                            </div>
-                            
-                            <div class="metric-card">
-                                <p><strong>Images Received:</strong> <span id="received-images" class="metric-value">0</span></p>
-                                <p class="metric-label">Total DICOM images received</p>
-                            </div>
-                            
-                            <div class="metric-card">
-                                <p><strong>Data Received:</strong> <span id="received-bytes" class="metric-value">0</span> MB</p>
-                                <p class="metric-label">Total data received (MB)</p>
-                            </div>
-                        </div>
-                    </section>
-                    
-                    <section>
-                        <h2>Storage Metrics</h2>
-                        <div class="metric-grid">
-                            <div class="metric-card">
-                                <p><strong>Studies Stored:</strong> <span id="stored-studies" class="metric-value">0</span></p>
-                                <p class="metric-label">Studies stored locally</p>
-                            </div>
-                            
-                            <div class="metric-card">
-                                <p><strong>Series Stored:</strong> <span id="stored-series" class="metric-value">0</span></p>
-                                <p class="metric-label">Series stored locally</p>
-                            </div>
-                            
-                            <div class="metric-card">
-                                <p><strong>Images Stored:</strong> <span id="stored-images" class="metric-value">0</span></p>
-                                <p class="metric-label">Images stored locally</p>
-                            </div>
-                        </div>
-                    </section>
-                    
-                    <section>
-                        <h2>Archive Metrics</h2>
-                        <div class="metric-grid">
-                            <div class="metric-card">
-                                <p><strong>Studies Archived:</strong> <span id="archived-studies" class="metric-value">0</span></p>
-                                <p class="metric-label">Studies archived to ZIP</p>
-                            </div>
-                            
-                            <div class="metric-card">
-                                <p><strong>Images Archived:</strong> <span id="archived-images" class="metric-value">0</span></p>
-                                <p class="metric-label">Images archived to ZIP</p>
-                            </div>
-                            
-                            <div class="metric-card">
-                                <p><strong>Uploads:</strong> <span id="uploaded-studies" class="metric-value">0</span></p>
-                                <p class="metric-label">Studies uploaded to remote storage</p>
-                            </div>
-                            
-                            <div class="metric-card">
-                                <p><strong>Upload Data:</strong> <span id="upload-bytes" class="metric-value">0</span> MB</p>
-                                <p class="metric-label">Data uploaded to remote storage (MB)</p>
-                            </div>
-                        </div>
-                    </section>
-                    
-                    <section>
-                        <h2>Performance Metrics</h2>
-                        <div class="metric-grid">
-                            <div class="metric-card">
-                                <p><strong>Avg Processing Time:</strong> <span id="avg-processing-time" class="metric-value">0</span>ms</p>
-                                <p class="metric-label">Average time per image</p>
-                            </div>
-                            
-                            <div class="metric-card">
-                                <p><strong>Total Processing Time:</strong> <span id="processing-time-total" class="metric-value">0</span>s</p>
-                                <p class="metric-label">Total processing time</p>
-                            </div>
-                            
-                            <div class="metric-card">
-                                <p><strong>Images Processed:</strong> <span id="processed-images" class="metric-value">0</span></p>
-                                <p class="metric-label">Successfully processed images</p>
-                            </div>
-                            
-                            <div class="metric-card">
-                                <p><strong>Images Anonymized:</strong> <span id="anonymized-images" class="metric-value">0</span></p>
-                                <p class="metric-label">Successfully anonymized images</p>
-                            </div>
-                        </div>
-                    </section>
-                    
-                    <section>
-                        <h2>Error Metrics</h2>
-                        <div class="metric-grid">
-                            <div class="metric-card">
-                                <p><strong>Total Errors:</strong> <span id="total-errors" class="metric-value error-metric">0</span></p>
-                                <p class="metric-label">Total errors encountered</p>
-                            </div>
-                            
-                            <div class="metric-card">
-                                <p><strong>Validation Errors:</strong> <span id="validation-errors" class="metric-value error-metric">0</span></p>
-                                <p class="metric-label">DICOM validation failures</p>
-                            </div>
-                            
-                            <div class="metric-card">
-                                <p><strong>Anonymization Errors:</strong> <span id="anonymization-errors" class="metric-value error-metric">0</span></p>
-                                <p class="metric-label">Anonymization failures</p>
-                            </div>
-                            
-                            <div class="metric-card">
-                                <p><strong>Processing Errors:</strong> <span id="processing-errors" class="metric-value error-metric">0</span></p>
-                                <p class="metric-label">General processing failures</p>
-                            </div>
-                            
-                            <div class="metric-card">
-                                <p><strong>Archive Errors:</strong> <span id="archive-errors" class="metric-value error-metric">0</span></p>
-                                <p class="metric-label">Archive creation failures</p>
-                            </div>
-                            
-                            <div class="metric-card">
-                                <p><strong>Upload Errors:</strong> <span id="upload-errors" class="metric-value error-metric">0</span></p>
-                                <p class="metric-label">Remote storage upload failures</p>
-                            </div>
-                        </div>
-                    </section>
-                </main>
-                
-                <footer class="grid">
-                    <button onclick="refreshData()" role="button">Refresh Data</button>
-                    <button onclick="toggleAutoRefresh()" id="auto-refresh-btn" role="button">Enable Auto Refresh</button>
-                </footer>
-            </article>
-        </div>
+                <p><strong>Status</strong> <span id="status"><span class="status-indicator status-stopped"></span>Loading...</span></p>
+                <p class="last-updated">Last updated: <span id="last-updated">Never</span></p>
+            </div>
+        </header>
+        
+        <main>
+            <section class="metrics">
+                <h3>Processing Metrics</h3>
+                <div class="grid">
+                    <article>
+                        <strong>Images Processed</strong>
+                        <span id="image-count">0</span>
+                    </article>
+                    <article>
+                        <strong>Studies Completed</strong>
+                        <span id="completed-studies">0</span>
+                    </article>
+                    <article>
+                        <strong>Studies in Progress</strong>
+                        <span id="studies-in-progress">0</span>
+                    </article>
+                    <article>
+                        <strong>Total Studies</strong>
+                        <span id="total-studies">0</span>
+                    </article>
+                </div>
+            </section>
+            
+            <section class="metrics">
+                <h3>Reception Metrics</h3>
+                <div class="grid">
+                    <article>
+                        <strong>Studies Received</strong>
+                        <span id="received-studies">0</span>
+                    </article>
+                    <article>
+                        <strong>Images Received</strong>
+                        <span id="received-images">0</span>
+                    </article>
+                    <article>
+                        <strong>Data Received</strong>
+                        <span id="received-bytes">0</span>
+                        <small>MB</small>
+                    </article>
+                </div>
+            </section>
+            
+            <section class="metrics">
+                <h3>Storage Metrics</h3>
+                <div class="grid">
+                    <article>
+                        <strong>Studies Stored</strong>
+                        <span id="stored-studies">0</span>
+                    </article>
+                    <article>
+                        <strong>Series Stored</strong>
+                        <span id="stored-series">0</span>
+                    </article>
+                    <article>
+                        <strong>Images Stored</strong>
+                        <span id="stored-images">0</span>
+                    </article>
+                </div>
+            </section>
+            
+            <section class="metrics">
+                <h3>Archive Metrics</h3>
+                <div class="grid">
+                    <article>
+                        <strong>Studies Archived</strong>
+                        <span id="archived-studies">0</span>
+                    </article>
+                    <article>
+                        <strong>Images Archived</strong>
+                        <span id="archived-images">0</span>
+                    </article>
+                    <article>
+                        <strong>Uploads</strong>
+                        <span id="uploaded-studies">0</span>
+                    </article>
+                    <article>
+                        <strong>Upload Data</strong>
+                        <span id="upload-bytes">0</span>
+                        <small>MB</small>
+                    </article>
+                </div>
+            </section>
+            
+            <section class="metrics">
+                <h3>Performance Metrics</h3>
+                <div class="grid">
+                    <article>
+                        <strong>Avg Processing Time</strong>
+                        <span id="avg-processing-time">0</span>
+                        <small>ms</small>
+                    </article>
+                    <article>
+                        <strong>Total Processing Time</strong>
+                        <span id="processing-time-total">0</span>
+                        <small>s</small>
+                    </article>
+                    <article>
+                        <strong>Images Processed</strong>
+                        <span id="processed-images">0</span>
+                    </article>
+                    <article>
+                        <strong>Images Anonymized</strong>
+                        <span id="anonymized-images">0</span>
+                    </article>
+                </div>
+            </section>
+            
+            <section class="metrics error-metrics">
+                <h3>Error Metrics</h3>
+                <div class="grid">
+                    <article>
+                        <strong>Total</strong>
+                        <span id="total-errors">0</span>
+                    </article>
+                    <article>
+                        <strong>Validation</strong>
+                        <span id="validation-errors">0</span>
+                    </article>
+                    <article>
+                        <strong>Anonymization</strong>
+                        <span id="anonymization-errors">0</span>
+                    </article>
+                    <article>
+                        <strong>Processing</strong>
+                        <span id="processing-errors">0</span>
+                    </article>
+                    <article>
+                        <strong>Archive</strong>
+                        <span id="archive-errors">0</span>
+                    </article>
+                    <article>
+                        <strong>Upload</strong>
+                        <span id="upload-errors">0</span>
+                    </article>
+                </div>
+            </section>
+        </main>
+        
+        <footer class="grid">
+            <button onclick="refreshData()" role="button">Refresh Data</button>
+            <button onclick="toggleAutoRefresh()" id="auto-refresh-btn" role="button">Enable Auto Refresh</button>
+        </footer>
 
         <script>
             let autoRefreshInterval = null;
