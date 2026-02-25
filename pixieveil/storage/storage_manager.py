@@ -176,6 +176,7 @@ class StorageManager:
         # ``start()`` will create the task; ``stop()`` will cancel it.
         self._completion_task: Optional[asyncio.Task] = None
         self._stop_event: Optional[asyncio.Event] = None
+        self._shutting_down = False
 
     # -----------------------------------------------------------------
     # Public lifecycle helpers
@@ -204,6 +205,7 @@ class StorageManager:
             return
 
         logger.info("Stopping StorageManager background study‑completion checker")
+        self._shutting_down = True
         assert self._stop_event is not None
         self._stop_event.set()
         self._completion_task.cancel()
@@ -331,6 +333,11 @@ class StorageManager:
         Raises:
             Exception: If any step in the processing pipeline fails
         """
+        # Skip processing if shutting down
+        if self._shutting_down:
+            logger.debug(f"Skipping image {image_id} during shutdown")
+            return
+            
         logger.debug(f"Starting processing of image {image_id} from {image_path}")
         start_time = time.time()
         study_uid = None

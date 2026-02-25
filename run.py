@@ -109,12 +109,25 @@ async def main() -> None:
         for task in (dashboard_task, dicom_task):
             if not task.done():
                 task.cancel()
-        await asyncio.gather(
-            dicom_server.stop(),
-            dashboard.stop(),
-            return_exceptions=True,
-        )
-        await storage_manager.stop()
+        
+        # Wait for services to stop with timeouts to prevent hanging
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(
+                    dicom_server.stop(),
+                    dashboard.stop(),
+                    return_exceptions=True
+                ),
+                timeout=10.0
+            )
+        except asyncio.TimeoutError:
+            logger.error("Failed to stop services within 10 second timeout")
+        
+        # Stop storage manager with timeout
+        try:
+            await asyncio.wait_for(storage_manager.stop(), timeout=5.0)
+        except asyncio.TimeoutError:
+            logger.error("Storage manager did not stop within 5 second timeout")
 
 def _run() -> None:
     """

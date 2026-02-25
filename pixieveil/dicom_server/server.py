@@ -87,8 +87,6 @@ class DicomServer:
         self.ae.add_supported_context(MRImageStorage)
         self.ae.add_supported_context(SecondaryCaptureImageStorage)
 
-        # Add supported contexts (already present above)
-        
         # Register event handlers using proper API
         handlers = [
             (evt.EVT_C_ECHO, self._handle_echo),
@@ -130,25 +128,49 @@ class DicomServer:
         This method performs a graceful shutdown of the DICOM server,
         including stopping the background task and shutting down the
         Association Entity.
+        
+        The shutdown sequence:
+        1. Cancel the server task (which is blocked in start_server)
+        2. Call ae.shutdown() from within the server thread to unblock start_server
+        3. Wait for task completion with timeout
+        4. Clean up resources
         """
         logger.debug("Stopping DICOM server...")
         try:
-            if self.server_task:
-                if not self.server_task.done():
-                    self.server_task.cancel()
-                    try:
-                        await self.server_task
-                    except asyncio.CancelledError:
-                        logger.debug("DICOM server task cancelled")
+            if self.server_task and not self.server_task.done():
+                # First, request shutdown from within the server thread
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(None, self._stop_server)
+                
+                # Then wait for the task to complete with timeout
+                try:
+                    await asyncio.wait_for(self.server_task, timeout=5.0)
+                except asyncio.TimeoutError:
+                    logger.warning("DICOM server task did not complete within 5 second timeout")
+                finally:
+                    self.server_task = None
             
             if self.ae:
-                loop = asyncio.get_event_loop()
-                await loop.run_in_executor(None, self.ae.shutdown)
                 self.ae = None
                 logger.info("DICOM server stopped")
         except Exception as e:
             logger.error(f"Error stopping DICOM server: {e}")
             raise
+
+    def _stop_server(self):
+        """
+        Stop the DICOM server from within its own thread.
+        
+        This method is called from the executor thread to properly
+        shut down the pynetdicom Association Entity. It must be called
+        from the same thread that started the server to avoid deadlocks.
+        """
+        if self.ae:
+            try:
+                self.ae.shutdown()
+                logger.debug("DICOM server shutdown from server thread")
+            except Exception as e:
+                logger.error(f"Error during DICOM server shutdown: {e}")
 
     def _handle_echo(self, event: "pynetdicom.events.Event") -> int:
         """

@@ -106,11 +106,19 @@ class Dashboard:
         - Logs the shutdown completion
         """
         logger.info("Stopping dashboard")
-        if self.site:
-            await self.site.stop()
-        if self.runner:
-            await self.runner.cleanup()
-        logger.info("Dashboard stopped")
+        try:
+            if self.site:
+                await asyncio.wait_for(self.site.stop(), timeout=5.0)
+            if self.runner:
+                await asyncio.wait_for(self.runner.cleanup(), timeout=5.0)
+        except asyncio.TimeoutError:
+            logger.warning("Dashboard shutdown timed out after 5 seconds")
+        except Exception as e:
+            logger.error(f"Error during dashboard shutdown: {e}")
+        finally:
+            self.site = None
+            self.runner = None
+            logger.info("Dashboard stopped")
 
     async def handle_index(self, request: web.Request) -> web.Response:
         """
