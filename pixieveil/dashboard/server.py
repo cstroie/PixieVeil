@@ -179,16 +179,9 @@ class Dashboard:
         completed_studies = storage_manager.completed_count
         total_studies = completed_studies + studies_in_progress
         
-        # Helper functions for formatting
-        def format_seconds(seconds):
-            if seconds < 60:
-                return f"{seconds:.1f}s"
-            if seconds < 3600:
-                return f"{seconds/60:.1f}m"
-            return f"{seconds/3600:.1f}h"
-        
         def bytes_to_mb(bytes_val):
-            return round(bytes_val / (1024 * 1024), 2)
+            # Convert bytes to MB and return as float for JS formatting
+            return bytes_val / (1024 * 1024)
         
         # Get processing errors dict for nested access
         processing_errors = storage_manager.get_counter('processing', 'errors')
@@ -234,8 +227,8 @@ class Dashboard:
             {
                 "title": "Performance Metrics",
                 "metrics": [
-                    {"label": "Avg Processing Time", "value": round(storage_manager.get_counter('performance', 'average_time', 0) * 1000, 2), "suffix": "ms"},
-                    {"label": "Total Processing Time", "value": format_seconds(storage_manager.get_counter('performance', 'total_time', 0))},
+                    {"label": "Avg Processing Time", "value": storage_manager.get_counter('performance', 'average_time', 0) * 1000, "suffix": "ms"},
+                    {"label": "Total Processing Time", "value": storage_manager.get_counter('performance', 'total_time', 0) * 1000, "suffix": "ms"},
                     {"label": "Images Processed", "value": storage_manager.get_counter('processing', 'images')},
                     {"label": "Images Anonymized", "value": storage_manager.get_counter('processing', 'anonymized_images')},
                 ]
