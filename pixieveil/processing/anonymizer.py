@@ -11,6 +11,8 @@ Classes:
 
 import logging
 from datetime import datetime
+import random
+import string
 import pydicom
 from pydicom.uid import generate_uid
 
@@ -49,6 +51,11 @@ class Anonymizer:
                       rules and preferences
         """
         self.settings = settings
+        # UID mappings to ensure consistency across studies and series
+        self._study_uid_map = {}  # Maps original StudyInstanceUID -> anonymized UID
+        self._series_uid_map = {}  # Maps original SeriesInstanceUID -> anonymized UID
+        # Patient ID mapping for consistency across study
+        self._patient_id_map = {}  # Maps original PatientID -> anonymized ID
         
     def _current_date(self):
         """
@@ -79,8 +86,37 @@ class Anonymizer:
             str: Newly generated DICOM UID
         """
         return generate_uid(prefix=prefix)
+    
+    def _generate_patient_id(self):
+        """
+        Generate a random anonymized Patient ID.
+        
+        Returns:
+            str: Random patient ID in format "PAT-XXXXXXXX" (3 letters + 8 random alphanumeric)
+        """
+        random_part = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
+        return f"PAT-{random_part}"
+    
+    def clear_uid_mappings(self):
+        """
+        Clear the UID and Patient ID mappings.
+        
+        Call this method to reset the mappings between different studies or processing
+        batches. This ensures that each new batch of files will get fresh mappings.
+        """
+        self._study_uid_map.clear()
+        self._series_uid_map.clear()
+        self._patient_id_map.clear()
+        logger.debug("UID and Patient ID mappings cleared")
 
-    def anonymize(self, ds: pydicom.Dataset) -> pydicom.Dataset:
+    def anonymize(self, ds: pydicom.Dataset, 
+                  study_instance_uid: str = None, 
+                  series_instance_uid: str = None,
+                  keep_study_dates: bool = False,
+                  keep_acquisition_dates: bool = False,
+                  keep_birth_date: bool = False,
+                  keep_age: bool = False,
+                  keep_sex: bool = False) -> pydicom.Dataset:
         """
         Comprehensive DICOM field anonymization compliant with DICOM PS3.15.
         
@@ -92,7 +128,7 @@ class Anonymizer:
         - Patient information anonymization (name, ID, demographics)
         - Study/Series information anonymization (UIDs, descriptions)
         - Institution and physician information removal
-        - Date/time fields anonymization with current values
+        - Date/time fields anonymization (configurable)
         - Sensitive tag removal
         - Private tag removal
         - Overlay data removal
@@ -100,6 +136,22 @@ class Anonymizer:
         
         Args:
             ds (pydicom.Dataset): The DICOM dataset to anonymize
+            study_instance_uid (str, optional): Predetermined StudyInstanceUID to use 
+                for all files in the same study. If not provided, the anonymizer will
+                automatically map the original UID to maintain consistency.
+            series_instance_uid (str, optional): Predetermined SeriesInstanceUID to use 
+                for all files in the same series. If not provided, the anonymizer will
+                automatically map the original UID to maintain consistency.
+            keep_study_dates (bool): If True, preserves StudyDate and StudyTime. 
+                Default: False (anonymize to current date/time)
+            keep_acquisition_dates (bool): If True, preserves AcquisitionDate, 
+                AcquisitionDateTime, and related fields. Default: False
+            keep_birth_date (bool): If True, preserves PatientBirthDate. 
+                Default: False (clear the field)
+            keep_age (bool): If True, preserves PatientAge. 
+                Default: False (clear the field)
+            keep_sex (bool): If True, preserves PatientSex. 
+                Default: False (clear the field)
             
         Returns:
             pydicom.Dataset: The anonymized DICOM dataset
@@ -107,23 +159,73 @@ class Anonymizer:
         Note:
             This method modifies the dataset in-place and also returns it
             for method chaining convenience.
+            
+            UID Mapping Strategy:
+            - The first time a StudyInstanceUID is encountered, it's mapped to a new UID
+            - All subsequent files with the same StudyInstanceUID receive the same new UID
+            - The same logic applies to SeriesInstanceUID
+            - This ensures proper DICOM hierarchy is maintained across multiple files
+            
+            Patient ID Mapping:
+            - Each unique PatientID is mapped to a random anonymized ID
+            - All files with the same PatientID receive the same anonymized ID
+            - This maintains consistency across a study
+            
+            To reset mappings: Call clear_uid_mappings()
         """
         # Patient Information
         ds.PatientName = "Anonymous"
-        ds.PatientID = "ID-REDACTED"
-        ds.PatientBirthDate = ""
-        ds.PatientSex = ""
-        if "PatientAge" in ds: ds.PatientAge = ""
-        if "OtherPatientIDs" in ds: ds.OtherPatientIDs = ""
-        if "PatientAddress" in ds: ds.PatientAddress = ""
-        if "PatientSize" in ds: ds.PatientSize = ""
-        if "PatientWeight" in ds: ds.PatientWeight = ""
         
-        # Study/Series Information
-        if "StudyInstanceUID" in ds: 
-            ds.StudyInstanceUID = self._generate_new_uid()
-        if "SeriesInstanceUID" in ds: 
-            ds.SeriesInstanceUID = self._generate_new_uid()
+        # Patient ID mapping for consistency across study
+        original_patient_id = str(ds.PatientID) if "PatientID" in ds else "UNKNOWN"
+        if original_patient_id not in self._patient_id_map:
+            self._patient_id_map[original_patient_id] = self._generate_patient_id()
+        ds.PatientID = self._patient_id_map[original_patient_id]
+        
+        # Birth date handling
+        if not keep_birth_date:
+            ds.PatientBirthDate = ""
+        
+        # Sex handling
+        if not keep_sex:
+            ds.PatientSex = ""
+        
+        # Age handling
+        if "PatientAge" in ds and not keep_age:
+            ds.PatientAge = ""
+        
+        if "OtherPatientIDs" in ds: 
+            ds.OtherPatientIDs = ""
+        if "PatientAddress" in ds: 
+            ds.PatientAddress = ""
+        if "PatientSize" in ds: 
+            ds.PatientSize = ""
+        if "PatientWeight" in ds: 
+            ds.PatientWeight = ""
+        
+        # Study/Series Information with automatic UID mapping
+        if "StudyInstanceUID" in ds:
+            original_study_uid = str(ds.StudyInstanceUID)
+            if study_instance_uid:
+                # Use provided UID
+                ds.StudyInstanceUID = study_instance_uid
+            else:
+                # Use mapped UID or create new mapping
+                if original_study_uid not in self._study_uid_map:
+                    self._study_uid_map[original_study_uid] = self._generate_new_uid()
+                ds.StudyInstanceUID = self._study_uid_map[original_study_uid]
+        
+        if "SeriesInstanceUID" in ds:
+            original_series_uid = str(ds.SeriesInstanceUID)
+            if series_instance_uid:
+                # Use provided UID
+                ds.SeriesInstanceUID = series_instance_uid
+            else:
+                # Use mapped UID or create new mapping
+                if original_series_uid not in self._series_uid_map:
+                    self._series_uid_map[original_series_uid] = self._generate_new_uid()
+                ds.SeriesInstanceUID = self._series_uid_map[original_series_uid]
+        
         if "SOPInstanceUID" in ds: 
             ds.SOPInstanceUID = self._generate_new_uid()
         ds.AccessionNumber = self._generate_new_uid(prefix="1.98765.")[:16]  # Simulate accession format
@@ -137,17 +239,35 @@ class Anonymizer:
         if "OperatorsName" in ds: ds.OperatorsName = ""
         if "PerformingPhysicianName" in ds: ds.PerformingPhysicianName = ""
         
-        # Dates and Times
+        # Dates and Times (configurable)
         current_date = self._current_date()
         current_time = self._current_time()
-        if "InstanceCreationDate" in ds: ds.InstanceCreationDate = current_date
-        if "InstanceCreationTime" in ds: ds.InstanceCreationTime = current_time
-        if "StudyDate" in ds: ds.StudyDate = current_date
-        if "ContentDate" in ds: ds.ContentDate = current_date
-        if "AcquisitionDate" in ds: ds.AcquisitionDate = current_date
-        if "AcquisitionDateTime" in ds: ds.AcquisitionDateTime = current_date + current_time
-        if "StudyTime" in ds: ds.StudyTime = current_time
-        if "SeriesTime" in ds: ds.SeriesTime = current_time
+        
+        # Instance creation dates (always anonymized)
+        if "InstanceCreationDate" in ds: 
+            ds.InstanceCreationDate = current_date
+        if "InstanceCreationTime" in ds: 
+            ds.InstanceCreationTime = current_time
+        
+        # Content dates (always anonymized)
+        if "ContentDate" in ds: 
+            ds.ContentDate = current_date
+        
+        # Study dates (configurable)
+        if not keep_study_dates:
+            if "StudyDate" in ds: 
+                ds.StudyDate = current_date
+            if "StudyTime" in ds: 
+                ds.StudyTime = current_time
+        
+        # Acquisition dates (configurable)
+        if not keep_acquisition_dates:
+            if "AcquisitionDate" in ds: 
+                ds.AcquisitionDate = current_date
+            if "AcquisitionDateTime" in ds: 
+                ds.AcquisitionDateTime = current_date + current_time
+            if "SeriesTime" in ds: 
+                ds.SeriesTime = current_time
         
         # Remove sensitive tags
         tags_to_remove = [
