@@ -298,13 +298,7 @@ class StorageManager:
             if not isinstance(self.counters[category], dict):
                 self.counters[category] = {}
             
-            # Special handling for 'errors' subcategory which may have nested structure
-            if subcategory == 'errors' and isinstance(value, dict):
-                if 'errors' not in self.counters[category]:
-                    self.counters[category]['errors'] = {}
-                self.counters[category]['errors'].update(value)
-            else:
-                self.counters[category][subcategory] = value
+            self.counters[category][subcategory] = value
 
     def inc_counter(self, category: str, subcategory: str = None, increment: int = 1) -> None:
         """
@@ -342,24 +336,9 @@ class StorageManager:
             if not isinstance(self.counters[category], dict):
                 self.counters[category] = {}
             
-            # Special handling for 'errors' subcategory which may have nested structure
-            if subcategory == 'errors':
-                if 'errors' not in self.counters[category]:
-                    self.counters[category]['errors'] = {}
-                if not isinstance(self.counters[category]['errors'], dict):
-                    self.counters[category]['errors'] = {}
-                # For errors, we need a third level: the specific error type
-                # This is handled by passing the error type as subcategory in practice
-                # But if someone calls inc_counter with subcategory='errors' directly,
-                # we'll just increment a generic errors counter
-                if 'total' in self.counters[category]['errors']:
-                    self.counters[category]['errors']['total'] += increment
-                else:
-                    self.counters[category]['errors']['total'] = increment
-            else:
-                if subcategory not in self.counters[category]:
-                    self.counters[category][subcategory] = 0
-                self.counters[category][subcategory] += increment
+            if subcategory not in self.counters[category]:
+                self.counters[category][subcategory] = 0
+            self.counters[category][subcategory] += increment
 
     def save_temp_image(self, ds: pydicom.Dataset, image_id: str) -> Path:
         """
@@ -504,6 +483,7 @@ class StorageManager:
             if study_number is None:
                 with self._lock:
                     self.inc_counter('reception', 'studies')
+                    self.inc_counter('processing', 'studies')
                 logger.debug(f"New study detected: {study_uid}")
             
             # Anonymize the DICOM dataset
@@ -559,7 +539,6 @@ class StorageManager:
             with self._lock:
                 self.inc_counter('storage', 'images')
                 self.inc_counter('processing', 'images')
-                self.inc_counter('processing', 'studies', self.study_manager.get_active_study_count())
                 logger.debug(f"Updated storage counters: storage_images={self.counters['storage']['images']}, active_studies={self.study_manager.get_active_study_count()}")
 
             # Update processing time
@@ -577,7 +556,7 @@ class StorageManager:
         except Exception as e:
             logger.error(f"Failed to process image {image_id}: {e}", exc_info=True)
             with self._lock:
-                self.inc_counter('processing', 'errors', 'processing')
+                self.counters['processing']['errors']['processing'] += 1
                 self.inc_counter('errors', 'total')
 
     def _validate_dicom(self, ds: pydicom.Dataset) -> bool:
@@ -646,7 +625,7 @@ class StorageManager:
                 continue
 
             logger.info(f"Processing completed study: {study_number:04d} ({study_uid})")
-            image_count = sum(len(list(study_dir.rglob("*.dcm"))) for _ in [None])
+            image_count = len(list(study_dir.rglob("*.dcm")))
             logger.debug(f"Study {study_number:04d} contains {image_count} images")
 
             # Update archive counters
@@ -674,7 +653,7 @@ class StorageManager:
 
             # Upload to remote storage
             logger.debug(f"Uploading study {zip_path} to remote storage")
-            success = await self.remote_storage.upload_file(zip_path, f"{zip_path}.zip")
+            success = await self.remote_storage.upload_file(zip_path, zip_path.name)
 
             if success is None:
                 logger.info(f"Remote storage not configured, keeping local files for study {zip_filename}")
