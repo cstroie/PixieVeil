@@ -1,1 +1,6 @@
+.git*
 .aider*
+data*
+*.log
+__pycache__
+settings.yaml
