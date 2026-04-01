@@ -71,7 +71,44 @@ dicom_server:
 
 # Anonymization Settings
 anonymization:
-  profile: "research"   # Options: "gdpr_strict", "research"
+  profile: "research"   # Active profile: research or gdpr
+  profiles:
+    research:
+      # Research profile: pseudonymized data with preserved study dates
+      PatientName: "PSEUDO"
+      PatientID: "PSEUDO"
+      PatientBirthDate: null
+      PatientSex: null
+      InstitutionName: "DEID_CENTER"
+      StudyID: "RESEARCH"
+      StudyInstanceUID: "PSEUDOUID"
+      SeriesInstanceUID: "PSEUDOUID"
+      FrameOfReferenceUID: "PSEUDOUID"
+      ReferringPhysicianName: null
+      OperatorsName: null
+      PerformingPhysicianName: null
+      AccessionNumber: null
+      KeepPrivateTags: false
+      PixelBlackout: false
+      RetainStudyDate: true
+    gdpr:
+      # GDPR profile: fully anonymized with strong data protection
+      PatientName: "ANON"
+      PatientID: "PSEUDO"
+      PatientBirthDate: null
+      PatientSex: null
+      InstitutionName: null
+      StudyID: "STUDY"
+      StudyInstanceUID: "NEWUID"
+      SeriesInstanceUID: "NEWUID"
+      FrameOfReferenceUID: "NEWUID"
+      ReferringPhysicianName: null
+      OperatorsName: null
+      PerformingPhysicianName: null
+      AccessionNumber: null
+      KeepPrivateTags: false
+      PixelBlackout: true
+      RetainStudyDate: false
 
 # Storage Settings
 storage:
@@ -108,6 +145,73 @@ logging:
 ### Remote storage
 
 If `storage.remote_storage.base_url` is set, completed study ZIPs are uploaded via `POST {base_url}/upload` as a multipart form with fields `file` (the ZIP) and `remote_path` (the filename). A `Bearer` token from `auth_token` is sent in the `Authorization` header. If `base_url` is absent or empty, archives are kept locally and no upload is attempted.
+
+### Anonymization Profiles
+
+PixieVeil uses **profile-based anonymization** where each profile defines how DICOM fields should be transformed. Two built-in profiles are provided: `research` and `gdpr`.
+
+#### Field Transformation Strategies
+
+Each field in a profile can use one of these transformation strategies:
+
+| Strategy | Example | Behavior |
+|---|---|---|
+| `null` | `PatientBirthDate: null` | Clear the field to empty string |
+| `"PSEUDO"` | `PatientID: "PSEUDO"` | Replace with deterministic pseudonym (hash-based; consistent per original value across all files) |
+| `"PSEUDOUID"` | `StudyInstanceUID: "PSEUDOUID"` | As `PSEUDO`, but generates UID-format pseudonyms; preserves DICOM hierarchy (same original UID → same mapped UID across files in study) |
+| `"NEWUID"` | `StudyInstanceUID: "NEWUID"` | Generate a fresh DICOM UID (consistent within processing session; different sessions may produce different UIDs) |
+| Literal string | `PatientName: "ANON"` or `InstitutionName: "DEID_CENTER"` | Replace all instances with fixed text |
+
+#### Research Profile
+
+Pseudonymized data suitable for research use while preserving medical value:
+- **Patient identifiers** → pseudonyms (deterministic, consistent per patient)
+- **Institution** → generic name `"DEID_CENTER"`
+- **Study/Series UIDs** → pseudonyms (preserves DICOM hierarchy; related files stay grouped)
+- **Study dates** → preserved (for temporal analysis)
+- **Demographics** (birthdate, sex) → cleared
+- **Personal identifiers** (physicians, operators) → cleared
+- **Pixel data** → not altered
+- **Private tags** → removed
+
+#### GDPR Profile
+
+Maximum anonymization for strict EU GDPR data protection:
+- **Patient name** → generic `"ANON"` (no per-patient distinction)
+- **Patient ID** → pseudonym (maintains cross-file consistency for mapping only)
+- **Institution** → cleared entirely
+- **Study/Series UIDs** → fresh random UIDs per file (breaks DICOM study/series hierarchy; each file becomes independent)
+- **Study dates** → anonymized to current date
+- **Demographics** → cleared
+- **Personal identifiers** → cleared
+- **Pixel data** → **blackout** (set all pixel values to zero)
+- **Private tags** → removed
+
+#### Understanding Pseudonym vs. NEWUID
+
+**`PSEUDO`/`PSEUDOUID` (deterministic):**
+- Same original value always produces identical pseudonym
+- Works across multiple processing sessions
+- Enables re-identification mapping if original records are retained
+- Research profile uses this for patient consistency
+
+**`NEWUID` (random):**
+- Generates random UID on first encounter
+- Reuses that UID for all files with same original UID *within current session*
+- May differ if same study is processed in separate sessions
+- GDPR profile uses this for maximum separation from originals
+
+#### Always-Handled Fields
+
+The following fields are always anonymized regardless of profile:
+- **SOPInstanceUID** → unique new UID per image
+- **PatientAge** → cleared
+- **OtherPatientIDs, PatientAddress, PatientSize, PatientWeight** → cleared
+- **InstitutionAddress** → cleared
+- **Sensitive tags** (ClinicalTrial*, MilitaryRank, etc.) → removed
+- **Overlay data** (60xx groups) → removed
+- **BurnedInAnnotation** → set to "NO"
+- **StudyDescription, SeriesDescription** → anonymized to generic names
 
 ## Storage layout
 
