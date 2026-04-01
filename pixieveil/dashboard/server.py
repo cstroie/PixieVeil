@@ -107,19 +107,27 @@ class Dashboard:
         - Logs the shutdown completion
         """
         logger.info("Stopping dashboard")
-        try:
-            if self.site:
+        if self.site:
+            try:
                 await asyncio.wait_for(self.site.stop(), timeout=5.0)
-            if self.runner:
+            except asyncio.TimeoutError:
+                logger.warning("Dashboard site stop timed out after 5 seconds")
+            except Exception as e:
+                logger.error(f"Error stopping dashboard site: {e}")
+            finally:
+                self.site = None
+
+        if self.runner:
+            try:
                 await asyncio.wait_for(self.runner.cleanup(), timeout=5.0)
-        except asyncio.TimeoutError:
-            logger.warning("Dashboard shutdown timed out after 5 seconds")
-        except Exception as e:
-            logger.error(f"Error during dashboard shutdown: {e}")
-        finally:
-            self.site = None
-            self.runner = None
-            logger.info("Dashboard stopped")
+            except asyncio.TimeoutError:
+                logger.warning("Dashboard runner cleanup timed out after 5 seconds")
+            except Exception as e:
+                logger.error(f"Error during dashboard runner cleanup: {e}")
+            finally:
+                self.runner = None
+
+        logger.info("Dashboard stopped")
 
     async def handle_index(self, request: web.Request) -> web.Response:
         """
@@ -143,8 +151,7 @@ class Dashboard:
         # Read the template file
         template_path = Path(__file__).parent / "templates" / "index.html"
         try:
-            with open(template_path, 'r', encoding='utf-8') as f:
-                html_content = f.read()
+            html_content = await asyncio.to_thread(template_path.read_text, encoding='utf-8')
             return web.Response(text=html_content, content_type="text/html")
         except FileNotFoundError:
             logger.error(f"Template file not found: {template_path}")
