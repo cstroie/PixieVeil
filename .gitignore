@@ -1,5 +1,6 @@
 .git*
 .aider*
+.vscode*
 data*
 *.log
 __pycache__
