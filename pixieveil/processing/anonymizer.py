@@ -98,17 +98,6 @@ class Anonymizer:
         random_part = ''.join(random.choices(string.digits, k=8))
         return f"PAT-{random_part}"
     
-    def clear_uid_mappings(self):
-        """
-        Clear the UID and Patient ID mappings.
-        
-        Call this method to reset the mappings between different studies or processing
-        batches. This ensures that each new batch of files will get fresh mappings.
-        """
-        self._study_uid_map.clear()
-        self._series_uid_map.clear()
-        self._patient_id_map.clear()
-        logger.debug("UID and Patient ID mappings cleared")
     
     def get_patient_id_mapping(self, original_patient_id: str) -> Optional[str]:
         """
@@ -146,22 +135,6 @@ class Anonymizer:
         """
         return self._series_uid_map.get(str(original_series_uid))
     
-    def get_all_mappings(self) -> Dict[str, Any]:
-        """
-        Get all current mappings (study UIDs, series UIDs, patient IDs).
-        
-        Returns:
-            Dict[str, Any]: Dictionary containing all mappings with keys:
-                - 'study_uid_map': Study UID mappings
-                - 'series_uid_map': Series UID mappings
-                - 'patient_id_map': Patient ID mappings
-        """
-        return {
-            'study_uid_map': dict(self._study_uid_map),
-            'series_uid_map': dict(self._series_uid_map),
-            'patient_id_map': dict(self._patient_id_map)
-        }
-
     def anonymize(self, ds: pydicom.Dataset, 
                   study_instance_uid: str = None, 
                   series_instance_uid: str = None,
@@ -223,8 +196,6 @@ class Anonymizer:
             - Each unique PatientID is mapped to a random anonymized ID
             - All files with the same PatientID receive the same anonymized ID
             - This maintains consistency across a study
-            
-            To reset mappings: Call clear_uid_mappings()
         """
         # Patient Information
         ds.PatientName = "Anonymous"

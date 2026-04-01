@@ -240,33 +240,7 @@ class StudyManager:
         with self._lock:
             return sum(1 for state in self.study_states.values() if not state.completed)
     
-    def get_completed_study_count(self) -> int:
-        """Get count of completed studies."""
-        with self._lock:
-            return self.completed_count
     
-    def get_study_status(self, original_study_uid: str) -> Dict[str, Any]:
-        """
-        Get the current status of a study.
-        
-        Args:
-            original_study_uid (str): The StudyInstanceUID to query
-            
-        Returns:
-            Dict[str, Any]: Study status information
-        """
-        with self._lock:
-            if original_study_uid not in self.study_map:
-                return {"status": "not_found"}
-            
-            study_number = self.study_map[original_study_uid]
-            state = self.study_states.get(original_study_uid)
-            
-            return {
-                "status": "completed" if (state and state.completed) else "active",
-                "study_number": study_number,
-                "time_since_last": time.time() - state.last_received if state else None,
-                "num_series": sum(1 for (uid, _), _ in self.series_map.items() if uid == original_study_uid),
-                "completed": state.completed if state else False
+    
             }
 
