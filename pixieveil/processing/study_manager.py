@@ -240,7 +240,8 @@ class StudyManager:
         with self._lock:
             return sum(1 for state in self.study_states.values() if not state.completed)
     
-    
-    
-            }
+    def get_completed_study_count(self) -> int:
+        """Get count of completed studies."""
+        with self._lock:
+            return self.completed_count
 

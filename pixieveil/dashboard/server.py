@@ -175,8 +175,8 @@ class Dashboard:
         """
         storage_manager = request.app['storage_manager']
         
-        studies_in_progress = len(storage_manager.study_states) if hasattr(storage_manager, 'study_states') else 0
-        completed_studies = storage_manager.completed_count
+        studies_in_progress = storage_manager.study_manager.get_active_study_count()
+        completed_studies = storage_manager.study_manager.get_completed_study_count()
         total_studies = completed_studies + studies_in_progress
         
         def bytes_to_mb(bytes_val):
