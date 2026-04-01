@@ -219,6 +219,11 @@ class StorageManager:
                 logger.error("Unexpected error in study‑completion loop: %s", exc)
 
             try:
+                await self._enforce_storage_quota()
+            except Exception as exc:
+                logger.error("Unexpected error in storage quota enforcement: %s", exc)
+
+            try:
                 await asyncio.wait_for(self._stop_event.wait(), timeout=interval)
             except asyncio.TimeoutError:
                 pass
@@ -677,10 +682,70 @@ class StorageManager:
                     self.inc_counter('archive', 'errors')
                     self.inc_counter('errors', 'total')
     
+    def _enforce_storage_quota_sync(self) -> None:
+        """
+        Synchronous quota enforcement. Removes the oldest completed studies from
+        base_path (lowest study number first) until disk usage drops below 75% of
+        the configured max_storage_gb limit.  Active (in-progress) studies are
+        never touched.
+        """
+        max_storage_gb = self.settings.storage.get("max_storage_gb")
+        if not max_storage_gb:
+            return
+
+        max_bytes = int(max_storage_gb * 1024 * 1024 * 1024)
+        target_bytes = int(max_bytes * 0.75)
+
+        used_bytes = sum(f.stat().st_size for f in self.base_path.rglob("*") if f.is_file())
+        if used_bytes <= max_bytes:
+            return
+
+        logger.warning(
+            f"Storage quota exceeded: {used_bytes / (1024 ** 3):.2f} GB used, "
+            f"limit is {max_storage_gb} GB. Removing oldest studies..."
+        )
+
+        active_study_numbers = self.study_manager.get_active_study_numbers()
+
+        # Collect 4-digit study directories, sorted oldest first
+        study_dirs = sorted(
+            [d for d in self.base_path.iterdir()
+             if d.is_dir() and len(d.name) == 4 and d.name.isdigit()],
+            key=lambda d: int(d.name)
+        )
+
+        for study_dir in study_dirs:
+            if used_bytes <= target_bytes:
+                break
+
+            study_number = int(study_dir.name)
+            if study_number in active_study_numbers:
+                continue
+
+            dir_size = sum(f.stat().st_size for f in study_dir.rglob("*") if f.is_file())
+            shutil.rmtree(study_dir)
+            used_bytes -= dir_size
+            logger.info(f"Quota: removed study {study_dir.name} ({dir_size / (1024 ** 2):.1f} MB)")
+
+            zip_path = self.base_path / f"{study_dir.name}.zip"
+            if zip_path.exists():
+                zip_size = zip_path.stat().st_size
+                zip_path.unlink()
+                used_bytes -= zip_size
+
+            with self._lock:
+                self.inc_counter('cleanup', 'studies')
+
+        logger.info(f"Storage after quota cleanup: {used_bytes / (1024 ** 3):.2f} GB")
+
+    async def _enforce_storage_quota(self) -> None:
+        """Offload quota enforcement to a thread so the event loop stays responsive."""
+        await asyncio.to_thread(self._enforce_storage_quota_sync)
+
     def get_counters(self) -> Dict[str, Any]:
         """
         Get all current counters and statistics.
-        
+
         Returns:
             Dict[str, Any]: Dictionary containing all current counter values
         """

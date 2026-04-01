@@ -238,6 +238,12 @@ class StudyManager:
         with self._lock:
             return self.study_map.get(original_study_uid)
     
+    def get_active_study_numbers(self) -> set:
+        """Get the set of study numbers for studies still active (not yet archived)."""
+        with self._lock:
+            return {num for uid, num in self.study_map.items()
+                    if uid in self.study_states and not self.study_states[uid].completed}
+
     def get_active_study_count(self) -> int:
         """Get count of active (not completed) studies."""
         with self._lock:
