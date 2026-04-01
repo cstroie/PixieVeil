@@ -654,52 +654,52 @@ class StorageManager:
                 self.inc_counter('archive', 'studies')
                 self.inc_counter('archive', 'images', image_count)
 
-                # Create ZIP archive
-                zip_filename = f"{study_number:04d}"
-                logger.debug(f"Creating ZIP archive for study {zip_filename}")
-                zip_path = await self.zip_manager.create_zip(zip_filename, self.base_path)
-                if not zip_path:
-                    logger.error(f"Failed to create ZIP for study {study_uid}")
-                    with self._lock:
-                        self.inc_counter('archive', 'errors')
-                        self.inc_counter('errors', 'total')
-                    continue
-
-                logger.info(f"Created ZIP archive: {zip_path}")
-
-                # Update export counters
+            # Create ZIP archive
+            zip_filename = f"{study_number:04d}"
+            logger.debug(f"Creating ZIP archive for study {zip_filename}")
+            zip_path = await self.zip_manager.create_zip(zip_filename, self.base_path)
+            if not zip_path:
+                logger.error(f"Failed to create ZIP for study {study_uid}")
                 with self._lock:
-                    self.inc_counter('export', 'studies')
-                    self.inc_counter('export', 'images', image_count)
+                    self.inc_counter('archive', 'errors')
+                    self.inc_counter('errors', 'total')
+                continue
 
-                # Upload to remote storage
-                logger.debug(f"Uploading study {zip_path} to remote storage")
-                success = await self.remote_storage.upload_file(zip_path, f"{zip_path}.zip")
+            logger.info(f"Created ZIP archive: {zip_path}")
 
-                if success is None:
-                    logger.info(f"Remote storage not configured, keeping local files for study {zip_filename}")
-                    with self._lock:
-                        self.inc_counter('cleanup', 'studies')
-                        self.inc_counter('cleanup', 'images', image_count)
-                    self.study_manager.mark_study_archived(study_uid)
-                elif success:
-                    logger.info(f"Successfully uploaded study {study_number:04d}")
-                    with self._lock:
-                        self.inc_counter('remote_storage', 'studies')
-                        self.inc_counter('remote_storage', 'images', image_count)
-                        self.inc_counter('remote_storage', 'bytes', zip_path.stat().st_size)
-                        self.inc_counter('cleanup', 'studies')
-                        self.inc_counter('cleanup', 'images', image_count)
-                        logger.debug(f"Cleaning up study directory: {study_dir}")
-                        shutil.rmtree(study_dir)
-                        zip_path.unlink()
-                    self.study_manager.mark_study_archived(study_uid)
-                else:
-                    logger.error(f"Failed to upload study {study_uid}")
-                    with self._lock:
-                        self.inc_counter('remote_storage', 'errors')
-                        self.inc_counter('archive', 'errors')
-                        self.inc_counter('errors', 'total')
+            # Update export counters
+            with self._lock:
+                self.inc_counter('export', 'studies')
+                self.inc_counter('export', 'images', image_count)
+
+            # Upload to remote storage
+            logger.debug(f"Uploading study {zip_path} to remote storage")
+            success = await self.remote_storage.upload_file(zip_path, f"{zip_path}.zip")
+
+            if success is None:
+                logger.info(f"Remote storage not configured, keeping local files for study {zip_filename}")
+                with self._lock:
+                    self.inc_counter('cleanup', 'studies')
+                    self.inc_counter('cleanup', 'images', image_count)
+                self.study_manager.mark_study_archived(study_uid)
+            elif success:
+                logger.info(f"Successfully uploaded study {study_number:04d}")
+                with self._lock:
+                    self.inc_counter('remote_storage', 'studies')
+                    self.inc_counter('remote_storage', 'images', image_count)
+                    self.inc_counter('remote_storage', 'bytes', zip_path.stat().st_size)
+                    self.inc_counter('cleanup', 'studies')
+                    self.inc_counter('cleanup', 'images', image_count)
+                logger.debug(f"Cleaning up study directory: {study_dir}")
+                shutil.rmtree(study_dir)
+                zip_path.unlink()
+                self.study_manager.mark_study_archived(study_uid)
+            else:
+                logger.error(f"Failed to upload study {study_uid}")
+                with self._lock:
+                    self.inc_counter('remote_storage', 'errors')
+                    self.inc_counter('archive', 'errors')
+                    self.inc_counter('errors', 'total')
     
     def get_counters(self) -> Dict[str, Any]:
         """

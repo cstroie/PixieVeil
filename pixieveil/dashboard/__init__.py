@@ -10,4 +10,4 @@ Classes:
 
 from .server import Dashboard
 
-__all__ = ['Dashboard', 'image_counter', 'init_image_counter']
+__all__ = ['Dashboard']

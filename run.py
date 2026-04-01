@@ -91,6 +91,10 @@ async def main() -> None:
     dicom_server = DicomServer(settings, storage_manager)
     dashboard = Dashboard(settings, storage_manager)
 
+    # Initialize task variables to None to prevent NameError in finally block
+    dashboard_task = None
+    dicom_task = None
+
     try:
         # Start the background study‑completion checker first
         await storage_manager.start()
@@ -109,7 +113,7 @@ async def main() -> None:
         logger.info("Stopping services...")
         # Cancel running service tasks if they are still active
         for task in (dashboard_task, dicom_task):
-            if not task.done():
+            if task and not task.done():
                 task.cancel()
         
         # Wait for services to stop with timeouts to prevent hanging

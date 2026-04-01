@@ -44,7 +44,7 @@ class RemoteStorage:
         self.base_url = settings.storage.get("remote_storage", {}).get("base_url")
         self.auth_token = settings.storage.get("remote_storage", {}).get("auth_token")
 
-    async def upload_file(self, file_path: Path, remote_path: str) -> bool:
+    async def upload_file(self, file_path: Path, remote_path: str) -> Optional[bool]:
         """
         Upload a file to remote storage.
         
@@ -68,12 +68,29 @@ class RemoteStorage:
                 logger.warning("Remote storage not configured")
                 return None
 
+            # Read file content for upload
+            if not file_path.exists():
+                logger.error(f"File not found for upload: {file_path}")
+                return False
+            
+            with open(file_path, "rb") as file_handle:
+                file_content = file_handle.read()
+
             async with aiohttp.ClientSession() as session:
+                # Use FormData for multipart file upload
+                form_data = aiohttp.FormData()
+                form_data.add_field(
+                    "file",
+                    file_content,
+                    filename=file_path.name,
+                    content_type="application/zip"
+                )
+                form_data.add_field("remote_path", remote_path)
+                
                 async with session.post(
                     f"{self.base_url}/upload",
-                    data={"file": open(file_path, "rb")},
-                    headers={"Authorization": f"Bearer {self.auth_token}"},
-                    json={"remote_path": remote_path}
+                    data=form_data,
+                    headers={"Authorization": f"Bearer {self.auth_token}"}
                 ) as response:
                     if response.status == 200:
                         logger.info(f"Successfully uploaded {file_path} to {remote_path}")
@@ -82,6 +99,9 @@ class RemoteStorage:
                         logger.error(f"Failed to upload {file_path}: {response.status}")
                         return False
 
+        except FileNotFoundError as e:
+            logger.error(f"File not found for upload: {e}")
+            return False
         except Exception as e:
-            logger.error(f"Error uploading {file_path}: {e}")
+            logger.error(f"Error uploading {file_path}: {e}", exc_info=True)
             return False
