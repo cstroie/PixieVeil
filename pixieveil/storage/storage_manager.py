@@ -503,8 +503,8 @@ class StorageManager:
                 return
 
             # Assign study/series/image numbers using StudyManager
-            study_number, series_number, is_new_series = self.study_manager.add_image_to_study(study_uid, series_uid)
-            
+            study_number, series_number, image_number, is_new_series = self.study_manager.add_image_to_study(study_uid, series_uid)
+
             # Update storage counters for new series
             if is_new_series:
                 base_path = self.base_path
@@ -515,9 +515,6 @@ class StorageManager:
                 with self._lock:
                     self.inc_counter('storage', 'series')
                 logger.debug(f"Creating new series {series_number} for study {study_number}")
-            
-            # Get image number
-            image_number = self.study_manager.get_next_image_number(study_number, series_number)
             
             # Log the anonymization mapping after study/series numbers are assigned
             self._log_anonymization_mapping(study_uid, series_uid, patient_id, image_id, 

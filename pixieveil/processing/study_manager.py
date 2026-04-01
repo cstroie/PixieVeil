@@ -116,22 +116,23 @@ class StudyManager:
         
         logger.debug(f"Initialized study counter to {self.study_counter} from existing studies: {existing_studies}")
     
-    def add_image_to_study(self, original_study_uid: str, original_series_uid: str) -> Tuple[int, int, bool]:
+    def add_image_to_study(self, original_study_uid: str, original_series_uid: str) -> Tuple[int, int, int, bool]:
         """
         Add an image to a study and return assigned numeric IDs.
-        
+
         This method:
         - Assigns numeric study number if new study
         - Assigns numeric series number if new series
         - Assigns numeric image number
         - Tracks study state and last received time
-        
+
         Args:
             original_study_uid (str): Original StudyInstanceUID
             original_series_uid (str): Original SeriesInstanceUID
-            
+
         Returns:
-            Tuple[int, int, bool]: (study_number, series_number, is_new_series)
+            Tuple[int, int, int, bool]: (study_number, series_number, image_number, is_new_series)
+                - image_number: Atomically assigned image number for this image
                 - is_new_series: True if this is the first image in a new series
         """
         with self._lock:
@@ -140,37 +141,39 @@ class StudyManager:
                 self.study_counter += 1
                 self.study_map[original_study_uid] = self.study_counter
                 logger.debug(f"Assigned new study number {self.study_counter} to study {original_study_uid}")
-            
+
             study_number = self.study_map[original_study_uid]
-            
+
             # Handle series assignment
             series_key = (original_study_uid, original_series_uid)
             is_new_series = series_key not in self.series_map
-            
+
             if is_new_series:
                 # Find highest existing series number for this study
-                study_series = [series_num for (sid, suid), (sn, series_num) in self.series_map.items() 
+                study_series = [series_num for (sid, suid), (sn, series_num) in self.series_map.items()
                                if sn == study_number]
                 series_number = max(study_series) + 1 if study_series else 1
                 self.series_map[series_key] = (study_number, series_number)
                 logger.debug(f"Assigned new series number {series_number} to series {original_series_uid} in study {study_number}")
             else:
                 study_number, series_number = self.series_map[series_key]
-            
-            # Handle image numbering
+
+            # Handle image numbering — done atomically inside the lock to prevent
+            # two concurrent threads from receiving the same image number
             image_key = (study_number, series_number)
             if image_key not in self.image_counters:
                 self.image_counters[image_key] = 0
             self.image_counters[image_key] += 1
-            
+            image_number = self.image_counters[image_key]
+
             # Update study state
             if original_study_uid not in self.study_states:
                 self.study_states[original_study_uid] = StudyState()
                 logger.debug(f"Created new StudyState for study {original_study_uid}")
             else:
                 self.study_states[original_study_uid].last_received = time.time()
-            
-            return study_number, series_number, is_new_series
+
+            return study_number, series_number, image_number, is_new_series
     
     def get_next_image_number(self, study_number: int, series_number: int) -> int:
         """

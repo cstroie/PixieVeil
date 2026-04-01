@@ -252,7 +252,7 @@ class Anonymizer:
         
         if "SOPInstanceUID" in ds: 
             ds.SOPInstanceUID = self._generate_new_uid()
-        ds.AccessionNumber = self._generate_new_uid(prefix="1.98765.")[:16]  # Simulate accession format
+        ds.AccessionNumber = ''.join(random.choices(string.ascii_uppercase + string.digits, k=16))
         ds.StudyDescription = "Anonymized Study"
         if "SeriesDescription" in ds: ds.SeriesDescription = "Anonymized Series"
         
@@ -313,8 +313,9 @@ class Anonymizer:
         
         # Remove overlay data (60xx groups)
         for overlay_group in range(0x6000, 0x6020, 0x2):
-            if overlay_group in ds:
-                del ds[overlay_group]
+            tags_to_delete = [tag for tag in ds.keys() if tag.group == overlay_group]
+            for tag in tags_to_delete:
+                del ds[tag]
         
         # Return the modified dataset for chaining
         return ds

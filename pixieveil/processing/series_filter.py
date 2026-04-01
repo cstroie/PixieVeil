@@ -76,7 +76,7 @@ class SeriesFilter:
         """
         try:
             # Check modality
-            if ds.Modality in self.exclude_modalities:
+            if "Modality" in ds and ds.Modality in self.exclude_modalities:
                 logger.debug(f"Filtering out image with excluded modality: {ds.Modality}")
                 return True
 
