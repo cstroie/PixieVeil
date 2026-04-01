@@ -12,53 +12,64 @@ Classes:
 import logging
 from datetime import datetime
 from typing import Optional, Dict, Any
-import random
-import string
+import hashlib
 import pydicom
 from pydicom.uid import generate_uid
 
-from pixieveil.config import Settings
+from pixieveil.config import Settings, AnonymizationProfile
 
 logger = logging.getLogger(__name__)
 
 
 class Anonymizer:
     """
-    Handles DICOM dataset anonymization operations.
+    Handles DICOM dataset anonymization operations using profile-based configuration.
     
     This class provides comprehensive DICOM field anonymization compliant with
     DICOM PS3.15 standards. It removes or replaces sensitive patient information
     while maintaining the integrity of the medical imaging data.
+
+    Anonymization behavior is driven by profiles defined in the configuration.
+    Each profile specifies how individual DICOM fields should be handled.
     
     The anonymization process includes:
-    - Patient information removal/replacement
-    - Study/Series information anonymization
-    - Institution and physician information removal
-    - Date/time anonymization
+    - Patient information replacement/removal per profile
+    - Study/Series information anonymization per profile
+    - Institution and physician information handling per profile
+    - Date/time anonymization (optionally preserved per profile)
     - Sensitive tag removal
-    - Private tag removal
+    - Private tag removal (optional per profile)
     - Overlay data removal
+    - Pixel data blackout (optional per profile)
     
     Attributes:
         settings (Settings): Application configuration settings
+        profile (AnonymizationProfile): The active anonymization profile
     """
     
-    def __init__(self, settings: Settings):
+    def __init__(self, settings: Settings, profile_name: Optional[str] = None):
         """
-        Initialize the Anonymizer with application settings.
+        Initialize the Anonymizer with application settings and profile.
         
         Args:
-            settings: Application configuration settings containing anonymization
-                      rules and preferences
+            settings: Application configuration settings
+            profile_name (str, optional): Name of the profile to use. If None,
+                                        uses the default profile from settings.
+                                        
+        Raises:
+            ValueError: If the specified profile does not exist
         """
         self.settings = settings
-        # UID mappings to ensure consistency across studies and series
+        self.profile = settings.get_anonymization_profile(profile_name)
+        
+        # Mappings to ensure consistency across studies and series
+        self._pseudonym_map = {}  # Maps original value -> pseudonym for "PSEUDO" strategy
         self._study_uid_map = {}  # Maps original StudyInstanceUID -> anonymized UID
         self._series_uid_map = {}  # Maps original SeriesInstanceUID -> anonymized UID
-        # Patient ID mapping for consistency across study
-        self._patient_id_map = {}  # Maps original PatientID -> anonymized ID
         
-    def _current_date(self):
+        logger.info(f"Anonymizer initialized with profile: {profile_name or settings.anonymization.get('profile', 'research')}")
+        
+    def _current_date(self) -> str:
         """
         Get current date in DICOM format (YYYYMMDD).
         
@@ -67,7 +78,7 @@ class Anonymizer:
         """
         return datetime.now().strftime("%Y%m%d")
     
-    def _current_time(self):
+    def _current_time(self) -> str:
         """
         Get current time in DICOM format (HHMMSS).
         
@@ -76,7 +87,7 @@ class Anonymizer:
         """
         return datetime.now().strftime("%H%M%S")
     
-    def _generate_new_uid(self, prefix="2.25."):
+    def _generate_new_uid(self, prefix: str = "2.25.") -> str:
         """
         Generate a new DICOM UID with the specified prefix.
         
@@ -88,20 +99,344 @@ class Anonymizer:
         """
         return generate_uid(prefix=prefix)
     
-    def _generate_patient_id(self):
+    def _generate_pseudonym(self, original_value: str) -> str:
         """
-        Generate a random anonymized Patient ID.
+        Generate a consistent pseudonym from an original value using deterministic hashing.
         
+        This ensures that the same original value always maps to the same pseudonym,
+        which is critical for maintaining consistency across multiple files.
+        
+        Args:
+            original_value (str): The original value to pseudonymize
+            
         Returns:
-            str: Random patient ID in format "PAT-XXXXXXXX" (3 letters + 8 random numeric)
+            str: A deterministic pseudonym based on the original value
         """
-        random_part = ''.join(random.choices(string.digits, k=8))
-        return f"PAT-{random_part}"
+        original_str = str(original_value)
+        if original_str not in self._pseudonym_map:
+            # Generate a hash-based pseudonym
+            hash_obj = hashlib.sha256(original_str.encode())
+            hash_hex = hash_obj.hexdigest()[:8].upper()
+            self._pseudonym_map[original_str] = hash_hex
+        return self._pseudonym_map[original_str]
     
+    def _generate_pseudonym_uid(self, original_uid: str) -> str:
+        """
+        Generate a consistent pseudonym UID from an original UID.
+        
+        Args:
+            original_uid (str): The original UID to pseudonymize
+            
+        Returns:
+            str: A deterministic pseudonym UID
+        """
+        original_str = str(original_uid)
+        if original_str not in self._pseudonym_map:
+            # Generate a hash-based pseudonym that looks like a UID
+            hash_obj = hashlib.sha256(original_str.encode())
+            hash_int = int(hash_obj.hexdigest()[:15], 16)
+            self._pseudonym_map[original_str] = f"2.25.{hash_int}"
+        return self._pseudonym_map[original_str]
+    
+    def _apply_field_value_strategy(self, original_value: Any, strategy: Optional[str], 
+                                   field_name: str = "") -> Optional[str]:
+        """
+        Apply a field value strategy to transform an original value.
+        
+        Strategies:
+        - None: return None (field should be cleared)
+        - "PSEUDO": return deterministic pseudonym
+        - "NEWUID": return new generated UID
+        - string literal: return the strategy string as-is
+        
+        Args:
+            original_value: The original DICOM field value
+            strategy: The strategy to apply (see above)
+            field_name: Name of field for logging (optional)
+            
+        Returns:
+            Optional[str]: The transformed value, or None to clear the field
+        """
+        if strategy is None:
+            return None
+        elif strategy == "PSEUDO":
+            return self._generate_pseudonym(original_value)
+        elif strategy == "NEWUID":
+            return self._generate_new_uid()
+        else:
+            # Literal string value
+            return str(strategy)
+    
+    def _set_field(self, ds: pydicom.Dataset, field_name: str, value: Optional[str]) -> None:
+        """
+        Set a DICOM field to a value, or clear it if value is None.
+        
+        Args:
+            ds: The DICOM dataset
+            field_name: Name of the field to set
+            value: The value to set, or None to clear
+        """
+        if field_name not in ds:
+            return
+        
+        if value is None:
+            setattr(ds, field_name, "")
+        else:
+            setattr(ds, field_name, value)
+    
+    def _apply_uid_mapping(self, original_uid: str, mapping_dict: Dict[str, str], 
+                          strategy: Optional[str]) -> str:
+        """
+        Apply UID mapping strategy with proper consistency handling.
+        
+        Args:
+            original_uid: The original UID
+            mapping_dict: Dictionary to store mappings for consistency
+            strategy: Strategy to apply ("PSEUDO" or "NEWUID")
+            
+        Returns:
+            str: The mapped/generated UID
+        """
+        if original_uid not in mapping_dict:
+            if strategy == "PSEUDOUID":
+                mapping_dict[original_uid] = self._generate_pseudonym_uid(original_uid)
+            elif strategy == "NEWUID":
+                mapping_dict[original_uid] = self._generate_new_uid()
+            else:
+                # Treat as literal
+                mapping_dict[original_uid] = str(strategy)
+        return mapping_dict[original_uid]
+
+    def anonymize(self, ds: pydicom.Dataset) -> pydicom.Dataset:
+        """
+        Comprehensive DICOM field anonymization using the active profile.
+        
+        This method performs anonymization of a DICOM dataset according to the
+        active profile configuration, removing or replacing sensitive information
+        while maintaining data integrity for medical imaging purposes.
+
+        The anonymization process includes:
+        - Patient information anonymization (name, ID, demographics)
+        - Study/Series information anonymization (UIDs, descriptions)
+        - Institution and physician information removal/replacement
+        - Date/time fields anonymization (optionally preserved per profile)
+        - Sensitive tag removal
+        - Private tag removal (if configured)
+        - Overlay data removal
+        - Pixel data blackout (if configured)
+        - Burned-in annotation handling
+        
+        Args:
+            ds (pydicom.Dataset): The DICOM dataset to anonymize
+            
+        Returns:
+            pydicom.Dataset: The anonymized DICOM dataset
+            
+        Note:
+            This method modifies the dataset in-place and also returns it
+            for method chaining convenience.
+        """
+        # Apply profile-based field transformations
+        self._anonymize_patient_fields(ds)
+        self._anonymize_study_series_fields(ds)
+        self._anonymize_institution_physician_fields(ds)
+        self._anonymize_dates(ds)
+        self._remove_sensitive_tags(ds)
+        self._handle_private_tags(ds)
+        self._remove_overlays(ds)
+        self._handle_pixel_blackout(ds)
+        
+        # Burned In Annotation
+        if "BurnedInAnnotation" in ds:
+            ds.BurnedInAnnotation = "NO"
+        elif (0x0028, 0x0301) in ds:
+            ds[0x0028, 0x0301].value = "NO"
+        
+        logger.debug(f"Successfully anonymized image using profile with PixelBlackout={self.profile.PixelBlackout}")
+        return ds
+    
+    def _anonymize_patient_fields(self, ds: pydicom.Dataset) -> None:
+        """Apply profile strategy to patient information fields."""
+        # PatientName
+        if "PatientName" in ds and self.profile.PatientName is not None:
+            new_value = self._apply_field_value_strategy(ds.PatientName, self.profile.PatientName)
+            self._set_field(ds, "PatientName", new_value)
+        
+        # PatientID
+        if "PatientID" in ds and self.profile.PatientID is not None:
+            original_id = str(ds.PatientID)
+            new_value = self._apply_field_value_strategy(original_id, self.profile.PatientID)
+            self._set_field(ds, "PatientID", new_value)
+        
+        # PatientBirthDate
+        if "PatientBirthDate" in ds and self.profile.PatientBirthDate is not None:
+            new_value = self._apply_field_value_strategy(ds.PatientBirthDate, self.profile.PatientBirthDate)
+            self._set_field(ds, "PatientBirthDate", new_value)
+        
+        # PatientSex
+        if "PatientSex" in ds and self.profile.PatientSex is not None:
+            new_value = self._apply_field_value_strategy(ds.PatientSex, self.profile.PatientSex)
+            self._set_field(ds, "PatientSex", new_value)
+        
+        # PatientAge - always clear if present
+        if "PatientAge" in ds:
+            ds.PatientAge = ""
+        
+        # Always clear other patient identifiers
+        if "OtherPatientIDs" in ds:
+            ds.OtherPatientIDs = ""
+        if "PatientAddress" in ds:
+            ds.PatientAddress = ""
+        if "PatientSize" in ds:
+            ds.PatientSize = ""
+        if "PatientWeight" in ds:
+            ds.PatientWeight = ""
+    
+    def _anonymize_study_series_fields(self, ds: pydicom.Dataset) -> None:
+        """Apply profile strategy to study and series information fields."""
+        # StudyInstanceUID with mapping
+        if "StudyInstanceUID" in ds and self.profile.StudyInstanceUID is not None:
+            original_uid = str(ds.StudyInstanceUID)
+            new_uid = self._apply_uid_mapping(original_uid, self._study_uid_map, 
+                                             self.profile.StudyInstanceUID)
+            ds.StudyInstanceUID = new_uid
+        
+        # SeriesInstanceUID with mapping
+        if "SeriesInstanceUID" in ds and self.profile.SeriesInstanceUID is not None:
+            original_uid = str(ds.SeriesInstanceUID)
+            new_uid = self._apply_uid_mapping(original_uid, self._series_uid_map, 
+                                             self.profile.SeriesInstanceUID)
+            ds.SeriesInstanceUID = new_uid
+        
+        # FrameOfReferenceUID
+        if "FrameOfReferenceUID" in ds and self.profile.FrameOfReferenceUID is not None:
+            new_value = self._apply_field_value_strategy(ds.FrameOfReferenceUID, 
+                                                        self.profile.FrameOfReferenceUID)
+            if new_value:
+                ds.FrameOfReferenceUID = new_value
+            else:
+                del ds.FrameOfReferenceUID
+        
+        # SOPInstanceUID - always generate new
+        if "SOPInstanceUID" in ds:
+            ds.SOPInstanceUID = self._generate_new_uid()
+        
+        # StudyID
+        if "StudyID" in ds and self.profile.StudyID is not None:
+            new_value = self._apply_field_value_strategy(ds.StudyID, self.profile.StudyID)
+            self._set_field(ds, "StudyID", new_value)
+        
+        # AccessionNumber
+        if "AccessionNumber" in ds and self.profile.AccessionNumber is not None:
+            new_value = self._apply_field_value_strategy(ds.AccessionNumber, 
+                                                        self.profile.AccessionNumber)
+            self._set_field(ds, "AccessionNumber", new_value)
+        
+        # StudyDescription and SeriesDescription - always anonymize
+        ds.StudyDescription = "Anonymized Study"
+        if "SeriesDescription" in ds:
+            ds.SeriesDescription = "Anonymized Series"
+    
+    def _anonymize_institution_physician_fields(self, ds: pydicom.Dataset) -> None:
+        """Apply profile strategy to institution and physician information fields."""
+        # InstitutionName
+        if "InstitutionName" in ds and self.profile.InstitutionName is not None:
+            new_value = self._apply_field_value_strategy(ds.InstitutionName, 
+                                                        self.profile.InstitutionName)
+            self._set_field(ds, "InstitutionName", new_value)
+        
+        # ReferringPhysicianName
+        if "ReferringPhysicianName" in ds and self.profile.ReferringPhysicianName is not None:
+            new_value = self._apply_field_value_strategy(ds.ReferringPhysicianName, 
+                                                        self.profile.ReferringPhysicianName)
+            self._set_field(ds, "ReferringPhysicianName", new_value)
+        
+        # OperatorsName
+        if "OperatorsName" in ds and self.profile.OperatorsName is not None:
+            new_value = self._apply_field_value_strategy(ds.OperatorsName, 
+                                                        self.profile.OperatorsName)
+            self._set_field(ds, "OperatorsName", new_value)
+        
+        # PerformingPhysicianName
+        if "PerformingPhysicianName" in ds and self.profile.PerformingPhysicianName is not None:
+            new_value = self._apply_field_value_strategy(ds.PerformingPhysicianName, 
+                                                        self.profile.PerformingPhysicianName)
+            self._set_field(ds, "PerformingPhysicianName", new_value)
+        
+        # InstitutionAddress - always clear
+        if "InstitutionAddress" in ds:
+            ds.InstitutionAddress = ""
+    
+    def _anonymize_dates(self, ds: pydicom.Dataset) -> None:
+        """Apply profile strategy to date/time fields."""
+        current_date = self._current_date()
+        current_time = self._current_time()
+        
+        # Instance creation dates - always anonymize
+        if "InstanceCreationDate" in ds:
+            ds.InstanceCreationDate = current_date
+        if "InstanceCreationTime" in ds:
+            ds.InstanceCreationTime = current_time
+        
+        # Content dates - always anonymize
+        if "ContentDate" in ds:
+            ds.ContentDate = current_date
+        
+        # Study dates - configurable per profile
+        if self.profile.RetainStudyDate:
+            # Preserve study dates
+            pass
+        else:
+            if "StudyDate" in ds:
+                ds.StudyDate = current_date
+            if "StudyTime" in ds:
+                ds.StudyTime = current_time
+        
+        # Acquisition dates - always anonymize (only kept if RetainStudyDate is true)
+        if not self.profile.RetainStudyDate:
+            if "AcquisitionDate" in ds:
+                ds.AcquisitionDate = current_date
+            if "AcquisitionDateTime" in ds:
+                ds.AcquisitionDateTime = current_date + current_time
+            if "SeriesTime" in ds:
+                ds.SeriesTime = current_time
+    
+    def _remove_sensitive_tags(self, ds: pydicom.Dataset) -> None:
+        """Remove highly sensitive DICOM tags."""
+        tags_to_remove = [
+            "OtherPatientIDsSequence", "PatientTelephoneNumbers", "MilitaryRank",
+            "RequestAttributesSequence", "ClinicalTrialSponsorName", "ClinicalTrialProtocolID"
+        ]
+        for tag in tags_to_remove:
+            if tag in ds:
+                del ds[tag]
+    
+    def _handle_private_tags(self, ds: pydicom.Dataset) -> None:
+        """Remove private tags if configured."""
+        if not self.profile.KeepPrivateTags:
+            ds.remove_private_tags()
+    
+    def _remove_overlays(self, ds: pydicom.Dataset) -> None:
+        """Remove overlay data (60xx groups)."""
+        for overlay_group in range(0x6000, 0x6020, 0x2):
+            tags_to_delete = [tag for tag in ds.keys() if tag.group == overlay_group]
+            for tag in tags_to_delete:
+                del ds[tag]
+    
+    def _handle_pixel_blackout(self, ds: pydicom.Dataset) -> None:
+        """Blackout pixel data if configured."""
+        if self.profile.PixelBlackout and "PixelData" in ds:
+            try:
+                # Set all pixel data to zeros
+                ds.pixel_array[:] = 0
+                # Update the PixelData element
+                ds.PixelData = ds.pixel_array.tobytes()
+            except Exception as e:
+                logger.warning(f"Failed to blackout pixel data: {e}")
     
     def get_patient_id_mapping(self, original_patient_id: str) -> Optional[str]:
         """
-        Get the anonymized Patient ID for an original Patient ID.
+        Get the anonymized Patient ID for an original Patient ID (if using PSEUDO).
         
         Args:
             original_patient_id (str): The original patient ID
@@ -109,11 +444,12 @@ class Anonymizer:
         Returns:
             Optional[str]: The anonymized patient ID if mapped, None otherwise
         """
-        return self._patient_id_map.get(str(original_patient_id))
+        original_str = str(original_patient_id)
+        return self._pseudonym_map.get(original_str)
     
     def get_study_uid_mapping(self, original_study_uid: str) -> Optional[str]:
         """
-        Get the anonymized Study Instance UID for an original Study Instance UID.
+        Get the anonymized Study Instance UID mapping.
         
         Args:
             original_study_uid (str): The original Study Instance UID
@@ -125,7 +461,7 @@ class Anonymizer:
     
     def get_series_uid_mapping(self, original_series_uid: str) -> Optional[str]:
         """
-        Get the anonymized Series Instance UID for an original Series Instance UID.
+        Get the anonymized Series Instance UID mapping.
         
         Args:
             original_series_uid (str): The original Series Instance UID
@@ -134,188 +470,3 @@ class Anonymizer:
             Optional[str]: The anonymized Series Instance UID if mapped, None otherwise
         """
         return self._series_uid_map.get(str(original_series_uid))
-    
-    def anonymize(self, ds: pydicom.Dataset, 
-                  study_instance_uid: str = None, 
-                  series_instance_uid: str = None,
-                  keep_study_dates: bool = False,
-                  keep_acquisition_dates: bool = False,
-                  keep_birth_date: bool = False,
-                  keep_age: bool = False,
-                  keep_sex: bool = False) -> pydicom.Dataset:
-        """
-        Comprehensive DICOM field anonymization compliant with DICOM PS3.15.
-        
-        This method performs comprehensive anonymization of a DICOM dataset,
-        removing or replacing sensitive information while maintaining data
-        integrity for medical imaging purposes.
-        
-        The anonymization process includes:
-        - Patient information anonymization (name, ID, demographics)
-        - Study/Series information anonymization (UIDs, descriptions)
-        - Institution and physician information removal
-        - Date/time fields anonymization (configurable)
-        - Sensitive tag removal
-        - Private tag removal
-        - Overlay data removal
-        - Burned-in annotation handling
-        
-        Args:
-            ds (pydicom.Dataset): The DICOM dataset to anonymize
-            study_instance_uid (str, optional): Predetermined StudyInstanceUID to use 
-                for all files in the same study. If not provided, the anonymizer will
-                automatically map the original UID to maintain consistency.
-            series_instance_uid (str, optional): Predetermined SeriesInstanceUID to use 
-                for all files in the same series. If not provided, the anonymizer will
-                automatically map the original UID to maintain consistency.
-            keep_study_dates (bool): If True, preserves StudyDate and StudyTime. 
-                Default: False (anonymize to current date/time)
-            keep_acquisition_dates (bool): If True, preserves AcquisitionDate, 
-                AcquisitionDateTime, and related fields. Default: False
-            keep_birth_date (bool): If True, preserves PatientBirthDate. 
-                Default: False (clear the field)
-            keep_age (bool): If True, preserves PatientAge. 
-                Default: False (clear the field)
-            keep_sex (bool): If True, preserves PatientSex. 
-                Default: False (clear the field)
-            
-        Returns:
-            pydicom.Dataset: The anonymized DICOM dataset
-            
-        Note:
-            This method modifies the dataset in-place and also returns it
-            for method chaining convenience.
-            
-            UID Mapping Strategy:
-            - The first time a StudyInstanceUID is encountered, it's mapped to a new UID
-            - All subsequent files with the same StudyInstanceUID receive the same new UID
-            - The same logic applies to SeriesInstanceUID
-            - This ensures proper DICOM hierarchy is maintained across multiple files
-            
-            Patient ID Mapping:
-            - Each unique PatientID is mapped to a random anonymized ID
-            - All files with the same PatientID receive the same anonymized ID
-            - This maintains consistency across a study
-        """
-        # Patient Information
-        ds.PatientName = "Anonymous"
-        
-        # Patient ID mapping for consistency across study
-        original_patient_id = str(ds.PatientID) if "PatientID" in ds else "UNKNOWN"
-        if original_patient_id not in self._patient_id_map:
-            self._patient_id_map[original_patient_id] = self._generate_patient_id()
-        ds.PatientID = self._patient_id_map[original_patient_id]
-        
-        # Birth date handling
-        if not keep_birth_date:
-            ds.PatientBirthDate = ""
-        
-        # Sex handling
-        if not keep_sex:
-            ds.PatientSex = ""
-        
-        # Age handling
-        if "PatientAge" in ds and not keep_age:
-            ds.PatientAge = ""
-        
-        if "OtherPatientIDs" in ds: 
-            ds.OtherPatientIDs = ""
-        if "PatientAddress" in ds: 
-            ds.PatientAddress = ""
-        if "PatientSize" in ds: 
-            ds.PatientSize = ""
-        if "PatientWeight" in ds: 
-            ds.PatientWeight = ""
-        
-        # Study/Series Information with automatic UID mapping
-        if "StudyInstanceUID" in ds:
-            original_study_uid = str(ds.StudyInstanceUID)
-            if study_instance_uid:
-                # Use provided UID
-                ds.StudyInstanceUID = study_instance_uid
-            else:
-                # Use mapped UID or create new mapping
-                if original_study_uid not in self._study_uid_map:
-                    self._study_uid_map[original_study_uid] = self._generate_new_uid()
-                ds.StudyInstanceUID = self._study_uid_map[original_study_uid]
-        
-        if "SeriesInstanceUID" in ds:
-            original_series_uid = str(ds.SeriesInstanceUID)
-            if series_instance_uid:
-                # Use provided UID
-                ds.SeriesInstanceUID = series_instance_uid
-            else:
-                # Use mapped UID or create new mapping
-                if original_series_uid not in self._series_uid_map:
-                    self._series_uid_map[original_series_uid] = self._generate_new_uid()
-                ds.SeriesInstanceUID = self._series_uid_map[original_series_uid]
-        
-        if "SOPInstanceUID" in ds: 
-            ds.SOPInstanceUID = self._generate_new_uid()
-        ds.AccessionNumber = ''.join(random.choices(string.ascii_uppercase + string.digits, k=16))
-        ds.StudyDescription = "Anonymized Study"
-        if "SeriesDescription" in ds: ds.SeriesDescription = "Anonymized Series"
-        
-        # Institution and Physician Information
-        if "InstitutionName" in ds: ds.InstitutionName = ""
-        if "InstitutionAddress" in ds: ds.InstitutionAddress = ""
-        if "ReferringPhysicianName" in ds: ds.ReferringPhysicianName = ""
-        if "OperatorsName" in ds: ds.OperatorsName = ""
-        if "PerformingPhysicianName" in ds: ds.PerformingPhysicianName = ""
-        
-        # Dates and Times (configurable)
-        current_date = self._current_date()
-        current_time = self._current_time()
-        
-        # Instance creation dates (always anonymized)
-        if "InstanceCreationDate" in ds: 
-            ds.InstanceCreationDate = current_date
-        if "InstanceCreationTime" in ds: 
-            ds.InstanceCreationTime = current_time
-        
-        # Content dates (always anonymized)
-        if "ContentDate" in ds: 
-            ds.ContentDate = current_date
-        
-        # Study dates (configurable)
-        if not keep_study_dates:
-            if "StudyDate" in ds: 
-                ds.StudyDate = current_date
-            if "StudyTime" in ds: 
-                ds.StudyTime = current_time
-        
-        # Acquisition dates (configurable)
-        if not keep_acquisition_dates:
-            if "AcquisitionDate" in ds: 
-                ds.AcquisitionDate = current_date
-            if "AcquisitionDateTime" in ds: 
-                ds.AcquisitionDateTime = current_date + current_time
-            if "SeriesTime" in ds: 
-                ds.SeriesTime = current_time
-        
-        # Remove sensitive tags
-        tags_to_remove = [
-            "OtherPatientIDsSequence", "PatientTelephoneNumbers", "MilitaryRank",
-            "RequestAttributesSequence", "ClinicalTrialSponsorName", "ClinicalTrialProtocolID"
-        ]
-        for tag in tags_to_remove:
-            if tag in ds:
-                del ds[tag]
-                
-        # Burned In Annotation
-        if "BurnedInAnnotation" in ds:
-            ds.BurnedInAnnotation = "NO"
-        elif (0x0028, 0x0301) in ds:
-            ds[0x0028, 0x0301].value = "NO"
-            
-        # Remove private tags and overlays
-        ds.remove_private_tags()
-        
-        # Remove overlay data (60xx groups)
-        for overlay_group in range(0x6000, 0x6020, 0x2):
-            tags_to_delete = [tag for tag in ds.keys() if tag.group == overlay_group]
-            for tag in tags_to_delete:
-                del ds[tag]
-        
-        # Return the modified dataset for chaining
-        return ds

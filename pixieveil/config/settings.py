@@ -5,13 +5,63 @@ This module provides configuration management for the PixieVeil application.
 It handles loading and validation of application settings from YAML configuration files.
 
 Classes:
+    AnonymizationProfile: Configuration for a single anonymization profile
     Settings: Main configuration class that manages all application settings
 """
 
 import yaml
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Union
 from pydantic import BaseModel, Field
+
+
+class AnonymizationProfile(BaseModel):
+    """
+    Configuration for a single anonymization profile.
+    
+    This class defines how specific DICOM fields should be handled during anonymization.
+    Field values can be:
+    - null: clear the field (set to empty string)
+    - "PSEUDO": replace with deterministic pseudonym based on original value
+    - "NEWUID": generate a new DICOM UID
+    - string literal: replace with the specified string (e.g., "ANON", "DEID_CENTER")
+    
+    Attributes:
+        PatientName: How to handle patient name
+        PatientID: How to handle patient ID
+        PatientBirthDate: How to handle birth date
+        PatientSex: How to handle patient sex
+        InstitutionName: How to handle institution name
+        StudyID: How to handle study ID
+        StudyInstanceUID: How to handle study UID strategy
+        SeriesInstanceUID: How to handle series UID strategy
+        FrameOfReferenceUID: How to handle frame of reference UID strategy
+        ReferringPhysicianName: How to handle referring physician
+        OperatorsName: How to handle operator name
+        PerformingPhysicianName: How to handle performing physician
+        AccessionNumber: How to handle accession number
+        KeepPrivateTags: If False, remove private DICOM tags
+        PixelBlackout: If True, set all pixel data to zeros
+        RetainStudyDate: If True, keep study date and time unchanged
+    """
+    
+    PatientName: Optional[str] = None
+    PatientID: Optional[str] = None
+    PatientBirthDate: Optional[str] = None
+    PatientSex: Optional[str] = None
+    InstitutionName: Optional[str] = None
+    StudyID: Optional[str] = None
+    StudyInstanceUID: Optional[str] = None
+    SeriesInstanceUID: Optional[str] = None
+    FrameOfReferenceUID: Optional[str] = None
+    ReferringPhysicianName: Optional[str] = None
+    OperatorsName: Optional[str] = None
+    PerformingPhysicianName: Optional[str] = None
+    AccessionNumber: Optional[str] = None
+    KeepPrivateTags: bool = False
+    PixelBlackout: bool = False
+    RetainStudyDate: bool = False
+
 
 class Settings(BaseModel):
     """
@@ -96,3 +146,58 @@ class Settings(BaseModel):
             config_data = yaml.safe_load(f) or {}
 
         return cls(**config_data)
+    
+    def get_anonymization_profile(self, profile_name: Optional[str] = None) -> AnonymizationProfile:
+        """
+        Get an anonymization profile by name, with fallback to default profile.
+        
+        Args:
+            profile_name (str, optional): Name of the profile to retrieve. If None,
+                                        uses the default profile from config.
+                
+        Returns:
+            AnonymizationProfile: The requested or default anonymization profile
+                
+        Raises:
+            ValueError: If the requested profile does not exist
+            
+        Note:
+            If the anonymization section is not configured, returns a default
+            research profile for backward compatibility.
+        """
+        if not self.anonymization:
+            # Default profile for backward compatibility
+            return AnonymizationProfile(
+                PatientName="PSEUDO",
+                PatientID="PSEUDO",
+                PatientBirthDate=None,
+                PatientSex=None,
+                InstitutionName="DEID_CENTER",
+                StudyID="RESEARCH",
+                StudyInstanceUID="PSEUDOUID",
+                SeriesInstanceUID="PSEUDOUID",
+                FrameOfReferenceUID="PSEUDOUID",
+                ReferringPhysicianName=None,
+                OperatorsName=None,
+                PerformingPhysicianName=None,
+                AccessionNumber=None,
+                KeepPrivateTags=False,
+                PixelBlackout=False,
+                RetainStudyDate=True
+            )
+        
+        # Determine which profile to use
+        if profile_name is None:
+            profile_name = self.anonymization.get("profile", "research")
+        
+        # Get profiles dict
+        profiles = self.anonymization.get("profiles", {})
+        
+        if profile_name not in profiles:
+            raise ValueError(
+                f"Anonymization profile '{profile_name}' not found. "
+                f"Available profiles: {list(profiles.keys())}"
+            )
+        
+        profile_data = profiles[profile_name]
+        return AnonymizationProfile(**profile_data)

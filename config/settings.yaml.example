@@ -8,7 +8,44 @@ dicom_server:
 
 # Anonymization Settings
 anonymization:
-  profile: "research"   # Options: "gdpr_strict", "research"
+  profile: "research"   # Active profile: research or gdpr
+  profiles:
+    research:
+      # Research profile: pseudonymized data with preserved study dates
+      PatientName: "PSEUDO"
+      PatientID: "PSEUDO"
+      PatientBirthDate: null
+      PatientSex: null
+      InstitutionName: "DEID_CENTER"
+      StudyID: "RESEARCH"
+      StudyInstanceUID: "PSEUDOUID"
+      SeriesInstanceUID: "PSEUDOUID"
+      FrameOfReferenceUID: "PSEUDOUID"
+      ReferringPhysicianName: null
+      OperatorsName: null
+      PerformingPhysicianName: null
+      AccessionNumber: null
+      KeepPrivateTags: false
+      PixelBlackout: false
+      RetainStudyDate: true
+    gdpr:
+      # GDPR profile: fully anonymized with strong data protection
+      PatientName: "ANON"
+      PatientID: "PSEUDO"
+      PatientBirthDate: null
+      PatientSex: null
+      InstitutionName: null
+      StudyID: "STUDY"
+      StudyInstanceUID: "NEWUID"
+      SeriesInstanceUID: "NEWUID"
+      FrameOfReferenceUID: "NEWUID"
+      ReferringPhysicianName: null
+      OperatorsName: null
+      PerformingPhysicianName: null
+      AccessionNumber: null
+      KeepPrivateTags: false
+      PixelBlackout: true
+      RetainStudyDate: false
 
 # Storage Settings
 storage:
