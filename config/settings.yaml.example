@@ -3,28 +3,32 @@
 # DICOM Server Settings
 dicom_server:
   ae_title: "PIXIEVEIL"
-  port: 11112
+  port: 4070
   ip: "0.0.0.0"
 
 # Anonymization Settings
 anonymization:
-  profile: "research"  # Options: "gdpr_strict", "research"
-  salt: "your-secret-salt"  # Change this for production
+  profile: "research"   # Options: "gdpr_strict", "research"
 
 # Storage Settings
 storage:
   base_path: "./data/pixieveil"
-  temp_path: "./tmp/pixieveil"
+  temp_path: "./data/tmp"
   max_storage_gb: 1000
+  # Optional: remove or leave empty to keep archives local only
+  # remote_storage:
+  #   base_url: "https://your-storage-server"
+  #   auth_token: "your-bearer-token"
 
 # HTTP Server Settings
 http_server:
-  port: 8080
+  port: 8070
   ip: "0.0.0.0"
 
 # Study Management
 study:
-  completion_timeout: 300  # seconds (5 minutes)
+  completion_timeout: 120         # seconds of inactivity before a study is considered done
+  completion_check_interval: 30   # how often (seconds) to check for completed studies
   max_study_size_mb: 4000
 
 # Series Filtering

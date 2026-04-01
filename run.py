@@ -60,6 +60,7 @@ def setup_logging(settings: Settings) -> None:
         level=log_cfg.get("level", "INFO"),
         format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
         handlers=handlers,
+        force=True,
     )
 
 
