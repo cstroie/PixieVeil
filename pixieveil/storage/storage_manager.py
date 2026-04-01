@@ -29,50 +29,40 @@ from pixieveil.config import Settings
 from pixieveil.storage.remote_storage import RemoteStorage
 from pixieveil.storage.zip_manager import ZipManager
 from pixieveil.processing.anonymizer import Anonymizer
+from pixieveil.processing.study_manager import StudyManager, StudyState
+from pixieveil.processing.series_filter import SeriesFilter
 
 logger = logging.getLogger(__name__)
 
 
-class StudyState:
-    """
-    Tracks the state of a DICOM study.
-    
-    Attributes:
-        last_received (float): Timestamp of the last received image for this study
-        completed (bool): Flag indicating if the study has been completed and processed
-    """
-    
-    def __init__(self):
-        """
-        Initialize a new StudyState instance.
-        """
-        self.last_received = time.time()
-        self.completed = False
-
-
 class StorageManager:
     """
-    Manages DICOM image storage, processing, and study completion monitoring.
+    Manages DICOM image storage and processing workflow.
     
     This class handles the complete lifecycle of DICOM images from temporary storage
-    through processing, anonymization, organization into studies/series, and eventual
-    archiving and upload to remote storage.
+    through processing, anonymization, organization, and eventual archiving.
+    It coordinates with multiple specialized managers:
+    - StudyManager: Handles study/series numbering and completion tracking
+    - Anonymizer: Handles DICOM anonymization
+    - SeriesFilter: Filters series based on criteria
+    - ZipManager: Creates study archives
+    - RemoteStorage: Uploads to remote systems
     
     Attributes:
         settings (Settings): Application configuration settings
         base_path (Path): Base directory for storing organized DICOM studies
         temp_path (Path): Temporary directory for storing incoming DICOM images
-        remote_storage (RemoteStorage): Handler for remote storage operations
-        zip_manager (ZipManager): Handler for ZIP archive creation
+        study_manager (StudyManager): Manager for study lifecycle
+        series_filter (SeriesFilter): Filters series based on criteria
         anonymizer (Anonymizer): Handler for DICOM anonymization
-        study_states (Dict[str, StudyState]): Dictionary tracking active studies
-        completed_count (int): Counter for completed studies
-        study_counter (int): Counter for assigning numeric study IDs
-        study_map (Dict[str, int]): Maps StudyInstanceUID to numeric study number
-        series_map (Dict[tuple, tuple]): Maps (StudyUID, SeriesUID) to (study_num, series_num)
-        image_counters (Dict[tuple, int]): Tracks image numbers within each series
+        zip_manager (ZipManager): Handler for ZIP archive creation
+        remote_storage (RemoteStorage): Handler for remote storage operations
+        mapping_log_path (Path): Path to audit log for anonymization mappings
         _lock (threading.Lock): Thread lock for thread-safe operations
-        counters (Dict[str, int]): Dictionary for tracking various statistics
+        counters (Dict[str, Any]): Dictionary for tracking various statistics
+        _completion_task (Optional[asyncio.Task]): Background task for completion checking
+        _stop_event (Optional[asyncio.Event]): Event to signal background task to stop
+        _shutting_down (bool): Flag indicating shutdown in progress
     """
     
     def __init__(self, settings: Settings):
@@ -92,31 +82,19 @@ class StorageManager:
         self.temp_path.mkdir(parents=True, exist_ok=True)
         logger.debug(f"Created temp directory: {self.temp_path}")
         
-        self.remote_storage = RemoteStorage(settings)
-        self.zip_manager = ZipManager(settings)
+        # Initialize managers
+        self.study_manager = StudyManager(settings)
+        self.study_manager.initialize_from_existing_studies(self.base_path)
+        self.series_filter = SeriesFilter(settings)
         self.anonymizer = Anonymizer(settings)
-        self.study_states = {}  # study_uid: StudyState
-        self.completed_count = 0
+        self.zip_manager = ZipManager(settings)
+        self.remote_storage = RemoteStorage(settings)
         
         # Mapping log file for audit trail
         self.mapping_log_path = self.base_path.parent / "mapping_log.jsonl"
         logger.debug(f"Mapping log will be written to: {self.mapping_log_path}")
         
-        # Numbering counters
-        # Find the latest used study number from existing directories
-        existing_studies = [d.name for d in self.base_path.iterdir() if d.is_dir()]
-        study_numbers = []
-        for name in existing_studies:
-            if len(name) == 4 and name.isdigit():
-                study_numbers.append(int(name))
-        
-        self.study_counter = max(study_numbers) if study_numbers else 0
-        logger.debug(f"Found existing studies: {existing_studies}")
-        logger.debug(f"Starting study counter from: {self.study_counter}")
-        
-        self.study_map = {}  # StudyInstanceUID -> study_number
-        self.series_map = {}  # (StudyInstanceUID, SeriesInstanceUID) -> (study_number, series_number)
-        self.image_counters = {}  # (study_number, series_number) -> image_counter
+        # Thread safety
         self._lock = threading.Lock()
         
         # Statistics counters
@@ -513,11 +491,20 @@ class StorageManager:
             patient_id = str(ds.PatientID) if "PatientID" in ds else "UNKNOWN"
             logger.debug(f"Image {image_id} belongs to study {study_uid}, series {series_uid}, patient {patient_id}")
             
+            # Check if image should be filtered based on series criteria
+            if self.series_filter.should_filter(ds):
+                logger.info(f"Filtering out image {image_id} based on series criteria")
+                with self._lock:
+                    self.inc_counter('processing', 'filtered_images')
+                    self.inc_counter('errors', 'total')
+                return
+            
             # Update reception counters for new studies
-            with self._lock:
-                if study_uid not in self.study_map:
+            study_number = self.study_manager.get_study_number(study_uid)
+            if study_number is None:
+                with self._lock:
                     self.inc_counter('reception', 'studies')
-                    logger.debug(f"New study detected: {study_uid}")
+                logger.debug(f"New study detected: {study_uid}")
             
             # Anonymize the DICOM dataset
             logger.debug(f"Starting anonymization of image {image_id}")
@@ -535,45 +522,22 @@ class StorageManager:
                     self.inc_counter('errors', 'total')
                 return
 
-            with self._lock:
-                # Assign study number
-                if study_uid not in self.study_map:
-                    self.study_counter += 1
-                    self.study_map[study_uid] = self.study_counter
-                    logger.debug(f"Assigned new study number {self.study_counter} to study {study_uid}")
-                
-                # Get assigned study number for this study UID
-                study_number = self.study_map[study_uid]
+            # Assign study/series/image numbers using StudyManager
+            study_number, series_number, is_new_series = self.study_manager.add_image_to_study(study_uid, series_uid)
             
-                # Assign series number
-                key = (study_uid, series_uid)
-                if key not in self.series_map:
-                    # Find highest existing series number for this study
-                    study_dir = self.base_path / f"{study_number:04d}"
-                    if study_dir.exists():
-                        existing_series = [d.name for d in study_dir.iterdir() if d.is_dir()]
-                        series_numbers = [int(name) for name in existing_series if len(name) == 4 and name.isdigit()]
-                        series_count = max(series_numbers) + 1 if series_numbers else 1
-                        logger.debug(f"Study {study_number} has existing series: {existing_series}")
-                    else:
-                        series_count = 1
-                        logger.debug(f"Creating new series {series_count} for study {study_number}")
+            # Update storage counters for new series
+            if is_new_series:
+                base_path = self.base_path
+                study_dir = base_path / f"{study_number:04d}"
+                if not study_dir.exists():
+                    with self._lock:
                         self.inc_counter('storage', 'studies')
-                        self.inc_counter('storage', 'series')
-                    
-                    self.series_map[key] = (study_number, series_count)
-                    logger.debug(f"Assigned new series number {series_count} to series {series_uid}")
-
-                # Get assigned study and series numbers for this image
-                study_number, series_number = self.series_map[key]
-                
-                # Get next image number in series
-                if (study_number, series_number) not in self.image_counters:
-                    self.image_counters[(study_number, series_number)] = 0
-                    logger.debug(f"Starting new image counter for study {study_number}, series {series_number}")
-                self.image_counters[(study_number, series_number)] += 1
-                image_number = self.image_counters[(study_number, series_number)]
-                logger.debug(f"Image {image_id} will be saved as image number {image_number} in series {series_number}")
+                with self._lock:
+                    self.inc_counter('storage', 'series')
+                logger.debug(f"Creating new series {series_number} for study {study_number}")
+            
+            # Get image number
+            image_number = self.study_manager.get_next_image_number(study_number, series_number)
             
             # Log the anonymization mapping after study/series numbers are assigned
             self._log_anonymization_mapping(study_uid, series_uid, patient_id, image_id, 
@@ -591,22 +555,12 @@ class StorageManager:
             logger.debug(f"Moving image from {image_path} to {image_dest}")
             shutil.move(image_path, image_dest)
             
-            # Thread-safe update of study_states and storage counters
+            # Update storage counters
             with self._lock:
-                # Only create new StudyState if it doesn't exist
-                if study_uid not in self.study_states:
-                    self.study_states[study_uid] = StudyState()
-                    logger.debug(f"Created new StudyState for study {study_uid}")
-                else:
-                    # Update last received time for existing study
-                    self.study_states[study_uid].last_received = time.time()
-                    logger.debug(f"Updated last received time for study {study_uid}")
-                
-                # Update storage counters
                 self.inc_counter('storage', 'images')
                 self.inc_counter('processing', 'images')
-                self.inc_counter('processing', 'studies', len(self.study_map))
-                logger.debug(f"Updated storage counters: storage_images={self.counters['storage']['images']}, processing_studies={self.counters['processing']['studies']}")
+                self.inc_counter('processing', 'studies', self.study_manager.get_active_study_count())
+                logger.debug(f"Updated storage counters: storage_images={self.counters['storage']['images']}, active_studies={self.study_manager.get_active_study_count()}")
 
             # Update processing time
             processing_time = time.time() - start_time
@@ -667,45 +621,38 @@ class StorageManager:
                 caller (the background loop) is responsible for sleeping
                 between calls.
         """
-        # Get completion timeout from settings, default to 120 seconds if not specified
-        timeout = self.settings.study.get("completion_timeout", 120)
+        # Use StudyManager to check for completed studies
+        completed_study_uids = self.study_manager.check_study_completions()
+        
+        if not completed_study_uids:
+            logger.debug(f"No studies timed out in this check interval")
+            return
+        
+        logger.info(f"Found {len(completed_study_uids)} completed studies to process")
+        
+        for study_uid in completed_study_uids:
+            # Get study number from StudyManager
+            study_number = self.study_manager.get_study_number(study_uid)
+            if not study_number:
+                logger.warning(f"No study number found for completed study {study_uid}")
+                continue
 
-        now = time.time()
-
-        # Thread‑safe snapshot of current study states
-        with self._lock:
-            study_states_copy = dict(self.study_states)
-
-        if study_states_copy:
-            logger.debug(f"Tracking {len(self.study_states)} active studies")
-            for study_uid, state in self.study_states.items():
-                time_since_last = now - state.last_received
-                logger.debug(f"Study {study_uid}: last received {time_since_last:.1f}s ago")
-
-        for study_uid, state in list(study_states_copy.items()):
-            if not state.completed and (now - state.last_received) > timeout:
-                logger.info(f"Study {study_uid} timed out ({now - state.last_received:.1f}s since last image)")
-                # Process completed study
-                study_number = self.study_map.get(study_uid)
-                if not study_number:
-                    logger.warning(f"No study number found for {study_uid}")
-                    continue
-
-                study_dir = self.base_path / f"{study_number:04d}"
-                if not study_dir.exists():
-                    logger.warning(f"Study directory missing for {study_uid}")
-                    with self._lock:
-                        self.inc_counter('errors', 'total')
-                    continue
-
-                logger.info(f"Processing completed study: {study_number:04d} ({study_uid})")
-                image_count = sum(len(list(study_dir.rglob("*.dcm"))) for _ in [None])
-                logger.debug(f"Study {study_number:04d} contains {image_count} images")
-
-                # Update archive counters
+            study_dir = self.base_path / f"{study_number:04d}"
+            if not study_dir.exists():
+                logger.warning(f"Study directory missing for {study_uid}: {study_dir}")
                 with self._lock:
-                    self.inc_counter('archive', 'studies')
-                    self.inc_counter('archive', 'images', image_count)
+                    self.inc_counter('errors', 'total')
+                self.study_manager.mark_study_archived(study_uid)
+                continue
+
+            logger.info(f"Processing completed study: {study_number:04d} ({study_uid})")
+            image_count = sum(len(list(study_dir.rglob("*.dcm"))) for _ in [None])
+            logger.debug(f"Study {study_number:04d} contains {image_count} images")
+
+            # Update archive counters
+            with self._lock:
+                self.inc_counter('archive', 'studies')
+                self.inc_counter('archive', 'images', image_count)
 
                 # Create ZIP archive
                 zip_filename = f"{study_number:04d}"
@@ -732,27 +679,21 @@ class StorageManager:
                 if success is None:
                     logger.info(f"Remote storage not configured, keeping local files for study {zip_filename}")
                     with self._lock:
-                        if study_uid in self.study_states:
-                            self.study_states[study_uid].completed = True
-                            self.completed_count += 1
-                            self.inc_counter('cleanup', 'studies')
-                            self.inc_counter('cleanup', 'images', image_count)
-                            del self.study_states[study_uid]
+                        self.inc_counter('cleanup', 'studies')
+                        self.inc_counter('cleanup', 'images', image_count)
+                    self.study_manager.mark_study_archived(study_uid)
                 elif success:
                     logger.info(f"Successfully uploaded study {study_number:04d}")
                     with self._lock:
-                        if study_uid in self.study_states:
-                            self.study_states[study_uid].completed = True
-                            self.completed_count += 1
-                            self.inc_counter('remote_storage', 'studies')
-                            self.inc_counter('remote_storage', 'images', image_count)
-                            self.inc_counter('remote_storage', 'bytes', zip_path.stat().st_size)
-                            self.inc_counter('cleanup', 'studies')
-                            self.inc_counter('cleanup', 'images', image_count)
-                            logger.debug(f"Cleaning up study directory: {study_dir}")
-                            shutil.rmtree(study_dir)
-                            zip_path.unlink()
-                            del self.study_states[study_uid]
+                        self.inc_counter('remote_storage', 'studies')
+                        self.inc_counter('remote_storage', 'images', image_count)
+                        self.inc_counter('remote_storage', 'bytes', zip_path.stat().st_size)
+                        self.inc_counter('cleanup', 'studies')
+                        self.inc_counter('cleanup', 'images', image_count)
+                        logger.debug(f"Cleaning up study directory: {study_dir}")
+                        shutil.rmtree(study_dir)
+                        zip_path.unlink()
+                    self.study_manager.mark_study_archived(study_uid)
                 else:
                     logger.error(f"Failed to upload study {study_uid}")
                     with self._lock:
