@@ -11,6 +11,7 @@ Classes:
 
 import asyncio
 import logging
+import time
 from pathlib import Path
 from typing import Dict, Any, Optional
 
@@ -249,7 +250,7 @@ class Dashboard:
         
         stats = {
             "server_status": "running",
-            "timestamp": asyncio.get_event_loop().time(),
+            "timestamp": time.time(),
             "sections": sections
         }
         
