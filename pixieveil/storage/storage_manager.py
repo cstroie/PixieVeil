@@ -18,6 +18,8 @@ import logging
 import shutil
 import time
 import threading
+import json
+from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, Optional
 
@@ -95,6 +97,10 @@ class StorageManager:
         self.anonymizer = Anonymizer(settings)
         self.study_states = {}  # study_uid: StudyState
         self.completed_count = 0
+        
+        # Mapping log file for audit trail
+        self.mapping_log_path = self.base_path.parent / "mapping_log.jsonl"
+        logger.debug(f"Mapping log will be written to: {self.mapping_log_path}")
         
         # Numbering counters
         # Find the latest used study number from existing directories
@@ -410,6 +416,55 @@ class StorageManager:
 
         return temp_file
 
+    def _log_anonymization_mapping(self, original_study_uid: str, original_series_uid: str, 
+                                   original_patient_id: str, image_id: str, 
+                                   anonymized_study_number: int, anonymized_series_number: int):
+        """
+        Log the anonymization mapping to audit trail file.
+        
+        Writes a JSON line for each anonymized image containing the mapping information.
+        This is useful for tracing back anonymized data to original records if needed.
+        
+        Args:
+            original_study_uid (str): Original Study Instance UID
+            original_series_uid (str): Original Series Instance UID
+            original_patient_id (str): Original Patient ID
+            image_id (str): Unique image identifier
+            anonymized_study_number (int): Assigned numeric study number
+            anonymized_series_number (int): Assigned numeric series number
+        """
+        try:
+            # Get the anonymized UIDs from the anonymizer
+            anon_study_uid = self.anonymizer.get_study_uid_mapping(original_study_uid)
+            anon_series_uid = self.anonymizer.get_series_uid_mapping(original_series_uid)
+            anon_patient_id = self.anonymizer.get_patient_id_mapping(original_patient_id)
+            
+            mapping_record = {
+                'timestamp': datetime.now().isoformat(),
+                'image_id': image_id,
+                'original': {
+                    'study_uid': original_study_uid,
+                    'series_uid': original_series_uid,
+                    'patient_id': original_patient_id
+                },
+                'anonymized': {
+                    'study_uid': anon_study_uid,
+                    'series_uid': anon_series_uid,
+                    'patient_id': anon_patient_id,
+                    'study_number': str(anonymized_study_number).zfill(4),
+                    'series_number': str(anonymized_series_number).zfill(4)
+                }
+            }
+            
+            # Append to JSONL file (JSON Lines format - one JSON object per line)
+            with self._lock:
+                with open(self.mapping_log_path, 'a') as f:
+                    f.write(json.dumps(mapping_record) + '\n')
+            
+            logger.debug(f"Logged anonymization mapping for image {image_id}")
+        except Exception as e:
+            logger.error(f"Failed to log anonymization mapping for image {image_id}: {e}", exc_info=True)
+
     def process_image(self, image_path: Path, image_id: str):
         """
         Process a received DICOM image through the complete pipeline.
@@ -455,7 +510,8 @@ class StorageManager:
             # Save original identifiers before anonymization
             study_uid = str(ds.StudyInstanceUID)
             series_uid = str(ds.SeriesInstanceUID)
-            logger.debug(f"Image {image_id} belongs to study {study_uid}, series {series_uid}")
+            patient_id = str(ds.PatientID) if "PatientID" in ds else "UNKNOWN"
+            logger.debug(f"Image {image_id} belongs to study {study_uid}, series {series_uid}, patient {patient_id}")
             
             # Update reception counters for new studies
             with self._lock:
@@ -518,6 +574,10 @@ class StorageManager:
                 self.image_counters[(study_number, series_number)] += 1
                 image_number = self.image_counters[(study_number, series_number)]
                 logger.debug(f"Image {image_id} will be saved as image number {image_number} in series {series_number}")
+            
+            # Log the anonymization mapping after study/series numbers are assigned
+            self._log_anonymization_mapping(study_uid, series_uid, patient_id, image_id, 
+                                            study_number, series_number)
 
             # Create numeric paths (4-digit padded)
             study_dir = self.base_path / f"{study_number:04d}"

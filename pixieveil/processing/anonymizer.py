@@ -11,6 +11,7 @@ Classes:
 
 import logging
 from datetime import datetime
+from typing import Optional, Dict, Any
 import random
 import string
 import pydicom
@@ -92,9 +93,9 @@ class Anonymizer:
         Generate a random anonymized Patient ID.
         
         Returns:
-            str: Random patient ID in format "PAT-XXXXXXXX" (3 letters + 8 random alphanumeric)
+            str: Random patient ID in format "PAT-XXXXXXXX" (3 letters + 8 random numeric)
         """
-        random_part = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
+        random_part = ''.join(random.choices(string.digits, k=8))
         return f"PAT-{random_part}"
     
     def clear_uid_mappings(self):
@@ -108,6 +109,58 @@ class Anonymizer:
         self._series_uid_map.clear()
         self._patient_id_map.clear()
         logger.debug("UID and Patient ID mappings cleared")
+    
+    def get_patient_id_mapping(self, original_patient_id: str) -> Optional[str]:
+        """
+        Get the anonymized Patient ID for an original Patient ID.
+        
+        Args:
+            original_patient_id (str): The original patient ID
+            
+        Returns:
+            Optional[str]: The anonymized patient ID if mapped, None otherwise
+        """
+        return self._patient_id_map.get(str(original_patient_id))
+    
+    def get_study_uid_mapping(self, original_study_uid: str) -> Optional[str]:
+        """
+        Get the anonymized Study Instance UID for an original Study Instance UID.
+        
+        Args:
+            original_study_uid (str): The original Study Instance UID
+            
+        Returns:
+            Optional[str]: The anonymized Study Instance UID if mapped, None otherwise
+        """
+        return self._study_uid_map.get(str(original_study_uid))
+    
+    def get_series_uid_mapping(self, original_series_uid: str) -> Optional[str]:
+        """
+        Get the anonymized Series Instance UID for an original Series Instance UID.
+        
+        Args:
+            original_series_uid (str): The original Series Instance UID
+            
+        Returns:
+            Optional[str]: The anonymized Series Instance UID if mapped, None otherwise
+        """
+        return self._series_uid_map.get(str(original_series_uid))
+    
+    def get_all_mappings(self) -> Dict[str, Any]:
+        """
+        Get all current mappings (study UIDs, series UIDs, patient IDs).
+        
+        Returns:
+            Dict[str, Any]: Dictionary containing all mappings with keys:
+                - 'study_uid_map': Study UID mappings
+                - 'series_uid_map': Series UID mappings
+                - 'patient_id_map': Patient ID mappings
+        """
+        return {
+            'study_uid_map': dict(self._study_uid_map),
+            'series_uid_map': dict(self._series_uid_map),
+            'patient_id_map': dict(self._patient_id_map)
+        }
 
     def anonymize(self, ds: pydicom.Dataset, 
                   study_instance_uid: str = None, 
