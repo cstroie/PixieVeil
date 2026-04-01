@@ -94,7 +94,7 @@ class DicomServer:
         ]
 
         # Start the server in a separate thread to avoid blocking the event loop
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         self.server_task = loop.run_in_executor(
             None, 
             self._start_blocking_server,
@@ -115,8 +115,9 @@ class DicomServer:
             Exception: If the server fails to start
         """
         try:
-            self.ae.start_server(('', self.ae_port), evt_handlers=handlers)
             logger.info(f"DICOM server running on port {self.ae_port}")
+            self.ae.start_server(('', self.ae_port), evt_handlers=handlers)
+            logger.info("DICOM server stopped")
         except Exception as e:
             logger.error(f"Failed to start DICOM server: {e}")
             raise
@@ -139,7 +140,7 @@ class DicomServer:
         try:
             if self.server_task and not self.server_task.done():
                 # First, request shutdown from within the server thread
-                loop = asyncio.get_event_loop()
+                loop = asyncio.get_running_loop()
                 await loop.run_in_executor(None, self._stop_server)
                 
                 # Then wait for the task to complete with timeout

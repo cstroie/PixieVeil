@@ -80,15 +80,20 @@ class CStoreSCPHandler:
                 return 0xC000  # Processing failure
             
             dataset = info['dataset']
-            file_meta = info.get('file_meta', {})
-            
-            # Create a new DICOM dataset with file meta and pixel data
-            ds = pydicom.Dataset()
-            ds.file_meta = file_meta
-            ds.update(dataset)
-            
+            file_meta = info.get('file_meta')
+
+            # Validate before touching disk
+            if not self._validate_dicom(dataset):
+                logger.warning(f"Invalid DICOM dataset in C-STORE request {image_id}")
+                return 0xC000  # Processing failure
+
+            # Attach file meta directly to the existing dataset to preserve
+            # all encoding attributes (is_implicit_VR, is_little_endian, etc.)
+            if file_meta:
+                dataset.file_meta = file_meta
+
             # Save the DICOM image temporarily
-            temp_path = self.storage.save_temp_image(ds, image_id)
+            temp_path = self.storage.save_temp_image(dataset, image_id)
 
             logger.info(f"Successfully received image {image_id}")
 
