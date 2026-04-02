@@ -6,6 +6,50 @@ dicom_server:
   port: 4070
   ip: "0.0.0.0"
 
+# Storage Settings
+storage:
+  base_path: "./data/pixieveil"
+  temp_path: "./data/tmp"
+  max_storage_gb: 100
+
+# Optional: remove or leave empty to keep archives local only
+#remote_storage:
+#  base_url: "https://your-storage-server"
+#  auth_token: "your-bearer-token"
+
+# HTTP Server Settings
+http_server:
+  port: 8070
+  ip: "0.0.0.0"
+
+# Study Management
+study:
+  completion_timeout: 120         # seconds of inactivity before a study is considered done
+  completion_check_interval: 30   # how often (seconds) to check for completed studies
+  max_study_size_mb: 4000
+
+# Series Filtering
+# Attribute-based rules use DICOM keyword names mapped to regular expressions.
+# Include takes priority over exclude:
+#   - If any include rule matches -> keep the series
+#   - Else if any exclude rule matches -> filter the series out
+#   - Else -> keep the series
+# For multi-value attributes (e.g. ImageType) each value is tested individually.
+series_filter:
+  exclude_modalities: ["PR", "RT"]
+  only_original_series: true
+#  include:
+#    SeriesDescription: "(?i)topogram"
+#  exclude:
+#    SeriesDescription: "(?i)dose\\s+report"
+#    ImageType: "^DERIVED"
+
+# Logging
+logging:
+  level: "INFO"
+  file: "./data/log/pixieveil.log"
+  anontrail: "./data/log/anontrail.jsonl"
+
 anonymization:
   profile: "research"
   profiles:
@@ -51,45 +95,3 @@ anonymization:
       KeepPrivateTags: false
       PixelBlackout: false
       RetainStudyDate: false
-
-# Storage Settings
-storage:
-  base_path: "./data/pixieveil"
-  temp_path: "./data/tmp"
-  max_storage_gb: 1000
-  # Optional: remove or leave empty to keep archives local only
-  # remote_storage:
-  #   base_url: "https://your-storage-server"
-  #   auth_token: "your-bearer-token"
-
-# HTTP Server Settings
-http_server:
-  port: 8070
-  ip: "0.0.0.0"
-
-# Study Management
-study:
-  completion_timeout: 120         # seconds of inactivity before a study is considered done
-  completion_check_interval: 30   # how often (seconds) to check for completed studies
-  max_study_size_mb: 4000
-
-# Series Filtering
-# Attribute-based rules use DICOM keyword names mapped to regular expressions.
-# Include takes priority over exclude:
-#   - If any include rule matches -> keep the series
-#   - Else if any exclude rule matches -> filter the series out
-#   - Else -> keep the series
-# For multi-value attributes (e.g. ImageType) each value is tested individually.
-series_filter:
-  exclude_modalities: ["PR", "RT"]
-  only_original_series: true
-#  include:
-#    SeriesDescription: "(?i)topogram"
-#  exclude:
-#    SeriesDescription: "(?i)dose\\s+report"
-#    ImageType: "^DERIVED"
-
-# Logging
-logging:
-  level: "INFO"
-  file: "./data/log/pixieveil.log"

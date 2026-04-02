@@ -57,7 +57,7 @@ class StorageManager:
         anonymizer (Anonymizer): Handler for DICOM anonymization
         zip_manager (ZipManager): Handler for ZIP archive creation
         remote_storage (RemoteStorage): Handler for remote storage operations
-        mapping_log_path (Path): Path to audit log for anonymization mappings
+        anontrail_path (Path): Path to audit log for anonymization mappings
         _lock (threading.Lock): Thread lock for thread-safe operations
         counters (Dict[str, Any]): Dictionary for tracking various statistics
         _completion_task (Optional[asyncio.Task]): Background task for completion checking
@@ -81,7 +81,10 @@ class StorageManager:
         self.temp_path = Path(settings.storage["temp_path"])
         self.temp_path.mkdir(parents=True, exist_ok=True)
         logger.debug(f"Created temp directory: {self.temp_path}")
-        
+        self.anontrail_path = Path(settings.logging.get("anontrail", "anontrail.jsonl"))
+        self.anontrail_path.parent.mkdir(parents=True, exist_ok=True)
+        logger.debug(f"Anonymization mapping trail will be written to: {self.anontrail_path}")
+
         # Initialize managers
         self.study_manager = StudyManager(settings)
         self.study_manager.initialize_from_existing_studies(self.base_path)
@@ -89,10 +92,6 @@ class StorageManager:
         self.anonymizer = Anonymizer(settings)
         self.zip_manager = ZipManager(settings)
         self.remote_storage = RemoteStorage(settings)
-        
-        # Mapping log file for audit trail
-        self.mapping_log_path = self.base_path.parent / "mapping_log.jsonl"
-        logger.debug(f"Mapping log will be written to: {self.mapping_log_path}")
         
         # Thread safety
         self._lock = threading.Lock()
@@ -421,7 +420,7 @@ class StorageManager:
             
             # Append to JSONL file (JSON Lines format - one JSON object per line)
             with self._lock:
-                with open(self.mapping_log_path, 'a') as f:
+                with open(self.anontrail_path, 'a') as f:
                     f.write(json.dumps(mapping_record) + '\n')
             
             logger.debug(f"Logged anonymization mapping for image {image_id}")
