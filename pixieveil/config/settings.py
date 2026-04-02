@@ -24,17 +24,22 @@ class AnonymizationProfile(BaseModel):
     - null: clear the field (set to empty string)
     - "PSEUDO": replace with deterministic pseudonym based on original value
     - "NEWUID": generate a new DICOM UID
+    - "KEEP": retain the original value without modification
+    - "CLEAR": set to empty string (same as null)
     - string literal: replace with the specified string (e.g., "ANON", "DEID_CENTER")
     
     Attributes:
         PatientName: How to handle patient name
         PatientID: How to handle patient ID
         PatientBirthDate: How to handle birth date
+        PatientAge: How to handle patient age
         PatientSex: How to handle patient sex
         InstitutionName: How to handle institution name
         StudyID: How to handle study ID
         StudyInstanceUID: How to handle study UID strategy
+        StudyDescription: How to handle study description
         SeriesInstanceUID: How to handle series UID strategy
+        SeriesDescription: How to handle series description
         FrameOfReferenceUID: How to handle frame of reference UID strategy
         ReferringPhysicianName: How to handle referring physician
         OperatorsName: How to handle operator name
@@ -48,11 +53,14 @@ class AnonymizationProfile(BaseModel):
     PatientName: Optional[str] = None
     PatientID: Optional[str] = None
     PatientBirthDate: Optional[str] = None
+    PatientAge: Optional[str] = None
     PatientSex: Optional[str] = None
     InstitutionName: Optional[str] = None
     StudyID: Optional[str] = None
     StudyInstanceUID: Optional[str] = None
+    StudyDescription: Optional[str] = None
     SeriesInstanceUID: Optional[str] = None
+    SeriesDescription: Optional[str] = None
     FrameOfReferenceUID: Optional[str] = None
     ReferringPhysicianName: Optional[str] = None
     OperatorsName: Optional[str] = None
@@ -170,17 +178,20 @@ class Settings(BaseModel):
             return AnonymizationProfile(
                 PatientName="PSEUDO",
                 PatientID="PSEUDO",
-                PatientBirthDate=None,
-                PatientSex=None,
+                PatientBirthDate="CLEAR",
+                PatientAge="KEEP",
+                PatientSex="KEEP",
                 InstitutionName="DEID_CENTER",
                 StudyID="RESEARCH",
                 StudyInstanceUID="PSEUDOUID",
+                StudyDescription="KEEP",
                 SeriesInstanceUID="PSEUDOUID",
+                SeriesDescription="KEEP",
                 FrameOfReferenceUID="PSEUDOUID",
-                ReferringPhysicianName=None,
-                OperatorsName=None,
-                PerformingPhysicianName=None,
-                AccessionNumber=None,
+                ReferringPhysicianName="CLEAR",
+                OperatorsName="CLEAR",
+                PerformingPhysicianName="CLEAR",
+                AccessionNumber="CLEAR",
                 KeepPrivateTags=False,
                 PixelBlackout=False,
                 RetainStudyDate=True

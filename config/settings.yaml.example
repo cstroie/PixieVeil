@@ -6,45 +6,50 @@ dicom_server:
   port: 4070
   ip: "0.0.0.0"
 
-# Anonymization Settings
 anonymization:
-  profile: "research"   # Active profile: research or gdpr
+  profile: "research"
   profiles:
     research:
       # Research profile: pseudonymized data with preserved study dates
-      PatientName: "PSEUDO"
-      PatientID: "PSEUDO"
-      PatientBirthDate: null
-      PatientSex: null
-      InstitutionName: "DEID_CENTER"
-      StudyID: "RESEARCH"
-      StudyInstanceUID: "PSEUDOUID"
-      SeriesInstanceUID: "PSEUDOUID"
-      FrameOfReferenceUID: "PSEUDOUID"
-      ReferringPhysicianName: null
-      OperatorsName: null
-      PerformingPhysicianName: null
-      AccessionNumber: null
+      PatientName: PSEUDO
+      PatientID: PSEUDO
+      PatientBirthDate: CLEAR
+      PatientAge: KEEP
+      PatientSex: KEEP
+      InstitutionName: DEID_CENTER
+      StudyID: RESEARCH
+      StudyInstanceUID: PSEUDOUID
+      StudyDescription: KEEP
+      SeriesInstanceUID: PSEUDOUID
+      SeriesDescription: KEEP
+      FrameOfReferenceUID: PSEUDOUID
+      ReferringPhysicianName: CLEAR
+      OperatorsName: CLEAR
+      PerformingPhysicianName: CLEAR
+      AccessionNumber: CLEAR
       KeepPrivateTags: false
       PixelBlackout: false
       RetainStudyDate: true
     gdpr:
       # GDPR profile: fully anonymized with strong data protection
-      PatientName: "ANON"
-      PatientID: "PSEUDO"
-      PatientBirthDate: null
-      PatientSex: null
-      InstitutionName: null
-      StudyID: "STUDY"
-      StudyInstanceUID: "NEWUID"
-      SeriesInstanceUID: "NEWUID"
-      FrameOfReferenceUID: "NEWUID"
-      ReferringPhysicianName: null
-      OperatorsName: null
-      PerformingPhysicianName: null
-      AccessionNumber: null
+      PatientName: ANON
+      PatientID: PSEUDO
+      PatientBirthDate: CLEAR
+      PatientAge: CLEAR
+      PatientSex: CLEAR
+      InstitutionName: CLEAR
+      StudyID: STUDY
+      StudyInstanceUID: NEWUID
+      StudyDescription: CLEAR
+      SeriesInstanceUID: NEWUID
+      SeriesDescription: CLEAR
+      FrameOfReferenceUID: NEWUID
+      ReferringPhysicianName: CLEAR
+      OperatorsName: CLEAR
+      PerformingPhysicianName: CLEAR
+      AccessionNumber: CLEAR
       KeepPrivateTags: false
-      PixelBlackout: true
+      PixelBlackout: false
       RetainStudyDate: false
 
 # Storage Settings

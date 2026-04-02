@@ -147,6 +147,8 @@ class Anonymizer:
         - None: return None (field should be cleared)
         - "PSEUDO": return deterministic pseudonym
         - "NEWUID": return new generated UID
+        - "KEEP": return original value unchanged
+        - "CLEAR": return empty string
         - string literal: return the strategy string as-is
         
         Args:
@@ -159,10 +161,16 @@ class Anonymizer:
         """
         if strategy is None:
             return None
-        elif strategy == "PSEUDO":
+        elif strategy.upper() == "PSEUDO":
             return self._generate_pseudonym(original_value)
-        elif strategy == "NEWUID":
+        elif strategy.upper() == "PSEUDOUID":
+            return self._generate_pseudonym_uid(original_value)
+        elif strategy.upper() == "NEWUID":
             return self._generate_new_uid()
+        elif strategy.upper() == "KEEP":
+            return original_value
+        elif strategy.upper() == "CLEAR":
+            return ""
         else:
             # Literal string value
             return str(strategy)
@@ -192,19 +200,14 @@ class Anonymizer:
         Args:
             original_uid: The original UID
             mapping_dict: Dictionary to store mappings for consistency
-            strategy: Strategy to apply ("PSEUDO" or "NEWUID")
+            strategy: Strategy to apply
             
         Returns:
             str: The mapped/generated UID
         """
         if original_uid not in mapping_dict:
-            if strategy == "PSEUDOUID":
-                mapping_dict[original_uid] = self._generate_pseudonym_uid(original_uid)
-            elif strategy == "NEWUID":
-                mapping_dict[original_uid] = self._generate_new_uid()
-            else:
-                # Treat as literal
-                mapping_dict[original_uid] = str(strategy)
+            new_value = self._apply_field_value_strategy(original_uid, strategy, field_name="UID")
+            mapping_dict[original_uid] = new_value if new_value is not None else ""
         return mapping_dict[original_uid]
 
     def anonymize(self, ds: pydicom.Dataset) -> pydicom.Dataset:
@@ -256,62 +259,66 @@ class Anonymizer:
         return ds
     
     def _anonymize_patient_fields(self, ds: pydicom.Dataset) -> None:
-        """Apply profile strategy to patient information fields."""
+        """
+        Apply profile strategy to patient information fields.
+
+        Never clear PatientAge, PatientSize, or PatientWeight as they are
+        often needed for research and are not directly identifiable.
+        Always clear other patient identifiers that are not explicitly handled
+        by the profile to ensure no residual identifiable information remains.
+        """
         # PatientName
-        if "PatientName" in ds and self.profile.PatientName is not None:
+        if "PatientName" in ds:
             new_value = self._apply_field_value_strategy(ds.PatientName, self.profile.PatientName)
             self._set_field(ds, "PatientName", new_value)
         
         # PatientID
-        if "PatientID" in ds and self.profile.PatientID is not None:
+        if "PatientID" in ds:
             original_id = str(ds.PatientID)
             new_value = self._apply_field_value_strategy(original_id, self.profile.PatientID)
             self._set_field(ds, "PatientID", new_value)
         
         # PatientBirthDate
-        if "PatientBirthDate" in ds and self.profile.PatientBirthDate is not None:
+        if "PatientBirthDate" in ds:
             new_value = self._apply_field_value_strategy(ds.PatientBirthDate, self.profile.PatientBirthDate)
             self._set_field(ds, "PatientBirthDate", new_value)
+
+        # PatientAge
+        if "PatientAge" in ds:
+            new_value = self._apply_field_value_strategy(ds.PatientAge, self.profile.PatientAge)
+            self._set_field(ds, "PatientAge", new_value)
         
         # PatientSex
-        if "PatientSex" in ds and self.profile.PatientSex is not None:
+        if "PatientSex" in ds:
             new_value = self._apply_field_value_strategy(ds.PatientSex, self.profile.PatientSex)
             self._set_field(ds, "PatientSex", new_value)
-        
-        # PatientAge - always clear if present
-        if "PatientAge" in ds:
-            ds.PatientAge = ""
         
         # Always clear other patient identifiers
         if "OtherPatientIDs" in ds:
             ds.OtherPatientIDs = ""
         if "PatientAddress" in ds:
             ds.PatientAddress = ""
-        if "PatientSize" in ds:
-            ds.PatientSize = ""
-        if "PatientWeight" in ds:
-            ds.PatientWeight = ""
     
     def _anonymize_study_series_fields(self, ds: pydicom.Dataset) -> None:
         """Apply profile strategy to study and series information fields."""
         # StudyInstanceUID with mapping
-        if "StudyInstanceUID" in ds and self.profile.StudyInstanceUID is not None:
+        if "StudyInstanceUID" in ds:
             original_uid = str(ds.StudyInstanceUID)
             new_uid = self._apply_uid_mapping(original_uid, self._study_uid_map, 
-                                             self.profile.StudyInstanceUID)
+                                              self.profile.StudyInstanceUID)
             ds.StudyInstanceUID = new_uid
         
         # SeriesInstanceUID with mapping
-        if "SeriesInstanceUID" in ds and self.profile.SeriesInstanceUID is not None:
+        if "SeriesInstanceUID" in ds:
             original_uid = str(ds.SeriesInstanceUID)
             new_uid = self._apply_uid_mapping(original_uid, self._series_uid_map, 
-                                             self.profile.SeriesInstanceUID)
+                                              self.profile.SeriesInstanceUID)
             ds.SeriesInstanceUID = new_uid
         
         # FrameOfReferenceUID
-        if "FrameOfReferenceUID" in ds and self.profile.FrameOfReferenceUID is not None:
+        if "FrameOfReferenceUID" in ds:
             new_value = self._apply_field_value_strategy(ds.FrameOfReferenceUID, 
-                                                        self.profile.FrameOfReferenceUID)
+                                                         self.profile.FrameOfReferenceUID)
             if new_value:
                 ds.FrameOfReferenceUID = new_value
             else:
@@ -322,45 +329,52 @@ class Anonymizer:
             ds.SOPInstanceUID = self._generate_new_uid()
         
         # StudyID
-        if "StudyID" in ds and self.profile.StudyID is not None:
+        if "StudyID" in ds:
             new_value = self._apply_field_value_strategy(ds.StudyID, self.profile.StudyID)
             self._set_field(ds, "StudyID", new_value)
         
         # AccessionNumber
-        if "AccessionNumber" in ds and self.profile.AccessionNumber is not None:
+        if "AccessionNumber" in ds:
             new_value = self._apply_field_value_strategy(ds.AccessionNumber, 
-                                                        self.profile.AccessionNumber)
+                                                         self.profile.AccessionNumber)
             self._set_field(ds, "AccessionNumber", new_value)
         
-        # StudyDescription and SeriesDescription - always anonymize
-        ds.StudyDescription = "Anonymized Study"
+        # StudyDescription
+        if "StudyDescription" in ds:
+            new_value = self._apply_field_value_strategy(ds.StudyDescription,
+                                                         self.profile.StudyDescription)
+            self._set_field(ds, "StudyDescription", new_value)
+
+        #  SeriesDescription
         if "SeriesDescription" in ds:
-            ds.SeriesDescription = "Anonymized Series"
-    
+            new_value = self._apply_field_value_strategy(ds.SeriesDescription,
+                                                         self.profile.SeriesDescription)
+            self._set_field(ds, "SeriesDescription", new_value)
+
     def _anonymize_institution_physician_fields(self, ds: pydicom.Dataset) -> None:
         """Apply profile strategy to institution and physician information fields."""
         # InstitutionName
-        if "InstitutionName" in ds and self.profile.InstitutionName is not None:
+        if "InstitutionName" in ds:
             new_value = self._apply_field_value_strategy(ds.InstitutionName, 
-                                                        self.profile.InstitutionName)
+                                                         self.profile.InstitutionName)
             self._set_field(ds, "InstitutionName", new_value)
         
         # ReferringPhysicianName
-        if "ReferringPhysicianName" in ds and self.profile.ReferringPhysicianName is not None:
+        if "ReferringPhysicianName" in ds:
             new_value = self._apply_field_value_strategy(ds.ReferringPhysicianName, 
-                                                        self.profile.ReferringPhysicianName)
+                                                         self.profile.ReferringPhysicianName)
             self._set_field(ds, "ReferringPhysicianName", new_value)
         
         # OperatorsName
-        if "OperatorsName" in ds and self.profile.OperatorsName is not None:
+        if "OperatorsName" in ds:
             new_value = self._apply_field_value_strategy(ds.OperatorsName, 
-                                                        self.profile.OperatorsName)
+                                                         self.profile.OperatorsName)
             self._set_field(ds, "OperatorsName", new_value)
         
         # PerformingPhysicianName
-        if "PerformingPhysicianName" in ds and self.profile.PerformingPhysicianName is not None:
+        if "PerformingPhysicianName" in ds:
             new_value = self._apply_field_value_strategy(ds.PerformingPhysicianName, 
-                                                        self.profile.PerformingPhysicianName)
+                                                         self.profile.PerformingPhysicianName)
             self._set_field(ds, "PerformingPhysicianName", new_value)
         
         # InstitutionAddress - always clear
@@ -383,10 +397,7 @@ class Anonymizer:
             ds.ContentDate = current_date
         
         # Study dates - configurable per profile
-        if self.profile.RetainStudyDate:
-            # Preserve study dates
-            pass
-        else:
+        if not self.profile.RetainStudyDate:
             if "StudyDate" in ds:
                 ds.StudyDate = current_date
             if "StudyTime" in ds:
