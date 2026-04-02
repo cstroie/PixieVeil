@@ -606,7 +606,6 @@ class StorageManager:
         completed_study_uids = self.study_manager.check_study_completions()
         
         if not completed_study_uids:
-            logger.debug(f"No studies timed out in this check interval")
             return
         
         logger.info(f"Found {len(completed_study_uids)} completed studies to process")
