@@ -1,3 +1,5 @@
 # TODO
 
 * Implement a maximum allowed study size, using the setting `max_study_size_mb`
+* Document the `anontrail` - audit trail
+* Black out an image if it contains the patient name
