@@ -7,7 +7,7 @@ PixieVeil is a DICOM anonymization server. It receives DICOM images from medical
 - **DICOM SCP** — Receives CT, MR, and Secondary Capture images via C-STORE (pynetdicom). Verifies connectivity with C-ECHO.
 - **Anonymization** — Removes or replaces patient demographics, institution data, dates, private tags, and overlay groups. Maintains consistent UIDs and patient IDs across all files in the same study.
 - **Audit trail** — Writes a JSONL mapping log (`mapping_log.jsonl`) that records the original-to-anonymized UID/patient-ID mappings for every processed image.
-- **Series filtering** — Configurable exclusion of modalities (e.g. SR, PR, RT) and optional filtering to original-acquisition series only.
+- **Series filtering** — Configurable exclusion of modalities (e.g. SR, PR, RT), optional filtering to original-acquisition series only, and attribute-based include/exclude rules using regular expressions.
 - **Study lifecycle management** — Detects study completion by inactivity timeout and assembles a ZIP archive per study.
 - **Remote upload** — Optional HTTP POST upload of study ZIPs to a configurable endpoint with Bearer-token authentication.
 - **Web dashboard** — `aiohttp`-based HTTP server with a `/stats` JSON API and a live dashboard page that polls metrics periodically.
@@ -133,8 +133,13 @@ study:
 
 # Series filtering
 series_filter:
-  exclude_modalities: ["SR", "PR", "RT"]
+  exclude_modalities: ["PR", "RT"]
   keep_original_series: true
+# include:
+#   SeriesDescription: "(?i)topogram"
+# exclude:
+#   SeriesDescription: "(?i)dose\\s+report"
+#   ImageType: "^DERIVED"
 
 # Logging
 logging:
@@ -146,6 +151,51 @@ logging:
 
 If `storage.remote_storage.base_url` is set, completed study ZIPs are uploaded via `POST {base_url}/upload` as a multipart form with fields `file` (the ZIP) and `remote_path` (the filename). A `Bearer` token from `auth_token` is sent in the `Authorization` header. If `base_url` is absent or empty, archives are kept locally and no upload is attempted.
 
+### Series Filtering
+
+Series filtering runs before anonymization. A series is dropped if any filter criterion matches.
+
+#### Modality exclusion
+
+```yaml
+series_filter:
+  exclude_modalities: ["SR", "PR", "RT"]
+```
+
+Any image whose `Modality` tag matches an entry in the list is discarded.
+
+#### Original-series filter
+
+```yaml
+series_filter:
+  keep_original_series: true
+```
+
+When `true`, only series whose `ImageType` first value is `ORIGINAL` are kept. Series with `DERIVED` as the first value (thin reconstructions, MPRs, dose reports, etc.) are discarded.
+
+#### Attribute-based include / exclude rules
+
+Rules are DICOM keyword → regular-expression pairs.
+
+```yaml
+series_filter:
+  include:
+    SeriesDescription: "(?i)topogram"
+  exclude:
+    SeriesDescription: "(?i)dose\\s+report"
+    ImageType: "^DERIVED"
+```
+
+Evaluation order for each image:
+
+1. **Include first** — if any `include` rule matches, the series is kept unconditionally (even if an `exclude` rule also matches).
+2. **Then exclude** — if any `exclude` rule matches (and no include rule matched), the series is discarded.
+3. **Default** — if no rule matches, the series is kept.
+
+For multi-value attributes (e.g. `ImageType` is `CS` with several values such as `ORIGINAL\PRIMARY\AXIAL\…`), each individual value is tested against the pattern independently.
+
+Both sections are optional; omitting them (or leaving them empty) disables that rule set.
+
 ### Anonymization Profiles
 
 PixieVeil uses **profile-based anonymization** where each profile defines how DICOM fields should be transformed. Two built-in profiles are provided: `research` and `gdpr`.
@@ -156,11 +206,12 @@ Each field in a profile can use one of these transformation strategies:
 
 | Strategy | Example | Behavior |
 |---|---|---|
-| `null` | `PatientBirthDate: null` | Clear the field to empty string |
-| `"PSEUDO"` | `PatientID: "PSEUDO"` | Replace with deterministic pseudonym (hash-based; consistent per original value across all files) |
-| `"PSEUDOUID"` | `StudyInstanceUID: "PSEUDOUID"` | As `PSEUDO`, but generates UID-format pseudonyms; preserves DICOM hierarchy (same original UID → same mapped UID across files in study) |
-| `"NEWUID"` | `StudyInstanceUID: "NEWUID"` | Generate a fresh DICOM UID (consistent within processing session; different sessions may produce different UIDs) |
-| Literal string | `PatientName: "ANON"` or `InstitutionName: "DEID_CENTER"` | Replace all instances with fixed text |
+| `KEEP` | `PatientAge: KEEP` | Retain the original value without modification |
+| `CLEAR` or `null` | `PatientBirthDate: CLEAR` | Set the field to an empty string |
+| `PSEUDO` | `PatientID: PSEUDO` | Replace with a deterministic pseudonym (hash-based; same original value always produces the same pseudonym across all files and sessions) |
+| `PSEUDOUID` | `StudyInstanceUID: PSEUDOUID` | As `PSEUDO`, but produces a DICOM-conformant UID; preserves study/series hierarchy (same original UID → same mapped UID across all files in the study) |
+| `NEWUID` | `StudyInstanceUID: NEWUID` | Generate a fresh random DICOM UID; consistent within a processing session but may differ across sessions |
+| Literal string | `PatientName: ANON` or `InstitutionName: DEID_CENTER` | Replace all instances with the specified fixed text |
 
 #### Research Profile
 

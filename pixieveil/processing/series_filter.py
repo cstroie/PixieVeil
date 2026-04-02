@@ -9,8 +9,9 @@ Classes:
 """
 
 import logging
+import re
 from pathlib import Path
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Tuple
 
 import pydicom
 
@@ -51,6 +52,23 @@ class SeriesFilter:
         self.exclude_modalities = settings.series_filter.get("exclude_modalities", [])
         self.keep_original_series = settings.series_filter.get("keep_original_series", True)
 
+        self._include_rules: List[Tuple[str, re.Pattern]] = self._compile_rules(
+            settings.series_filter.get("include") or {}
+        )
+        self._exclude_rules: List[Tuple[str, re.Pattern]] = self._compile_rules(
+            settings.series_filter.get("exclude") or {}
+        )
+
+    @staticmethod
+    def _compile_rules(rules: Dict[str, str]) -> List[Tuple[str, re.Pattern]]:
+        compiled = []
+        for attribute, pattern in rules.items():
+            try:
+                compiled.append((attribute, re.compile(pattern)))
+            except re.error as exc:
+                logger.warning(f"Invalid regex pattern '{pattern}' for attribute '{attribute}': {exc}")
+        return compiled
+
     def should_filter(self, ds: pydicom.Dataset) -> bool:
         """
         Determine if a DICOM image should be filtered based on series criteria.
@@ -86,6 +104,11 @@ class SeriesFilter:
                     logger.debug(f"Filtering out non-original series: {ds.SeriesInstanceUID}")
                     return True
 
+            # Attribute-based include/exclude rules
+            if self._include_rules or self._exclude_rules:
+                if self._matches_attribute_filters(ds):
+                    return True
+
             return False
 
         except Exception as e:
@@ -106,11 +129,50 @@ class SeriesFilter:
             bool: True if the series is considered original, False otherwise
             
         Note:
-            The current implementation assumes all series are original.
-            This method can be enhanced with more sophisticated logic to
-            distinguish between original and reconstructed series based
-            on DICOM tags or other characteristics.
+            If the ImageType attribute is absent, the series is assumed to be
+            original. Series with ImageType starting with 'DERIVED' (e.g.
+            reconstructions) return False.
         """
-        # Basic implementation - can be enhanced
-        # For now, assume all series are original
-        return True
+        image_type = getattr(ds, "ImageType", None)
+        if image_type is None:
+            return True
+        # ImageType is a multi-value CS attribute; first value indicates original vs derived
+        first_value = image_type[0] if hasattr(image_type, "__iter__") else str(image_type)
+        return str(first_value).upper().startswith("ORIGINAL")
+
+    def _matches_attribute_filters(self, ds: pydicom.Dataset) -> bool:
+        """
+        Apply attribute-based include/exclude rules to determine if a series should
+        be filtered out.
+
+        Include rules take priority: if any include rule matches the dataset, the
+        series is kept regardless of exclude rules.  If no include rule matches but
+        an exclude rule does, the series is filtered out.
+
+        Multi-value DICOM attributes (e.g. ImageType) are tested value-by-value;
+        a rule matches as soon as any individual value satisfies the pattern.
+
+        Args:
+            ds: The DICOM dataset to evaluate.
+
+        Returns:
+            bool: True if the series should be filtered out, False if it should be kept.
+        """
+        def attribute_matches(rules: List[Tuple[str, re.Pattern]]) -> bool:
+            for attribute, pattern in rules:
+                value = getattr(ds, attribute, None)
+                if value is None:
+                    continue
+                values = list(value) if hasattr(value, "__iter__") and not isinstance(value, str) else [str(value)]
+                if any(pattern.search(str(v)) for v in values):
+                    logger.debug(f"Attribute filter matched: {attribute} ~ {pattern.pattern}")
+                    return True
+            return False
+
+        if self._include_rules and attribute_matches(self._include_rules):
+            return False  # include match → keep
+
+        if attribute_matches(self._exclude_rules):
+            return True  # exclude match → filter out
+
+        return False  # no rule matched → keep

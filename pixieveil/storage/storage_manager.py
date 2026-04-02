@@ -108,6 +108,7 @@ class StorageManager:
                 'studies': 0,
                 'images': 0,
                 'anonymized_images': 0,
+                'filtered_images': 0,
                 'errors': {
                     'anonymization': 0,
                     'validation': 0,
@@ -478,9 +479,9 @@ class StorageManager:
             # Check if image should be filtered based on series criteria
             if self.series_filter.should_filter(ds):
                 logger.info(f"Filtering out image {image_id} based on series criteria")
+                image_path.unlink(missing_ok=True)
                 with self._lock:
                     self.inc_counter('processing', 'filtered_images')
-                    self.inc_counter('errors', 'total')
                 return
             
             # Update reception counters for new studies

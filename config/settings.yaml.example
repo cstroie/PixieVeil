@@ -74,9 +74,20 @@ study:
   max_study_size_mb: 4000
 
 # Series Filtering
+# Attribute-based rules use DICOM keyword names mapped to regular expressions.
+# Include takes priority over exclude:
+#   - If any include rule matches -> keep the series
+#   - Else if any exclude rule matches -> filter the series out
+#   - Else -> keep the series
+# For multi-value attributes (e.g. ImageType) each value is tested individually.
 series_filter:
-  exclude_modalities: ["SR", "PR", "RT"]
+  exclude_modalities: ["PR", "RT"]
   keep_original_series: true
+#  include:
+#    SeriesDescription: "(?i)topogram"
+#  exclude:
+#    SeriesDescription: "(?i)dose\\s+report"
+#    ImageType: "^DERIVED"
 
 # Logging
 logging:

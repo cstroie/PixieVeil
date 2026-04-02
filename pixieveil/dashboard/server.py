@@ -202,6 +202,7 @@ class Dashboard:
                 "title": "Processed",
                 "metrics": [
                     {"label": "Images Processed", "value": storage_manager.get_counter('processing', 'images')},
+                    {"label": "Images Filtered", "value": storage_manager.get_counter('processing', 'filtered_images')},
                     {"label": "Studies Completed", "value": completed_studies},
                     {"label": "Studies in Progress", "value": studies_in_progress},
                     {"label": "Total Studies", "value": total_studies},
