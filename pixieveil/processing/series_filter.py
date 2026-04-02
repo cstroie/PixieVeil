@@ -36,7 +36,7 @@ class SeriesFilter:
     Attributes:
         settings (Settings): Application configuration settings
         exclude_modalities (List[str]): List of modalities to exclude
-        keep_original_series (bool): Whether to keep only original series
+        only_original_series (bool): Whether to keep only original series
     """
     
     def __init__(self, settings: Settings):
@@ -50,7 +50,7 @@ class SeriesFilter:
         """
         self.settings = settings
         self.exclude_modalities = settings.series_filter.get("exclude_modalities", [])
-        self.keep_original_series = settings.series_filter.get("keep_original_series", True)
+        self.only_original_series = settings.series_filter.get("only_original_series", True)
 
         self._include_rules: List[Tuple[str, re.Pattern]] = self._compile_rules(
             settings.series_filter.get("include") or {}
@@ -99,7 +99,7 @@ class SeriesFilter:
                 return True
 
             # Check if we should keep only original series
-            if self.keep_original_series:
+            if self.only_original_series:
                 if not self._is_original_series(ds):
                     logger.debug(f"Filtering out non-original series: {ds.SeriesInstanceUID}")
                     return True

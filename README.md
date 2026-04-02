@@ -134,7 +134,7 @@ study:
 # Series filtering
 series_filter:
   exclude_modalities: ["PR", "RT"]
-  keep_original_series: true
+  only_original_series: true
 # include:
 #   SeriesDescription: "(?i)topogram"
 # exclude:
@@ -168,7 +168,7 @@ Any image whose `Modality` tag matches an entry in the list is discarded.
 
 ```yaml
 series_filter:
-  keep_original_series: true
+  only_original_series: true
 ```
 
 When `true`, only series whose `ImageType` first value is `ORIGINAL` are kept. Series with `DERIVED` as the first value (thin reconstructions, MPRs, dose reports, etc.) are discarded.

@@ -82,7 +82,7 @@ study:
 # For multi-value attributes (e.g. ImageType) each value is tested individually.
 series_filter:
   exclude_modalities: ["PR", "RT"]
-  keep_original_series: true
+  only_original_series: true
 #  include:
 #    SeriesDescription: "(?i)topogram"
 #  exclude:
