@@ -58,7 +58,7 @@ class StorageManager:
         zip_manager (ZipManager): Handler for ZIP archive creation
         remote_storage (RemoteStorage): Handler for remote storage operations
         anontrail_path (Path): Path to audit log for anonymization mappings
-        _lock (threading.Lock): Thread lock for thread-safe operations
+        lock (threading.Lock): Thread lock for thread-safe operations
         counters (Dict[str, Any]): Dictionary for tracking various statistics
         _completion_task (Optional[asyncio.Task]): Background task for completion checking
         _stop_event (Optional[asyncio.Event]): Event to signal background task to stop
@@ -94,7 +94,11 @@ class StorageManager:
         self.remote_storage = RemoteStorage(settings)
         
         # Thread safety
-        self._lock = threading.Lock()
+        self.lock = threading.Lock()
+
+        # Per-study accumulated byte counts for new studies received this session.
+        # Existing studies (loaded from disk on startup) are not tracked here.
+        self.study_size_bytes: Dict[str, int] = {}
         
         # Statistics counters
         self.counters = {
@@ -178,7 +182,7 @@ class StorageManager:
 
         logger.info("Starting StorageManager background study‑completion checker")
         self._stop_event = asyncio.Event()
-        self._completion_task = asyncio.create_task(self._completion_loop())
+        self._completion_task = asyncio.create_task(self.completion_loop())
 
     async def stop(self) -> None:
         """
@@ -204,7 +208,7 @@ class StorageManager:
     # -----------------------------------------------------------------
     # Internal helper that drives ``check_study_completions`` in a loop
     # -----------------------------------------------------------------
-    async def _completion_loop(self) -> None:
+    async def completion_loop(self) -> None:
         """
         Re‑run :meth:`check_study_completions` at the interval defined in the
         configuration (default 30 s). The heavy‑weight ZIP creation is executed
@@ -219,7 +223,7 @@ class StorageManager:
                 logger.error("Unexpected error in study‑completion loop: %s", exc)
 
             try:
-                await self._enforce_storage_quota()
+                await self.enforce_storage_quota()
             except Exception as exc:
                 logger.error("Unexpected error in storage quota enforcement: %s", exc)
 
@@ -253,7 +257,7 @@ class StorageManager:
             # Get top-level counter
             total_errors = self.get_counter('errors', 'total')
         """
-        with self._lock:
+        with self.lock:
             if category not in self.counters:
                 return default
             
@@ -368,7 +372,7 @@ class StorageManager:
             ds.save_as(f, enforce_file_format=True)
 
         # Update reception counters
-        with self._lock:
+        with self.lock:
             self.inc_counter('reception', 'images')
             self.inc_counter('reception', 'bytes', temp_file.stat().st_size)
             
@@ -378,9 +382,9 @@ class StorageManager:
 
         return temp_file
 
-    def _log_anonymization_mapping(self, original_study_uid: str, original_series_uid: str, 
-                                   original_patient_id: str, image_id: str, 
-                                   anonymized_study_number: int, anonymized_series_number: int):
+    def log_anonymization_mapping(self, original_study_uid: str, original_series_uid: str, 
+                                  original_patient_id: str, image_id: str, 
+                                  anonymized_study_number: int, anonymized_series_number: int):
         """
         Log the anonymization mapping to audit trail file.
         
@@ -419,7 +423,7 @@ class StorageManager:
             }
             
             # Append to JSONL file (JSON Lines format - one JSON object per line)
-            with self._lock:
+            with self.lock:
                 with open(self.anontrail_path, 'a') as f:
                     f.write(json.dumps(mapping_record) + '\n')
             
@@ -462,9 +466,9 @@ class StorageManager:
 
             # Validate the image
             logger.debug(f"Validating DICOM image {image_id}")
-            if not self._validate_dicom(ds):
+            if not self.validate_dicom(ds):
                 logger.warning(f"Invalid DICOM image: {image_id}")
-                with self._lock:
+                with self.lock:
                     self.counters['processing']['errors']['validation'] += 1
                     self.inc_counter('errors', 'total')
                 return
@@ -479,30 +483,49 @@ class StorageManager:
             if self.series_filter.should_filter(ds):
                 logger.info(f"Filtering out image {image_id} based on series criteria")
                 image_path.unlink(missing_ok=True)
-                with self._lock:
+                with self.lock:
                     self.inc_counter('processing', 'filtered_images')
                 return
             
-            # Update reception counters for new studies
+            # Update reception counters for new studies; start tracking their size
+            image_size = image_path.stat().st_size
             study_number = self.study_manager.get_study_number(study_uid)
             if study_number is None:
-                with self._lock:
+                with self.lock:
                     self.inc_counter('reception', 'studies')
                     self.inc_counter('processing', 'studies')
+                    self.study_size_bytes[study_uid] = 0
                 logger.debug(f"New study detected: {study_uid}")
-            
+
+            # Enforce per-study size limit (only for studies tracked this session)
+            max_study_size_mb = self.settings.study.get("max_study_size_mb")
+            if max_study_size_mb and study_uid in self.study_size_bytes:
+                with self.lock:
+                    accumulated = self.study_size_bytes[study_uid]
+                if accumulated + image_size > max_study_size_mb * 1024 * 1024:
+                    study_number_known = self.study_manager.get_study_number(study_uid) or "NEW"
+                    logger.warning(
+                        f"Study {study_number_known} has reached the size limit "
+                        f"({(accumulated + image_size) / (1024 * 1024):.1f} MB > {max_study_size_mb} MB), "
+                        f"dropping image {image_id}"
+                    )
+                    image_path.unlink(missing_ok=True)
+                    with self.lock:
+                        self.inc_counter('processing', 'filtered_images')
+                    return
+
             # Anonymize the DICOM dataset
             logger.debug(f"Starting anonymization of image {image_id}")
             try:
                 ds = self.anonymizer.anonymize(ds)
                 # Save anonymized version back to temp file with new UIDs
                 ds.save_as(image_path, enforce_file_format=False)
-                with self._lock:
+                with self.lock:
                     self.inc_counter('processing', 'anonymized_images')
                 logger.debug(f"Successfully anonymized image {image_id}")
             except Exception as e:
                 logger.error(f"Failed to anonymize image {image_id}: {e}", exc_info=True)
-                with self._lock:
+                with self.lock:
                     self.counters['processing']['errors']['anonymization'] += 1
                     self.inc_counter('errors', 'total')
                 return
@@ -515,14 +538,14 @@ class StorageManager:
                 base_path = self.base_path
                 study_dir = base_path / f"{study_number:04d}"
                 if not study_dir.exists():
-                    with self._lock:
+                    with self.lock:
                         self.inc_counter('storage', 'studies')
-                with self._lock:
+                with self.lock:
                     self.inc_counter('storage', 'series')
                 logger.debug(f"Creating new series {series_number} for study {study_number}")
             
             # Log the anonymization mapping after study/series numbers are assigned
-            self._log_anonymization_mapping(study_uid, series_uid, patient_id, image_id, 
+            self.log_anonymization_mapping(study_uid, series_uid, patient_id, image_id, 
                                             study_number, series_number)
 
             # Create numeric paths (4-digit padded)
@@ -536,16 +559,21 @@ class StorageManager:
             image_dest = series_dir / f"{image_number:04d}.dcm"
             logger.debug(f"Moving image from {image_path} to {image_dest}")
             shutil.move(image_path, image_dest)
-            
+
+            # Accumulate size for this study's session tracker
+            if study_uid in self.study_size_bytes:
+                with self.lock:
+                    self.study_size_bytes[study_uid] += image_size
+
             # Update storage counters
-            with self._lock:
+            with self.lock:
                 self.inc_counter('storage', 'images')
                 self.inc_counter('processing', 'images')
                 logger.debug(f"Updated storage counters: storage_images={self.counters['storage']['images']}, active_studies={self.study_manager.get_active_study_count()}")
 
             # Update processing time
             processing_time = time.time() - start_time
-            with self._lock:
+            with self.lock:
                 self.inc_counter('performance', 'total_time', processing_time)
                 self.inc_counter('performance', 'count_time')
                 self.set_counter('performance', 'average_time', 
@@ -557,11 +585,11 @@ class StorageManager:
 
         except Exception as e:
             logger.error(f"Failed to process image {image_id}: {e}", exc_info=True)
-            with self._lock:
+            with self.lock:
                 self.counters['processing']['errors']['processing'] += 1
                 self.inc_counter('errors', 'total')
 
-    def _validate_dicom(self, ds: pydicom.Dataset) -> bool:
+    def validate_dicom(self, ds: pydicom.Dataset) -> bool:
         """
         Validate the DICOM image for required fields and basic integrity.
         
@@ -620,7 +648,7 @@ class StorageManager:
             study_dir = self.base_path / f"{study_number:04d}"
             if not study_dir.exists():
                 logger.warning(f"Study directory missing for {study_uid}: {study_dir}")
-                with self._lock:
+                with self.lock:
                     self.inc_counter('errors', 'total')
                 self.study_manager.mark_study_archived(study_uid)
                 continue
@@ -630,7 +658,7 @@ class StorageManager:
             logger.debug(f"Study {study_number:04d} contains {image_count} images")
 
             # Update archive counters
-            with self._lock:
+            with self.lock:
                 self.inc_counter('archive', 'studies')
                 self.inc_counter('archive', 'images', image_count)
 
@@ -640,7 +668,7 @@ class StorageManager:
             zip_path = await self.zip_manager.create_zip(zip_filename, self.base_path)
             if not zip_path:
                 logger.error(f"Failed to create ZIP for study {study_uid}")
-                with self._lock:
+                with self.lock:
                     self.inc_counter('archive', 'errors')
                     self.inc_counter('errors', 'total')
                 continue
@@ -648,7 +676,7 @@ class StorageManager:
             logger.info(f"Created ZIP archive: {zip_path}")
 
             # Update export counters
-            with self._lock:
+            with self.lock:
                 self.inc_counter('export', 'studies')
                 self.inc_counter('export', 'images', image_count)
 
@@ -658,13 +686,13 @@ class StorageManager:
 
             if success is None:
                 logger.info(f"Remote storage not configured, keeping local files for study {zip_filename}")
-                with self._lock:
+                with self.lock:
                     self.inc_counter('cleanup', 'studies')
                     self.inc_counter('cleanup', 'images', image_count)
                 self.study_manager.mark_study_archived(study_uid)
             elif success:
                 logger.info(f"Successfully uploaded study {study_number:04d}")
-                with self._lock:
+                with self.lock:
                     self.inc_counter('remote_storage', 'studies')
                     self.inc_counter('remote_storage', 'images', image_count)
                     self.inc_counter('remote_storage', 'bytes', zip_path.stat().st_size)
@@ -676,12 +704,12 @@ class StorageManager:
                 self.study_manager.mark_study_archived(study_uid)
             else:
                 logger.error(f"Failed to upload study {study_uid}")
-                with self._lock:
+                with self.lock:
                     self.inc_counter('remote_storage', 'errors')
                     self.inc_counter('archive', 'errors')
                     self.inc_counter('errors', 'total')
     
-    def _enforce_storage_quota_sync(self) -> None:
+    def enforce_storage_quota_sync(self) -> None:
         """
         Synchronous quota enforcement. Removes the oldest completed studies from
         base_path (lowest study number first) until disk usage drops below 75% of
@@ -732,14 +760,14 @@ class StorageManager:
                 zip_path.unlink()
                 used_bytes -= zip_size
 
-            with self._lock:
+            with self.lock:
                 self.inc_counter('cleanup', 'studies')
 
         logger.info(f"Storage after quota cleanup: {used_bytes / (1024 ** 3):.2f} GB")
 
-    async def _enforce_storage_quota(self) -> None:
+    async def enforce_storage_quota(self) -> None:
         """Offload quota enforcement to a thread so the event loop stays responsive."""
-        await asyncio.to_thread(self._enforce_storage_quota_sync)
+        await asyncio.to_thread(self.enforce_storage_quota_sync)
 
     def get_counters(self) -> Dict[str, Any]:
         """
@@ -749,5 +777,5 @@ class StorageManager:
             Dict[str, Any]: Dictionary containing all current counter values
         """
         logger.debug("Retrieving storage counters")
-        with self._lock:
+        with self.lock:
             return dict(self.counters)
