@@ -60,7 +60,7 @@ class StudyManager:
         image_counters (Dict[tuple, int]): Tracks image numbers within each series
         study_counter (int): Counter for assigning numeric study IDs
         completion_timeout (int): Timeout in seconds for study completion
-        _lock (threading.Lock): Thread lock for thread-safe operations
+        lock (threading.Lock): Thread lock for thread-safe operations
     """
     
     def __init__(self, settings: Settings):
@@ -85,7 +85,7 @@ class StudyManager:
         self.study_counter = 0
         
         # Thread safety
-        self._lock = threading.Lock()
+        self.lock = threading.Lock()
         
         logger.debug("StudyManager initialized")
     
@@ -111,7 +111,7 @@ class StudyManager:
             if len(name) == 4 and name.isdigit():
                 study_numbers.append(int(name))
         
-        with self._lock:
+        with self.lock:
             self.study_counter = max(study_numbers) if study_numbers else 0
         
         logger.debug(f"Initialized study counter to {self.study_counter} from existing studies: {existing_studies}")
@@ -135,7 +135,7 @@ class StudyManager:
                 - image_number: Atomically assigned image number for this image
                 - is_new_series: True if this is the first image in a new series
         """
-        with self._lock:
+        with self.lock:
             # Handle study assignment
             if original_study_uid not in self.study_map:
                 self.study_counter += 1
@@ -186,7 +186,7 @@ class StudyManager:
         Returns:
             int: The next available image number for this series
         """
-        with self._lock:
+        with self.lock:
             image_key = (study_number, series_number)
             return self.image_counters.get(image_key, 0)
     
@@ -203,7 +203,7 @@ class StudyManager:
         now = time.time()
         completed_studies = []
         
-        with self._lock:
+        with self.lock:
             for study_uid, state in list(self.study_states.items()):
                 if not state.completed and (now - state.last_received) > self.completion_timeout:
                     logger.info(f"Study {study_uid} timed out after {now - state.last_received:.1f}s")
@@ -220,7 +220,7 @@ class StudyManager:
         Args:
             original_study_uid (str): The original StudyInstanceUID
         """
-        with self._lock:
+        with self.lock:
             if original_study_uid in self.study_states:
                 logger.debug(f"Marking study {original_study_uid} as archived and removing from tracking")
                 del self.study_states[original_study_uid]
@@ -235,22 +235,22 @@ class StudyManager:
         Returns:
             Optional[int]: The numeric study number or None if not found
         """
-        with self._lock:
+        with self.lock:
             return self.study_map.get(original_study_uid)
     
     def get_active_study_numbers(self) -> set:
         """Get the set of study numbers for studies still active (not yet archived)."""
-        with self._lock:
+        with self.lock:
             return {num for uid, num in self.study_map.items()
                     if uid in self.study_states and not self.study_states[uid].completed}
 
     def get_active_study_count(self) -> int:
         """Get count of active (not completed) studies."""
-        with self._lock:
+        with self.lock:
             return sum(1 for state in self.study_states.values() if not state.completed)
     
     def get_completed_study_count(self) -> int:
         """Get count of completed studies."""
-        with self._lock:
+        with self.lock:
             return self.completed_count
 
