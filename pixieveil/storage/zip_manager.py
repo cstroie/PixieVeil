@@ -43,7 +43,7 @@ class ZipManager:
         """
         self.settings = settings
 
-    def _create_zip_sync(self, study_uid: str, output_path: Path) -> Optional[Path]:
+    def create_zip_sync(self, study_uid: str, output_path: Path) -> Optional[Path]:
         """Synchronous ZIP creation — runs in a thread pool via create_zip."""
         study_dir = Path(self.settings.storage["base_path"]) / study_uid
         zip_path = output_path / f"{study_uid}.zip"
@@ -77,7 +77,7 @@ class ZipManager:
             exist or cannot be accessed, the method will return None.
         """
         try:
-            return await asyncio.to_thread(self._create_zip_sync, study_uid, output_path)
+            return await asyncio.to_thread(self.create_zip_sync, study_uid, output_path)
         except Exception as e:
             logger.error(f"Failed to create zip for study {study_uid}: {e}")
             return None

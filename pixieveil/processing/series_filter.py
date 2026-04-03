@@ -52,15 +52,15 @@ class SeriesFilter:
         self.exclude_modalities = settings.series_filter.get("exclude_modalities", [])
         self.only_original_series = settings.series_filter.get("only_original_series", True)
 
-        self._include_rules: List[Tuple[str, re.Pattern]] = self._compile_rules(
+        self._include_rules: List[Tuple[str, re.Pattern]] = self.compile_rules(
             settings.series_filter.get("include") or {}
         )
-        self._exclude_rules: List[Tuple[str, re.Pattern]] = self._compile_rules(
+        self._exclude_rules: List[Tuple[str, re.Pattern]] = self.compile_rules(
             settings.series_filter.get("exclude") or {}
         )
 
     @staticmethod
-    def _compile_rules(rules: Dict[str, str]) -> List[Tuple[str, re.Pattern]]:
+    def compile_rules(rules: Dict[str, str]) -> List[Tuple[str, re.Pattern]]:
         compiled = []
         for attribute, pattern in rules.items():
             try:
@@ -100,13 +100,13 @@ class SeriesFilter:
 
             # Check if we should keep only original series
             if self.only_original_series:
-                if not self._is_original_series(ds):
+                if not self.is_original_series(ds):
                     logger.debug(f"Filtering out non-original series: {ds.SeriesInstanceUID}")
                     return True
 
             # Attribute-based include/exclude rules
             if self._include_rules or self._exclude_rules:
-                if self._matches_attribute_filters(ds):
+                if self.matches_attribute_filters(ds):
                     return True
 
             return False
@@ -115,7 +115,7 @@ class SeriesFilter:
             logger.error(f"Error in series filtering: {e}")
             return False
 
-    def _is_original_series(self, ds: pydicom.Dataset) -> bool:
+    def is_original_series(self, ds: pydicom.Dataset) -> bool:
         """
         Determine if a series is an original series (not a reconstruction).
         
@@ -140,7 +140,7 @@ class SeriesFilter:
         first_value = image_type[0] if hasattr(image_type, "__iter__") else str(image_type)
         return str(first_value).upper().startswith("ORIGINAL")
 
-    def _matches_attribute_filters(self, ds: pydicom.Dataset) -> bool:
+    def matches_attribute_filters(self, ds: pydicom.Dataset) -> bool:
         """
         Apply attribute-based include/exclude rules to determine if a series should
         be filtered out.

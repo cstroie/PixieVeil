@@ -14,9 +14,6 @@ processing service. It is responsible for:
   :class:`~pixieveil.dashboard.server.Dashboard`.
 * Starting the services concurrently and handling graceful shutdown on
   cancellation, keyboard interrupt, or unexpected errors.
-
-The module also provides a small ``_run`` helper that is used when the file
-is executed directly (``python run.py``) or via ``python -m pixieveil``.
 """
 
 import asyncio
@@ -136,7 +133,7 @@ async def main() -> None:
         except asyncio.TimeoutError:
             logger.error("Storage manager did not stop within 5 second timeout")
 
-def _run() -> None:
+if __name__ == "__main__":
     """
     Entry‑point used when executing ``run.py`` directly.
 
@@ -151,7 +148,3 @@ def _run() -> None:
         # Minimal fallback logger in case configuration failed
         logging.basicConfig(level=logging.INFO)
         logging.getLogger(__name__).info("Application shutdown by user")
-
-
-if __name__ == "__main__":
-    _run()

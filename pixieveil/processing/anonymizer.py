@@ -69,7 +69,7 @@ class Anonymizer:
         
         logger.info(f"Anonymizer initialized with profile: {profile_name or settings.anonymization.get('profile', 'research')}")
         
-    def _current_date(self) -> str:
+    def current_date(self) -> str:
         """
         Get current date in DICOM format (YYYYMMDD).
         
@@ -78,7 +78,7 @@ class Anonymizer:
         """
         return datetime.now().strftime("%Y%m%d")
     
-    def _current_time(self) -> str:
+    def current_time(self) -> str:
         """
         Get current time in DICOM format (HHMMSS).
         
@@ -87,7 +87,7 @@ class Anonymizer:
         """
         return datetime.now().strftime("%H%M%S")
     
-    def _generate_new_uid(self, prefix: str = "2.25.") -> str:
+    def generate_new_uid(self, prefix: str = "2.25.") -> str:
         """
         Generate a new DICOM UID with the specified prefix.
         
@@ -99,7 +99,7 @@ class Anonymizer:
         """
         return generate_uid(prefix=prefix)
     
-    def _generate_pseudonym(self, original_value: str) -> str:
+    def generate_pseudonym(self, original_value: str) -> str:
         """
         Generate a consistent pseudonym from an original value using deterministic hashing.
         
@@ -120,7 +120,7 @@ class Anonymizer:
             self._pseudonym_map[original_str] = hash_hex
         return self._pseudonym_map[original_str]
     
-    def _generate_pseudonym_uid(self, original_uid: str) -> str:
+    def generate_pseudonym_uid(self, original_uid: str) -> str:
         """
         Generate a consistent pseudonym UID from an original UID.
         
@@ -138,7 +138,7 @@ class Anonymizer:
             self._pseudonym_map[original_str] = f"2.25.{hash_int}"
         return self._pseudonym_map[original_str]
     
-    def _apply_field_value_strategy(self, original_value: Any, strategy: Optional[str], 
+    def apply_field_value_strategy(self, original_value: Any, strategy: Optional[str], 
                                    field_name: str = "") -> Optional[str]:
         """
         Apply a field value strategy to transform an original value.
@@ -162,11 +162,11 @@ class Anonymizer:
         if strategy is None:
             return None
         elif strategy.upper() == "PSEUDO":
-            return self._generate_pseudonym(original_value)
+            return self.generate_pseudonym(original_value)
         elif strategy.upper() == "PSEUDOUID":
-            return self._generate_pseudonym_uid(original_value)
+            return self.generate_pseudonym_uid(original_value)
         elif strategy.upper() == "NEWUID":
-            return self._generate_new_uid()
+            return self.generate_new_uid()
         elif strategy.upper() == "KEEP":
             return original_value
         elif strategy.upper() == "CLEAR":
@@ -175,7 +175,7 @@ class Anonymizer:
             # Literal string value
             return str(strategy)
     
-    def _set_field(self, ds: pydicom.Dataset, field_name: str, value: Optional[str]) -> None:
+    def set_field(self, ds: pydicom.Dataset, field_name: str, value: Optional[str]) -> None:
         """
         Set a DICOM field to a value, or clear it if value is None.
         
@@ -192,7 +192,7 @@ class Anonymizer:
         else:
             setattr(ds, field_name, value)
     
-    def _apply_uid_mapping(self, original_uid: str, mapping_dict: Dict[str, str], 
+    def apply_uid_mapping(self, original_uid: str, mapping_dict: Dict[str, str], 
                           strategy: Optional[str]) -> str:
         """
         Apply UID mapping strategy with proper consistency handling.
@@ -206,7 +206,7 @@ class Anonymizer:
             str: The mapped/generated UID
         """
         if original_uid not in mapping_dict:
-            new_value = self._apply_field_value_strategy(original_uid, strategy, field_name="UID")
+            new_value = self.apply_field_value_strategy(original_uid, strategy, field_name="UID")
             mapping_dict[original_uid] = new_value if new_value is not None else ""
         return mapping_dict[original_uid]
 
@@ -240,14 +240,14 @@ class Anonymizer:
             for method chaining convenience.
         """
         # Apply profile-based field transformations
-        self._anonymize_patient_fields(ds)
-        self._anonymize_study_series_fields(ds)
-        self._anonymize_institution_physician_fields(ds)
-        self._anonymize_dates(ds)
-        self._remove_sensitive_tags(ds)
-        self._handle_private_tags(ds)
-        self._remove_overlays(ds)
-        self._handle_pixel_blackout(ds)
+        self.anonymize_patient_fields(ds)
+        self.anonymize_study_series_fields(ds)
+        self.anonymize_institution_physician_fields(ds)
+        self.anonymize_dates(ds)
+        self.remove_sensitive_tags(ds)
+        self.handle_private_tags(ds)
+        self.remove_overlays(ds)
+        self.handle_pixel_blackout(ds)
         
         # Burned In Annotation
         if "BurnedInAnnotation" in ds:
@@ -258,7 +258,7 @@ class Anonymizer:
         logger.debug(f"Successfully anonymized image using profile with PixelBlackout={self.profile.PixelBlackout}")
         return ds
     
-    def _anonymize_patient_fields(self, ds: pydicom.Dataset) -> None:
+    def anonymize_patient_fields(self, ds: pydicom.Dataset) -> None:
         """
         Apply profile strategy to patient information fields.
 
@@ -269,29 +269,29 @@ class Anonymizer:
         """
         # PatientName
         if "PatientName" in ds:
-            new_value = self._apply_field_value_strategy(ds.PatientName, self.profile.PatientName)
-            self._set_field(ds, "PatientName", new_value)
+            new_value = self.apply_field_value_strategy(ds.PatientName, self.profile.PatientName)
+            self.set_field(ds, "PatientName", new_value)
         
         # PatientID
         if "PatientID" in ds:
             original_id = str(ds.PatientID)
-            new_value = self._apply_field_value_strategy(original_id, self.profile.PatientID)
-            self._set_field(ds, "PatientID", new_value)
+            new_value = self.apply_field_value_strategy(original_id, self.profile.PatientID)
+            self.set_field(ds, "PatientID", new_value)
         
         # PatientBirthDate
         if "PatientBirthDate" in ds:
-            new_value = self._apply_field_value_strategy(ds.PatientBirthDate, self.profile.PatientBirthDate)
-            self._set_field(ds, "PatientBirthDate", new_value)
+            new_value = self.apply_field_value_strategy(ds.PatientBirthDate, self.profile.PatientBirthDate)
+            self.set_field(ds, "PatientBirthDate", new_value)
 
         # PatientAge
         if "PatientAge" in ds:
-            new_value = self._apply_field_value_strategy(ds.PatientAge, self.profile.PatientAge)
-            self._set_field(ds, "PatientAge", new_value)
+            new_value = self.apply_field_value_strategy(ds.PatientAge, self.profile.PatientAge)
+            self.set_field(ds, "PatientAge", new_value)
         
         # PatientSex
         if "PatientSex" in ds:
-            new_value = self._apply_field_value_strategy(ds.PatientSex, self.profile.PatientSex)
-            self._set_field(ds, "PatientSex", new_value)
+            new_value = self.apply_field_value_strategy(ds.PatientSex, self.profile.PatientSex)
+            self.set_field(ds, "PatientSex", new_value)
         
         # Always clear other patient identifiers
         if "OtherPatientIDs" in ds:
@@ -299,25 +299,25 @@ class Anonymizer:
         if "PatientAddress" in ds:
             ds.PatientAddress = ""
     
-    def _anonymize_study_series_fields(self, ds: pydicom.Dataset) -> None:
+    def anonymize_study_series_fields(self, ds: pydicom.Dataset) -> None:
         """Apply profile strategy to study and series information fields."""
         # StudyInstanceUID with mapping
         if "StudyInstanceUID" in ds:
             original_uid = str(ds.StudyInstanceUID)
-            new_uid = self._apply_uid_mapping(original_uid, self._study_uid_map, 
+            new_uid = self.apply_uid_mapping(original_uid, self._study_uid_map, 
                                               self.profile.StudyInstanceUID)
             ds.StudyInstanceUID = new_uid
         
         # SeriesInstanceUID with mapping
         if "SeriesInstanceUID" in ds:
             original_uid = str(ds.SeriesInstanceUID)
-            new_uid = self._apply_uid_mapping(original_uid, self._series_uid_map, 
+            new_uid = self.apply_uid_mapping(original_uid, self._series_uid_map, 
                                               self.profile.SeriesInstanceUID)
             ds.SeriesInstanceUID = new_uid
         
         # FrameOfReferenceUID
         if "FrameOfReferenceUID" in ds:
-            new_value = self._apply_field_value_strategy(ds.FrameOfReferenceUID, 
+            new_value = self.apply_field_value_strategy(ds.FrameOfReferenceUID, 
                                                          self.profile.FrameOfReferenceUID)
             if new_value:
                 ds.FrameOfReferenceUID = new_value
@@ -326,65 +326,65 @@ class Anonymizer:
         
         # SOPInstanceUID - always generate new
         if "SOPInstanceUID" in ds:
-            ds.SOPInstanceUID = self._generate_new_uid()
+            ds.SOPInstanceUID = self.generate_new_uid()
         
         # StudyID
         if "StudyID" in ds:
-            new_value = self._apply_field_value_strategy(ds.StudyID, self.profile.StudyID)
-            self._set_field(ds, "StudyID", new_value)
+            new_value = self.apply_field_value_strategy(ds.StudyID, self.profile.StudyID)
+            self.set_field(ds, "StudyID", new_value)
         
         # AccessionNumber
         if "AccessionNumber" in ds:
-            new_value = self._apply_field_value_strategy(ds.AccessionNumber, 
+            new_value = self.apply_field_value_strategy(ds.AccessionNumber, 
                                                          self.profile.AccessionNumber)
-            self._set_field(ds, "AccessionNumber", new_value)
+            self.set_field(ds, "AccessionNumber", new_value)
         
         # StudyDescription
         if "StudyDescription" in ds:
-            new_value = self._apply_field_value_strategy(ds.StudyDescription,
+            new_value = self.apply_field_value_strategy(ds.StudyDescription,
                                                          self.profile.StudyDescription)
-            self._set_field(ds, "StudyDescription", new_value)
+            self.set_field(ds, "StudyDescription", new_value)
 
         #  SeriesDescription
         if "SeriesDescription" in ds:
-            new_value = self._apply_field_value_strategy(ds.SeriesDescription,
+            new_value = self.apply_field_value_strategy(ds.SeriesDescription,
                                                          self.profile.SeriesDescription)
-            self._set_field(ds, "SeriesDescription", new_value)
+            self.set_field(ds, "SeriesDescription", new_value)
 
-    def _anonymize_institution_physician_fields(self, ds: pydicom.Dataset) -> None:
+    def anonymize_institution_physician_fields(self, ds: pydicom.Dataset) -> None:
         """Apply profile strategy to institution and physician information fields."""
         # InstitutionName
         if "InstitutionName" in ds:
-            new_value = self._apply_field_value_strategy(ds.InstitutionName, 
+            new_value = self.apply_field_value_strategy(ds.InstitutionName, 
                                                          self.profile.InstitutionName)
-            self._set_field(ds, "InstitutionName", new_value)
+            self.set_field(ds, "InstitutionName", new_value)
         
         # ReferringPhysicianName
         if "ReferringPhysicianName" in ds:
-            new_value = self._apply_field_value_strategy(ds.ReferringPhysicianName, 
+            new_value = self.apply_field_value_strategy(ds.ReferringPhysicianName, 
                                                          self.profile.ReferringPhysicianName)
-            self._set_field(ds, "ReferringPhysicianName", new_value)
+            self.set_field(ds, "ReferringPhysicianName", new_value)
         
         # OperatorsName
         if "OperatorsName" in ds:
-            new_value = self._apply_field_value_strategy(ds.OperatorsName, 
+            new_value = self.apply_field_value_strategy(ds.OperatorsName, 
                                                          self.profile.OperatorsName)
-            self._set_field(ds, "OperatorsName", new_value)
+            self.set_field(ds, "OperatorsName", new_value)
         
         # PerformingPhysicianName
         if "PerformingPhysicianName" in ds:
-            new_value = self._apply_field_value_strategy(ds.PerformingPhysicianName, 
+            new_value = self.apply_field_value_strategy(ds.PerformingPhysicianName, 
                                                          self.profile.PerformingPhysicianName)
-            self._set_field(ds, "PerformingPhysicianName", new_value)
+            self.set_field(ds, "PerformingPhysicianName", new_value)
         
         # InstitutionAddress - always clear
         if "InstitutionAddress" in ds:
             ds.InstitutionAddress = ""
     
-    def _anonymize_dates(self, ds: pydicom.Dataset) -> None:
+    def anonymize_dates(self, ds: pydicom.Dataset) -> None:
         """Apply profile strategy to date/time fields."""
-        current_date = self._current_date()
-        current_time = self._current_time()
+        current_date = self.current_date()
+        current_time = self.current_time()
         
         # Instance creation dates - always anonymize
         if "InstanceCreationDate" in ds:
@@ -412,7 +412,7 @@ class Anonymizer:
             if "SeriesTime" in ds:
                 ds.SeriesTime = current_time
     
-    def _remove_sensitive_tags(self, ds: pydicom.Dataset) -> None:
+    def remove_sensitive_tags(self, ds: pydicom.Dataset) -> None:
         """Remove highly sensitive DICOM tags."""
         tags_to_remove = [
             "OtherPatientIDsSequence", "PatientTelephoneNumbers", "MilitaryRank",
@@ -422,19 +422,19 @@ class Anonymizer:
             if tag in ds:
                 del ds[tag]
     
-    def _handle_private_tags(self, ds: pydicom.Dataset) -> None:
+    def handle_private_tags(self, ds: pydicom.Dataset) -> None:
         """Remove private tags if configured."""
         if not self.profile.KeepPrivateTags:
             ds.remove_private_tags()
     
-    def _remove_overlays(self, ds: pydicom.Dataset) -> None:
+    def remove_overlays(self, ds: pydicom.Dataset) -> None:
         """Remove overlay data (60xx groups)."""
         for overlay_group in range(0x6000, 0x6020, 0x2):
             tags_to_delete = [tag for tag in ds.keys() if tag.group == overlay_group]
             for tag in tags_to_delete:
                 del ds[tag]
     
-    def _handle_pixel_blackout(self, ds: pydicom.Dataset) -> None:
+    def handle_pixel_blackout(self, ds: pydicom.Dataset) -> None:
         """Blackout pixel data if configured."""
         if self.profile.PixelBlackout and "PixelData" in ds:
             try:

@@ -83,7 +83,7 @@ class CStoreSCPHandler:
             file_meta = info.get('file_meta')
 
             # Validate before touching disk
-            if not self._validate_dicom(dataset):
+            if not self.validate_dicom(dataset):
                 logger.warning(f"Invalid DICOM dataset in C-STORE request {image_id}")
                 return 0xC000  # Processing failure
 
@@ -107,7 +107,7 @@ class CStoreSCPHandler:
             logger.error(f"Failed to receive image: {e}")
             return 0x0106  # Out of resources
 
-    def _validate_dicom(self, ds: pydicom.Dataset) -> bool:
+    def validate_dicom(self, ds: pydicom.Dataset) -> bool:
         """
         Validate the received DICOM image for basic integrity.
         

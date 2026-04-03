@@ -89,19 +89,19 @@ class DicomServer:
 
         # Register event handlers using proper API
         handlers = [
-            (evt.EVT_C_ECHO, self._handle_echo),
-            (evt.EVT_C_STORE, self._handle_c_store)
+            (evt.EVT_C_ECHO, self.handle_echo),
+            (evt.EVT_C_STORE, self.handle_c_store)
         ]
 
         # Start the server in a separate thread to avoid blocking the event loop
         loop = asyncio.get_running_loop()
         self.server_task = loop.run_in_executor(
             None, 
-            self._start_blocking_server,
+            self.start_blocking_server,
             handlers  # Pass handlers to server starter
         )
 
-    def _start_blocking_server(self, handlers):
+    def start_blocking_server(self, handlers):
         """
         Start the DICOM server (blocking call).
         
@@ -141,7 +141,7 @@ class DicomServer:
             if self.server_task and not self.server_task.done():
                 # First, request shutdown from within the server thread
                 loop = asyncio.get_running_loop()
-                await loop.run_in_executor(None, self._stop_server)
+                await loop.run_in_executor(None, self.stop_server)
                 
                 # Then wait for the task to complete with timeout
                 try:
@@ -158,7 +158,7 @@ class DicomServer:
             logger.error(f"Error stopping DICOM server: {e}")
             raise
 
-    def _stop_server(self):
+    def stop_server(self):
         """
         Stop the DICOM server from within its own thread.
         
@@ -173,7 +173,7 @@ class DicomServer:
             except Exception as e:
                 logger.error(f"Error during DICOM server shutdown: {e}")
 
-    def _handle_echo(self, event: "pynetdicom.events.Event") -> int:
+    def handle_echo(self, event: "pynetdicom.events.Event") -> int:
         """
         Handle C-ECHO requests.
         
@@ -189,7 +189,7 @@ class DicomServer:
         logger.debug("Received C-ECHO request")
         return 0x0000  # Success
 
-    def _handle_c_store(self, event: "pynetdicom.events.Event") -> int:
+    def handle_c_store(self, event: "pynetdicom.events.Event") -> int:
         """
         Handle C-STORE requests.
         
