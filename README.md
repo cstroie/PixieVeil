@@ -6,7 +6,7 @@ PixieVeil is a DICOM anonymization server. It receives DICOM images from medical
 
 - **DICOM SCP** — Receives CT, MR, and Secondary Capture images via C-STORE (pynetdicom). Verifies connectivity with C-ECHO.
 - **Anonymization** — Removes or replaces patient demographics, institution data, dates, private tags, and overlay groups. Maintains consistent UIDs and patient IDs across all files in the same study.
-- **Audit trail** — Writes a JSONL mapping log (`mapping_log.jsonl`) that records the original-to-anonymized UID/patient-ID mappings for every processed image.
+- **Audit trail** — Writes a JSONL log (`anontrail.jsonl` by default) that records the original-to-anonymized UID and patient-ID mappings for every processed image, enabling re-identification if needed.
 - **Series filtering** — Configurable exclusion of modalities (e.g. SR, PR, RT), optional filtering to original-acquisition series only, and attribute-based include/exclude rules using regular expressions.
 - **Study lifecycle management** — Detects study completion by inactivity timeout and assembles a ZIP archive per study.
 - **Remote upload** — Optional HTTP POST upload of study ZIPs to a configurable endpoint with Bearer-token authentication.
@@ -145,6 +145,7 @@ series_filter:
 logging:
   level: "INFO"
   file: "./data/log/pixieveil.log"
+  anontrail: "./data/log/anontrail.jsonl"
 ```
 
 ### Remote storage
@@ -279,10 +280,68 @@ base_path/
   0002/
     ...
   0001.zip        ← created once the study is complete
-mapping_log.jsonl ← audit trail (one JSON object per image)
 ```
 
-The `mapping_log.jsonl` file records each original → anonymized UID and patient-ID mapping and is written one line at a time so it remains valid even if the process is interrupted.
+## Audit trail
+
+Every successfully anonymized image appends one JSON object to the audit trail file (configured via `logging.anontrail`, default `./data/log/anontrail.jsonl`). The file uses [JSON Lines](https://jsonlines.org/) format — one record per line — so it remains appendable and parseable even if the process is interrupted mid-run.
+
+### Purpose
+
+The audit trail is the only link between anonymized data and its origin. It enables:
+- Tracing an anonymized study number back to the original patient and study
+- Verifying that the correct anonymization was applied to a given image
+- Responding to subject-access or deletion requests when the GDPR profile is in use
+
+**The file should be stored separately from the anonymized data and access-controlled accordingly.**
+
+### Record format
+
+```json
+{
+  "timestamp": "2024-06-01T14:23:11.045321",
+  "image_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "original": {
+    "study_uid":  "1.2.840.113619.2.55.3.604688119.971.1234567890.1",
+    "series_uid": "1.2.840.113619.2.55.3.604688119.971.1234567890.2",
+    "patient_id": "PATIENT123"
+  },
+  "anonymized": {
+    "study_uid":    "2.25.301485614158495553034519261808",
+    "series_uid":   "2.25.187263948576123049857612304985",
+    "patient_id":   "a3f8b2c1d4e567890abcdef1234567890",
+    "study_number": "0001",
+    "series_number": "0002"
+  }
+}
+```
+
+| Field | Description |
+|---|---|
+| `timestamp` | ISO-8601 wall-clock time when the image was processed |
+| `image_id` | Internal UUID assigned on reception (transient; not stored in the DICOM file) |
+| `original.study_uid` | Original DICOM `StudyInstanceUID` as received from the modality |
+| `original.series_uid` | Original DICOM `SeriesInstanceUID` |
+| `original.patient_id` | Original DICOM `PatientID` (`"UNKNOWN"` if the tag was absent) |
+| `anonymized.study_uid` | Anonymized `StudyInstanceUID` written into the stored DICOM file |
+| `anonymized.series_uid` | Anonymized `SeriesInstanceUID` written into the stored DICOM file |
+| `anonymized.patient_id` | Anonymized `PatientID` written into the stored DICOM file |
+| `anonymized.study_number` | Four-digit storage folder name under `base_path` (e.g. `0001`) |
+| `anonymized.series_number` | Four-digit series subfolder name (e.g. `0002`) |
+
+### Querying the trail
+
+Find all records for a specific original patient:
+
+```bash
+grep '"patient_id": "PATIENT123"' anontrail.jsonl | jq .
+```
+
+Find the storage location of a known original study UID:
+
+```bash
+jq 'select(.original.study_uid == "1.2.840...") | .anonymized.study_number' anontrail.jsonl
+```
 
 ## Dashboard
 
