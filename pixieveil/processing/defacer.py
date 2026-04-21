@@ -14,9 +14,6 @@ import tempfile
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-import SimpleITK as sitk
-import nibabel as nib
-import numpy as np
 import pydicom
 from pydicom.dataset import FileMetaDataset
 from pydicom.uid import ImplicitVRLittleEndian
@@ -30,16 +27,18 @@ _HEAD_BODY_PARTS = {"HEAD", "BRAIN", "NECK", "SKULL"}
 class Defacer:
     """DICOM defacing conversion utilities."""
 
-    def __init__(self, config: Optional[dict] = None):
+    def __init__(self, config: Optional[dict] = None, temp_path: Optional[Path] = None):
         """
         Args:
             config: The ``defacing`` section of Settings, or None to use defaults.
+            temp_path: Base directory for temporary NIfTI work; defaults to system temp.
         """
         cfg = config or {}
         self.enabled: bool = cfg.get("enabled", False)
         self.keep_backup: bool = cfg.get("keep_backup", True)
         self.rotation_mode: str = cfg.get("rotation_mode", "auto90")
         self.tool_command: Optional[str] = cfg.get("tool_command", None)
+        self.temp_path: Optional[Path] = temp_path
 
         body_parts = cfg.get("body_parts", list(_HEAD_BODY_PARTS))
         self._body_parts: set = {bp.upper() for bp in body_parts}
@@ -112,60 +111,63 @@ class Defacer:
 
         logger.info("Defacing series: %s", series_dir)
 
-        with tempfile.TemporaryDirectory(prefix="pixieveil_deface_") as tmp_root:
-            tmp = Path(tmp_root)
-            nifti_in_dir = tmp / "nifti_in"
-            nifti_out_dir = tmp / "nifti_out"
-            dicom_out_dir = tmp / "dicom_out"
-            nifti_in_dir.mkdir()
-            nifti_out_dir.mkdir()
-            dicom_out_dir.mkdir()
+        # Use a persistent named directory so NIfTI files survive for manual inspection.
+        base_tmp = Path(self.temp_path) if self.temp_path else Path(tempfile.gettempdir())
+        tmp = base_tmp / f"pixieveil_deface_{series_dir.parent.name}_{series_dir.name}"
+        nifti_in_dir = tmp / "nifti_in"
+        nifti_out_dir = tmp / "nifti_out"
+        dicom_out_dir = tmp / "dicom_out"
+        nifti_in_dir.mkdir(parents=True, exist_ok=True)
+        nifti_out_dir.mkdir(parents=True, exist_ok=True)
+        dicom_out_dir.mkdir(parents=True, exist_ok=True)
 
-            # Step 1: DICOM → NIfTI
-            try:
-                nifti_path = self.dicom_to_nifti(str(series_dir), str(nifti_in_dir))
-            except Exception as e:
-                logger.error("DICOM→NIfTI failed for %s: %s", series_dir, e)
-                return False
+        # Step 1: DICOM → NIfTI
+        try:
+            nifti_path = self.dicom_to_nifti(str(series_dir), str(nifti_in_dir))
+        except Exception as e:
+            logger.error("DICOM→NIfTI failed for %s: %s", series_dir, e)
+            return False
 
-            # Step 2: external defacing tool (or simulation)
-            try:
-                defaced_nifti = self._run_defacing_tool(
-                    Path(nifti_path), nifti_in_dir, nifti_out_dir
-                )
-            except Exception as e:
-                logger.error("Defacing tool failed for %s: %s", series_dir, e)
-                return False
+        logger.info("NIfTI files kept at %s for manual inspection", nifti_in_dir)
 
-            # Step 3: defaced NIfTI → DICOM (using original series as template)
-            try:
-                self.nifti_to_dicom(
-                    str(defaced_nifti),
-                    str(series_dir),
-                    str(dicom_out_dir),
-                    rotation_mode=self.rotation_mode,
-                )
-            except Exception as e:
-                logger.error("NIfTI→DICOM failed for %s: %s", series_dir, e)
-                return False
+        # Step 2: external defacing tool (or simulation)
+        try:
+            defaced_nifti = self._run_defacing_tool(
+                Path(nifti_path), nifti_in_dir, nifti_out_dir
+            )
+        except Exception as e:
+            logger.error("Defacing tool failed for %s: %s", series_dir, e)
+            return False
 
-            # Step 4: atomic swap with optional backup
-            backup_dir = series_dir.parent / f"{series_dir.name}_pre_deface"
-            try:
-                if self.keep_backup:
-                    series_dir.rename(backup_dir)
-                    logger.info("Backup of anonymized series kept at %s", backup_dir)
-                else:
-                    shutil.rmtree(series_dir)
+        # Step 3: defaced NIfTI → DICOM (using original series as template)
+        try:
+            self.nifti_to_dicom(
+                str(defaced_nifti),
+                str(series_dir),
+                str(dicom_out_dir),
+                rotation_mode=self.rotation_mode,
+            )
+        except Exception as e:
+            logger.error("NIfTI→DICOM failed for %s: %s", series_dir, e)
+            return False
 
-                shutil.copytree(dicom_out_dir, series_dir)
-            except Exception as e:
-                logger.error("Atomic swap failed for %s: %s", series_dir, e)
-                # Try to restore from backup if we already moved the original
-                if self.keep_backup and backup_dir.exists() and not series_dir.exists():
-                    backup_dir.rename(series_dir)
-                    logger.warning("Restored original series from backup after swap failure")
-                return False
+        # Step 4: atomic swap with optional backup
+        backup_dir = series_dir.parent / f"{series_dir.name}_pre_deface"
+        try:
+            if self.keep_backup:
+                series_dir.rename(backup_dir)
+                logger.info("Backup of anonymized series kept at %s", backup_dir)
+            else:
+                shutil.rmtree(series_dir)
+
+            shutil.copytree(dicom_out_dir, series_dir)
+        except Exception as e:
+            logger.error("Atomic swap failed for %s: %s", series_dir, e)
+            # Try to restore from backup if we already moved the original
+            if self.keep_backup and backup_dir.exists() and not series_dir.exists():
+                backup_dir.rename(series_dir)
+                logger.warning("Restored original series from backup after swap failure")
+            return False
 
         logger.info("Defacing complete for %s", series_dir)
         return True
@@ -232,6 +234,8 @@ class Defacer:
         Raises:
             ValueError: If no DICOM series found or conversion fails
         """
+        import SimpleITK as sitk
+
         dicom_dir = str(Path(dicom_dir).resolve())
         output_dir = Path(output_dir).resolve()
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -288,6 +292,9 @@ class Defacer:
         Raises:
             ValueError: If conversion fails
         """
+        import nibabel as nib
+        import numpy as np
+
         nifti_file = Path(nifti_file).resolve()
         dicom_template_dir = Path(dicom_template_dir).resolve()
         output_dir = Path(output_dir).resolve()
@@ -430,9 +437,10 @@ class Defacer:
 
         return groups
 
-    def _determine_best_rotation(self, slice_def: np.ndarray, slice_dcm: np.ndarray,
-                                  mode: str) -> int:
+    def _determine_best_rotation(self, slice_def, slice_dcm, mode: str) -> int:
         """Return best np.rot90 k for matching defaced NIfTI slice to original DICOM."""
+        import numpy as np
+
         if mode == "none":
             return 0
         if mode == "auto90":

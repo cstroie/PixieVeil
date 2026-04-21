@@ -49,9 +49,13 @@ class ZipManager:
         zip_path = output_path / f"{study_uid}.zip"
         with zipfile.ZipFile(zip_path, "w") as zipf:
             for file_path in study_dir.rglob("*"):
-                if file_path.is_file():
-                    arcname = file_path.relative_to(study_dir)
-                    zipf.write(file_path, arcname)
+                if not file_path.is_file():
+                    continue
+                # Skip pre-deface backups
+                if any(part.endswith("_pre_deface") for part in file_path.parts):
+                    continue
+                arcname = file_path.relative_to(study_dir)
+                zipf.write(file_path, arcname)
         logger.info(f"Created zip file for study {study_uid}: {zip_path}")
         return zip_path
 

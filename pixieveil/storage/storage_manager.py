@@ -91,7 +91,7 @@ class StorageManager:
         self.study_manager.initialize_from_existing_studies(self.base_path)
         self.series_filter = SeriesFilter(settings)
         self.anonymizer = Anonymizer(settings)
-        self.defacer = Defacer(settings.defacing)
+        self.defacer = Defacer(settings.defacing, temp_path=self.temp_path)
         self.zip_manager = ZipManager(settings)
         self.remote_storage = RemoteStorage(settings)
         
@@ -668,7 +668,10 @@ class StorageManager:
                     else:
                         logger.debug(f"Series {series_dir.name} is not a head scan, skipping defacing")
 
-            image_count = len(list(study_dir.rglob("*.dcm")))
+            image_count = sum(
+                1 for f in study_dir.rglob("*.dcm")
+                if not any(part.endswith("_pre_deface") for part in f.parts)
+            )
             logger.debug(f"Study {study_number:04d} contains {image_count} images")
 
             # Update archive counters
