@@ -110,6 +110,7 @@ class Settings(BaseModel):
     study: Dict[str, Any] = Field(default_factory=dict)
     series_filter: Dict[str, Any] = Field(default_factory=dict)
     logging: Dict[str, Any] = Field(default_factory=dict)
+    defacing: Dict[str, Any] = Field(default_factory=dict)
 
     @classmethod
     def load(cls, config_path: Optional[Path] = None) -> "Settings":

@@ -31,6 +31,7 @@ from pixieveil.storage.zip_manager import ZipManager
 from pixieveil.processing.anonymizer import Anonymizer
 from pixieveil.processing.study_manager import StudyManager, StudyState
 from pixieveil.processing.series_filter import SeriesFilter
+from pixieveil.processing.defacer import Defacer
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +91,7 @@ class StorageManager:
         self.study_manager.initialize_from_existing_studies(self.base_path)
         self.series_filter = SeriesFilter(settings)
         self.anonymizer = Anonymizer(settings)
+        self.defacer = Defacer(settings.defacing)
         self.zip_manager = ZipManager(settings)
         self.remote_storage = RemoteStorage(settings)
         
@@ -654,6 +656,18 @@ class StorageManager:
                 continue
 
             logger.info(f"Processing completed study: {study_number:04d} ({study_uid})")
+
+            # Deface head-scan series before archiving
+            if self.defacer.enabled:
+                for series_dir in sorted(study_dir.iterdir()):
+                    if not series_dir.is_dir():
+                        continue
+                    if self.defacer.is_head_scan(series_dir):
+                        logger.info(f"Defacing series {series_dir.name} in study {study_number:04d}")
+                        self.defacer.deface_series(series_dir)
+                    else:
+                        logger.debug(f"Series {series_dir.name} is not a head scan, skipping defacing")
+
             image_count = len(list(study_dir.rglob("*.dcm")))
             logger.debug(f"Study {study_number:04d} contains {image_count} images")
 
