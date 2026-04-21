@@ -352,13 +352,34 @@ class Defacer:
             ref_dtype = np.int16
             sample_orig_slice = None
 
-        arr_slices = arr_slices.astype(ref_dtype)
+        # Reverse the DICOM rescale so we store raw pixel values, not HU values.
+        # SimpleITK applies RescaleSlope/RescaleIntercept when reading to NIfTI,
+        # so arr_slices contains physical HU values. Without this step the viewer
+        # would apply the intercept a second time, making air appear very dense.
+        rescale_slope = float(getattr(sample_ds, "RescaleSlope", 1.0))
+        rescale_intercept = float(getattr(sample_ds, "RescaleIntercept", 0.0))
+        arr_raw = (arr_slices - rescale_intercept) / rescale_slope
+
+        # Clip to the valid integer range before casting to avoid wrap-around.
+        if np.issubdtype(ref_dtype, np.unsignedinteger):
+            clip_min, clip_max = 0, int(np.iinfo(ref_dtype).max)
+        else:
+            clip_min, clip_max = int(np.iinfo(ref_dtype).min), int(np.iinfo(ref_dtype).max)
+        arr_slices = np.clip(arr_raw, clip_min, clip_max).astype(ref_dtype)
+
+        logger.debug(
+            "Rescale reversed: slope=%.4f intercept=%.1f  "
+            "pixel range [%.0f, %.0f] → [%d, %d]",
+            rescale_slope, rescale_intercept,
+            float(arr_slices.min()), float(arr_slices.max()),
+            clip_min, clip_max,
+        )
 
         if sample_orig_slice is not None:
             mid = n_update // 2
-            best_k = self._determine_best_rotation(arr_slices[mid], sample_orig_slice, rotation_mode)
+            best_k, best_flip = self._determine_best_rotation(arr_slices[mid], sample_orig_slice, rotation_mode)
         else:
-            best_k = 0
+            best_k, best_flip = 0, False
 
         created_files: List[str] = []
 
@@ -366,7 +387,8 @@ class Defacer:
             chosen_list[:n_update], arr_slices[:n_update]
         ):
             slice_arr = np.rot90(np.asarray(slice_data), k=best_k)
-            slice_arr = np.flip(slice_arr, axis=1)
+            if best_flip:
+                slice_arr = np.flip(slice_arr, axis=1)
 
             if slice_arr.shape != (ds.Rows, ds.Columns):
                 raise ValueError(
@@ -437,38 +459,53 @@ class Defacer:
 
         return groups
 
-    def _determine_best_rotation(self, slice_def, slice_dcm, mode: str) -> int:
-        """Return best np.rot90 k for matching defaced NIfTI slice to original DICOM."""
+    def _determine_best_rotation(self, slice_def, slice_dcm, mode: str) -> Tuple[int, bool]:
+        """
+        Return (k, flip) for the transform that best maps a NIfTI slice to the
+        original DICOM pixel array.
+
+        Searches over all combinations of rot90(k) and an optional horizontal
+        flip so that the coordinate-system difference between NIfTI (RAS) and
+        DICOM (LPS) is handled correctly regardless of scanner orientation.
+        """
         import numpy as np
 
         if mode == "none":
-            return 0
+            return 0, False
         if mode == "auto90":
-            allowed = [0, 1, 3]
+            k_values = [0, 1, 3]       # 0°, 90° CCW, 90° CW — skip 180°
         elif mode == "auto_all":
-            allowed = [0, 1, 2, 3]
+            k_values = [0, 1, 2, 3]
         else:
-            logger.warning("Unknown rotation_mode %r, defaulting to k=0.", mode)
-            return 0
+            logger.warning("Unknown rotation_mode %r, defaulting to no transform.", mode)
+            return 0, False
 
         sd = slice_def.astype(np.float32)
         so = slice_dcm.astype(np.float32)
         if sd.shape != so.shape:
-            return 0
+            return 0, False
 
-        errors = {}
-        for k in allowed:
-            cand = np.rot90(sd, k=k)
-            if cand.shape == so.shape:
-                diff = so - cand
-                errors[k] = float(np.mean(diff * diff))
+        best_mse = float("inf")
+        best_k, best_flip = 0, False
 
-        if not errors:
-            return 0
+        for k in k_values:
+            for do_flip in (False, True):
+                cand = np.rot90(sd, k=k)
+                if do_flip:
+                    cand = np.flip(cand, axis=1)
+                if cand.shape != so.shape:
+                    continue
+                mse = float(np.mean((so - cand) ** 2))
+                if mse < best_mse:
+                    best_mse = mse
+                    best_k = k
+                    best_flip = do_flip
 
-        best_k = min(errors, key=errors.__getitem__)
-        logger.debug("Rotation search: mode=%s errors=%s chosen k=%d", mode, errors, best_k)
-        return best_k
+        logger.debug(
+            "Orientation search: mode=%s  chosen k=%d flip=%s  MSE=%.2f",
+            mode, best_k, best_flip, best_mse,
+        )
+        return best_k, best_flip
 
     @staticmethod
     def _prepare_for_write(ds: pydicom.Dataset) -> None:
