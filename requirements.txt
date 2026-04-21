@@ -3,3 +3,6 @@ pydicom>=2.0.0
 aiohttp>=3.0.0
 pyyaml
 pydantic
+simpleitk>=2.0.0
+nibabel>=4.0.0
+numpy>=1.21.0
