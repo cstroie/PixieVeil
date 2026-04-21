@@ -44,6 +44,22 @@ series_filter:
 #    SeriesDescription: "(?i)dose\\s+report"
 #    ImageType: "^DERIVED"
 
+# Defacing
+# Runs after anonymization on series identified as head scans.
+# The external tool is called via `tool_command`, which receives the NIfTI
+# input dir as {input_dir} and the output dir as {output_dir}.
+defacing:
+  enabled: false
+  keep_backup: true          # keep anonymized-but-not-defaced series as <series>_pre_deface/; set false in production
+  rotation_mode: "auto90"    # "none", "auto90", or "auto_all"
+  tool_command: null         # e.g. "python run_CT-DEFACE.py -i {input_dir} -o {output_dir}"
+  body_parts:                # BodyPartExamined values that indicate a head scan (case-insensitive)
+    - HEAD
+    - BRAIN
+    - NECK
+    - SKULL
+  series_description_pattern: "(?i)(head|brain|skull|cranial|cerebr)"
+
 # Logging
 logging:
   level: "INFO"
