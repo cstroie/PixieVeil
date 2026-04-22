@@ -30,7 +30,7 @@ python install.py --download-model
 
 ## Minimum configuration
 
-Open `config/settings.yaml` and set at least:
+Copy `config/settings.yaml.example` to `config/settings.yaml` and set at least:
 
 ```yaml
 dicom_server:
@@ -38,7 +38,7 @@ dicom_server:
   port: 4070
 
 storage:
-  base_path: "./data/pixieveil"
+  base_path: "./data/dicom"
   temp_path: "./data/tmp"
 
 http_server:
@@ -77,15 +77,18 @@ echoscu localhost 4070 -aec PIXIEVEIL
 storescu localhost 4070 -aec PIXIEVEIL /path/to/image.dcm
 ```
 
-The image will appear in `./data/pixieveil/<study>/<series>/` after processing. Once no new images arrive for `study.completion_timeout` seconds (default 120 s), the study is zipped and — if remote storage is configured — uploaded.
+The image will appear in `./data/dicom/<study>/<series>/` after processing. Once no new images arrive for `study.completion_timeout` seconds (default 120 s), the study is exported.
 
 ## Output layout
 
 ```
 data/
-  pixieveil/
-    0001/0001/0001.dcm   ← anonymized images (study/series/image, 4-digit padded)
-    0001.zip             ← created on study completion
+  dicom/
+    0001/           ← study directory (4-digit padded)
+      0001/         ← series directory
+        0001.dcm    ← anonymized (and defaced) images
+    0001.json       ← study sidecar (persistent state, crash recovery)
+    0001.zip        ← created on study completion (HTTP export only)
   nnUNet/
     Dataset001_DEFACE/   ← defacing model (downloaded by install.py)
   log/
@@ -94,15 +97,62 @@ data/
   tmp/                   ← temporary NIfTI work directory (defacing)
 ```
 
-## Optional: remote upload
+## Optional: remote export
 
-Add to `config/settings.yaml` under `storage:`:
+Two export transports are supported. Only one is active at a time; DICOM takes priority if both are configured.
+
+### DICOM C-STORE (recommended)
+
+Sends individual `.dcm` files to a PACS or DICOM node after each study completes. The study directory is removed locally on success.
 
 ```yaml
 storage:
   remote_storage:
-    base_url: "https://your-storage-server"
-    auth_token: "your-bearer-token"
+    dicom:
+      host: "192.168.1.100"
+      port: 104
+      ae_title: "ORTHANC"          # called AE title (remote node)
+      calling_ae: "PIXIEVEIL_SCU"  # our AE title (defaults to dicom_server.ae_title)
 ```
 
-Study ZIPs are uploaded via `POST {base_url}/upload` with Bearer-token auth. If omitted, archives stay local.
+### HTTP ZIP upload
+
+Zips the study and uploads it via `POST {base_url}/upload` with Bearer-token auth. The ZIP and study directory are removed locally on success.
+
+```yaml
+storage:
+  remote_storage:
+    http:
+      base_url: "https://your-storage-server"
+      auth_token: "your-bearer-token"
+```
+
+If neither transport is configured, archives stay local.
+
+### Recovery on restart
+
+Each study has a JSON sidecar (`<study_number>.json`) that tracks its status. On restart:
+- Studies that were mid-processing (`complete` or `defacing` state) are automatically re-queued.
+- Studies kept locally with no remote configured (`archived_via: null`) are re-queued if a remote is now configured — allowing deferred export after adding remote storage settings.
+
+## Defacing
+
+Defacing removes facial features from CT/MR head scans using nnU-Net segmentation. It runs automatically after anonymization on series identified as head scans.
+
+```yaml
+defacing:
+  enabled: true
+  device: "cuda"        # "cuda", "mps" (Apple Silicon), or "cpu"
+                        # falls back to cpu automatically if the configured device is unavailable
+  keep_backup: false    # set true to keep a <series>_pre_deface/ backup
+  rotation_mode: "auto90"
+  model_dir: ./data/nnUNet
+  body_parts:
+    - HEAD
+    - BRAIN
+    - NECK
+    - SKULL
+  series_description_pattern: "(?i)(head|brain|skull|cranial|cerebr)"
+```
+
+At startup, PixieVeil checks whether the configured device is actually usable (including a test CUDA allocation) and falls back to CPU with a warning if not. Only one nnU-Net inference runs at a time regardless of how many studies complete simultaneously.

@@ -2,162 +2,35 @@
 
 ## Project Overview
 
-PixieVeil is a DICOM anonymization server that receives medical imaging data via C-STORE, anonymizes it according to DICOM PS3.15 standards, and optionally uploads archives to remote storage. It includes a web dashboard for real-time metrics.
+PixieVeil is a DICOM anonymization server. It receives medical imaging data from modalities via C-STORE, anonymizes it according to DICOM PS3.15 standards, optionally defaces head scans using nnU-Net, organizes images into a numbered study/series hierarchy, and exports completed studies to a remote DICOM node or HTTP endpoint. A web dashboard exposes real-time metrics.
 
 ## Environment
 
-- **Python**: 3.8+
-- **Key Dependencies**: pynetdicom, pydicom, aiohttp, pyyaml, pydantic
-- **Entry Point**: `python run.py`
+- **Python**: 3.12+
+- **Key dependencies**: pynetdicom, pydicom, aiohttp, pyyaml, pydantic, nibabel, torch, nnunetv2 (defacing only)
+- **Entry point**: `python run.py`
+- **Configuration**: `config/settings.yaml` (copy from `config/settings.yaml.example`)
 
 ---
 
 ## Commands
 
-### Running the Application
-
 ```bash
+# Run the server
 python run.py
+
+# Interactive setup (installs torch/nnunetv2, downloads nnUNet model)
+python install.py
+
+# Download defacing model only
+python install.py --download-model
 ```
 
-### Running a Single Test
-
-No formal test suite exists. To run tests manually, use pytest:
-
-```bash
-pytest tests/                    # Run all tests
-pytest tests/test_file.py        # Run specific test file
-pytest tests/test_file.py::test_function  # Run specific test function
-```
-
-If pytest is not installed:
-
-```bash
-pip install pytest
-pytest tests/ -v
-```
-
-### Linting and Type Checking
-
-Install development dependencies:
-
-```bash
-pip install flake8 mypy pylint black
-```
-
-Run linting:
+No automated test suite exists. Lint manually if needed:
 
 ```bash
 flake8 pixieveil/ --max-line-length=100
-black --check pixieveil/
-pylint pixieveil/
 mypy pixieveil/
-```
-
----
-
-## Code Style Guidelines
-
-### Imports
-
-- Standard library imports first, then third-party, then local
-- Use explicit imports: `from pixieveil.config import Settings`
-- Avoid wildcard imports (`from module import *`)
-- Group imports with a single blank line between groups
-
-```python
-# Standard library
-import asyncio
-import logging
-from pathlib import Path
-from typing import Dict, Any, Optional
-
-# Third-party
-import pydicom
-from pydicom.uid import generate_uid
-from pynetdicom import AE, evt
-
-# Local
-from pixieveil.config import Settings
-from pixieveil.storage.storage_manager import StorageManager
-```
-
-### Formatting
-
-- Line length: 100 characters maximum
-- Indentation: 4 spaces
-- Use blank lines sparingly to separate logical sections
-- Use spaces around operators (`x = 1`, not `x=1`)
-- No trailing whitespace
-
-### Types
-
-- Use type hints for all function parameters and return values
-- Use `Optional[X]` for nullable types, not `Union[X, None]`
-- Use `Dict`, `List`, `Tuple` from typing (or use lowercase `dict`, `list`, `tuple` for Python 3.9+)
-
-```python
-def process_image(ds: pydicom.Dataset, profile: Optional[str] = None) -> bool:
-    ...
-```
-
-### Naming Conventions
-
-- **Classes**: PascalCase (`Anonymizer`, `DicomServer`, `Settings`)
-- **Functions/Variables**: snake_case (`get_patient_id_mapping`, `storage_manager`)
-- **Constants**: UPPER_SNAKE_CASE (`MAX_STORAGE_GB`)
-- **Private methods**: prefix with underscore (`_apply_field_value_strategy`)
-- **Private classes**: prefix with underscore (rarely used)
-
-### Docstrings
-
-All public classes and methods must have docstrings. Use Google-style or NumPy-style:
-
-```python
-def anonymize(self, ds: pydicom.Dataset) -> pydicom.Dataset:
-    """
-    Anonymize a DICOM dataset using the active profile.
-    
-    Args:
-        ds: The DICOM dataset to anonymize.
-        
-    Returns:
-        The anonymized DICOM dataset.
-        
-    Raises:
-        ValueError: If the dataset is invalid.
-    """
-```
-
-### Error Handling
-
-- Use exceptions for error conditions; avoid returning error codes
-- Log errors with appropriate severity before raising
-- Use specific exception types when possible
-- Handle exceptions at the appropriate level
-
-```python
-try:
-    result = process_image(ds)
-except ValueError as e:
-    logger.error(f"Invalid dataset: {e}")
-    raise
-```
-
-### Logging
-
-- Use `logger = logging.getLogger(__name__)` at module level
-- Use appropriate log levels:
-  - `DEBUG`: Detailed diagnostic info
-  - `INFO`: Confirmation things work as expected
-  - `WARNING`: Unexpected but handled gracefully
-  - `ERROR`: Serious problem, function couldn't perform
-  - `CRITICAL`: Program may crash
-
-```python
-logger.debug("Starting DICOM server...")
-logger.info(f"DICOM server running on port {self.ae_port}")
-logger.error(f"Failed to start DICOM server: {e}")
 ```
 
 ---
@@ -169,47 +42,151 @@ Modality ──C-STORE──► DicomServer
                            │
                       CStoreSCPHandler
                            │
-                      StorageManager
+                      StorageManager.save_temp_image()
                            │
-                      Anonymizer.anonymize()
+                      StorageManager.process_image()
+                        ├─ validate_dicom()
+                        ├─ SeriesFilter.should_filter()
+                        ├─ Anonymizer.anonymize()
+                        ├─ StudyManager.add_image_to_study()
+                        └─ move to base_path/<study>/<series>/<image>.dcm
                            │
-                      move to base_path/<study>/<series>/<image>.dcm
-                           │
-                   check_study_completions()
-                         ├─ ZipManager.create_zip()
-                         └─ RemoteStorage.upload_file()
+                  (background loop — asyncio.create_task per study)
+                  StorageManager._process_study()
+                        ├─ Defacer.deface_series()        [optional, in thread]
+                        ├─ DicomStorage.send_study()      [DICOM export, in thread]
+                        └─ ZipManager.create_zip()        [HTTP export, in thread]
+                             └─ RemoteStorage.upload_file()
 ```
 
-### Key Modules
-
-| Module | Purpose |
-|--------|---------|
-| `pixieveil/config/settings.py` | Configuration loading with Pydantic |
-| `pixieveil/dicom_server/server.py` | DICOM SCP server (C-ECHO, C-STORE) |
-| `pixieveil/processing/anonymizer.py` | DICOM field anonymization |
-| `pixieveil/storage/storage_manager.py` | Image processing and archiving |
-| `pixieveil/dashboard/server.py` | HTTP dashboard |
+All services share a single asyncio event loop. Every blocking operation (nnUNet inference, ZIP creation, file I/O) is offloaded to a thread pool via `asyncio.to_thread`. Study processing is launched as an independent `asyncio.create_task` so the DICOM SCP and HTTP dashboard remain responsive during long defacing runs.
 
 ---
 
-## Configuration
+## Module Map
 
-Configuration is in `config/settings.yaml`. Copy from `config/settings.yaml.example`:
+| Path | Purpose |
+|------|---------|
+| `run.py` | Entry point; wires up and starts all services |
+| `pixieveil/config/settings.py` | Loads and validates `settings.yaml` |
+| `pixieveil/dicom_server/server.py` | DICOM SCP (C-ECHO + C-STORE) via pynetdicom |
+| `pixieveil/dicom_server/handlers.py` | C-STORE event handler |
+| `pixieveil/processing/anonymizer.py` | Profile-based DICOM field anonymization |
+| `pixieveil/processing/series_filter.py` | Modality, image-type, and regex-based series filtering |
+| `pixieveil/processing/study_manager.py` | Study/series numbering, completion detection, sidecar I/O |
+| `pixieveil/processing/defacer.py` | nnU-Net head-scan defacing (DICOM↔NIfTI conversion + mask application) |
+| `pixieveil/storage/storage_manager.py` | Central processing pipeline and export orchestration |
+| `pixieveil/storage/study_sidecar.py` | Persistent per-study JSON sidecar (crash recovery) |
+| `pixieveil/storage/zip_manager.py` | ZIP archive creation |
+| `pixieveil/storage/remote_storage.py` | HTTP multipart ZIP upload |
+| `pixieveil/storage/dicom_storage.py` | DICOM C-STORE export to a remote node |
+| `pixieveil/dashboard/server.py` | aiohttp web dashboard (`/`, `/stats`, `/health`) |
+
+---
+
+## Key Design Decisions
+
+### Async + threading
+The event loop never blocks. All I/O-heavy work uses `asyncio.to_thread`. nnUNet inference is additionally serialised with a class-level `threading.Semaphore(1)` on `Defacer` so concurrent study completions never run two GPU jobs simultaneously.
+
+### Sidecar files
+Each study has a `<study_number>.json` sidecar written atomically (write-to-tmp + rename) alongside its directory. The sidecar tracks:
+- `status`: `receiving → complete → defacing → archived`
+- `archived_via`: `"dicom"`, `"http"`, or `null` (kept locally)
+- Per-series head/topogram classification and defacing progress
+
+On restart, `StudyManager.initialize_from_sidecars()` restores all in-memory state and re-queues any study that did not reach a successful export (`complete`, `defacing`, or `archived` with `archived_via: null` and the directory still on disk).
+
+### Export priority
+DICOM C-STORE (`DicomStorage`) takes priority over HTTP ZIP upload (`RemoteStorage`) when both are configured. If neither is configured, the study directory and ZIP are kept locally.
+
+### Device fallback
+`Defacer._resolve_device()` validates the configured device (`cuda`/`mps`/`cpu`) at startup with a test tensor allocation and falls back to CPU with a warning if the device is unavailable or fails.
+
+---
+
+## Configuration Reference
 
 ```yaml
 dicom_server:
   ae_title: "PIXIEVEIL"
   port: 4070
+  ip: "0.0.0.0"
+
+storage:
+  base_path: "./data/dicom"
+  temp_path: "./data/tmp"
+  max_storage_gb: 100
+  # remote_storage:
+  #   dicom:
+  #     host: "192.168.1.100"
+  #     port: 104
+  #     ae_title: "ORTHANC"
+  #     calling_ae: "PIXIEVEIL_SCU"   # defaults to dicom_server.ae_title
+  #   http:
+  #     base_url: "https://your-storage-server"
+  #     auth_token: "your-bearer-token"
+
+http_server:
+  port: 8070
+  ip: "0.0.0.0"
+
+study:
+  completion_timeout: 120
+  completion_check_interval: 30
+  max_study_size_mb: 4000
+
+series_filter:
+  exclude_modalities: ["PR", "RT"]
+  only_original_series: true
+
+defacing:
+  enabled: false
+  device: "cuda"        # falls back to cpu automatically if unavailable
+  keep_backup: false
+  rotation_mode: "auto90"
+  model_dir: ./data/nnUNet
+  body_parts: [HEAD, BRAIN, NECK, SKULL]
+  series_description_pattern: "(?i)(head|brain|skull|cranial|cerebr)"
 
 anonymization:
-  profile: "research"  # or "gdpr"
+  profile: "research"   # research | gdpr
+
+logging:
+  level: "INFO"
+  file: "./data/log/pixieveil.log"
+  anontrail: "./data/log/anontrail.jsonl"
 ```
 
 ---
 
-## Database/Storage
+## Storage Layout
 
-- No database; uses filesystem with study/series hierarchy
-- Output: `base_path/<study>/<series>/<image>.dcm`
-- Audit log: `mapping_log.jsonl` (JSONL format)
-- Archives: ZIP files per completed study
+```
+data/
+  dicom/
+    0001/               ← study directory (4-digit padded)
+      0001/             ← series directory
+        0001.dcm        ← anonymized image
+      0001_pre_deface/  ← backup before defacing (keep_backup: true only)
+    0001.json           ← study sidecar
+    0001.zip            ← ZIP archive (HTTP export only)
+  nnUNet/
+    Dataset001_DEFACE/  ← nnUNet model
+  log/
+    pixieveil.log
+    anontrail.jsonl     ← original ↔ anonymized UID audit trail (JSONL)
+  tmp/                  ← temporary NIfTI work files (defacing)
+```
+
+---
+
+## Code Style
+
+- **Python 3.12+** — use `dict`/`list`/`tuple` for type hints, not `Dict`/`List`/`Tuple`
+- **Imports**: stdlib → third-party → local, one blank line between groups
+- **Naming**: `PascalCase` classes, `snake_case` functions/variables, `_underscore` private members, `UPPER_SNAKE` module-level constants
+- **Logging**: `logger = logging.getLogger(__name__)` at module level; no `print()`
+- **Comments**: only when the *why* is non-obvious; no docstrings restating what the signature already says
+- **Error handling**: log at `ERROR` before re-raising; use specific exception types; no bare `except:`
+- **Thread safety**: acquire `self.lock` (a `threading.Lock`) before reading or writing `self.counters` in `StorageManager`

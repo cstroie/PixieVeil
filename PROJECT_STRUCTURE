@@ -1,36 +1,35 @@
-pixieveil/
-├── dicom_server/
-│   ├── __init__.py
-│   ├── server.py          # pynetdicom AE
-│   ├── handlers.py        # C-STORE handler
-│   └── storage.py         # Temporary storage
-├── processing/
-│   ├── __init__.py
-│   ├── pipeline.py        # Main processing pipeline
-│   ├── anonymizer.py      # Integration with dicom_anonymization
-│   ├── series_filter.py   # Series filtering logic
-│   └── study_manager.py   # Study assembly
-├── storage/
-│   ├── __init__.py
-│   ├── local.py           # Local filesystem storage
-│   ├── remote.py          # HTTP remote storage
-│   └── zip_manager.py     # Zip file creation
-├── dashboard/
-│   ├── __init__.py
-│   ├── main.py            # aiohttp app
-│   ├── templates/         # HTML templates
-│   │   ├── index.html
-│   │   ├── metrics.html
-│   │   └── status.html
-│   └── static/            # CSS/JS files
-├── config/
-│   ├── __init__.py
-│   ├── settings.py        # Settings management
-│   └── schemas.py         # Pydantic models
-├── utils/
-│   ├── __init__.py
-│   ├── logger.py          # Logging setup
-│   └── helpers.py         # Utility functions
-├── requirements.txt
+PixieVeil/
+├── run.py                          # Entry point; wires up and starts all services
+├── install.py                      # Interactive setup: torch/nnunetv2 install + model download
 ├── pyproject.toml
-└── run.py                 # Main entry point
+├── requirements.txt
+│
+├── config/
+│   ├── settings.yaml               # Active configuration (not committed)
+│   └── settings.yaml.example       # Reference configuration with all options documented
+│
+└── pixieveil/
+    ├── config/
+    │   └── settings.py             # Loads and validates settings.yaml
+    │
+    ├── dicom_server/
+    │   ├── server.py               # DICOM SCP (C-ECHO + C-STORE) via pynetdicom
+    │   └── handlers.py             # C-STORE event handler; calls StorageManager
+    │
+    ├── processing/
+    │   ├── anonymizer.py           # Profile-based DICOM field anonymization (PSEUDO/PSEUDOUID/NEWUID/CLEAR/KEEP)
+    │   ├── series_filter.py        # Modality exclusion, original-series filter, regex include/exclude rules
+    │   ├── study_manager.py        # Study/series/image numbering, completion detection, sidecar I/O
+    │   └── defacer.py              # nnU-Net head-scan defacing (DICOM↔NIfTI + mask application)
+    │
+    ├── storage/
+    │   ├── storage_manager.py      # Central pipeline: validate → filter → anonymize → store → export
+    │   ├── study_sidecar.py        # Atomic per-study JSON sidecar (status, series metadata, crash recovery)
+    │   ├── zip_manager.py          # ZIP archive creation for HTTP export
+    │   ├── remote_storage.py       # HTTP multipart ZIP upload with Bearer-token auth
+    │   └── dicom_storage.py        # DICOM C-STORE export to a remote PACS/node via pynetdicom
+    │
+    └── dashboard/
+        ├── server.py               # aiohttp web server: /, /stats, /health
+        └── templates/
+            └── index.html          # Dashboard HTML (polls /stats via JS)

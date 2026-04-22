@@ -1,6 +1,6 @@
 # PixieVeil
 
-PixieVeil is a DICOM anonymization server. It receives DICOM images from medical modalities via C-STORE, anonymizes them according to DICOM PS3.15 standards, organizes them into a numbered study/series/image hierarchy, and optionally uploads archives to a remote storage endpoint. A built-in web dashboard provides real-time processing metrics.
+PixieVeil is a DICOM anonymization server. It receives DICOM images from medical modalities via C-STORE, anonymizes them according to DICOM PS3.15 standards, organizes them into a numbered study/series/image hierarchy, and optionally exports completed studies to a remote DICOM node or HTTP endpoint. A built-in web dashboard provides real-time processing metrics.
 
 ## Features
 
@@ -8,8 +8,10 @@ PixieVeil is a DICOM anonymization server. It receives DICOM images from medical
 - **Anonymization** — Removes or replaces patient demographics, institution data, dates, private tags, and overlay groups. Maintains consistent UIDs and patient IDs across all files in the same study.
 - **Audit trail** — Writes a JSONL log (`anontrail.jsonl` by default) that records the original-to-anonymized UID and patient-ID mappings for every processed image, enabling re-identification if needed.
 - **Series filtering** — Configurable exclusion of modalities (e.g. SR, PR, RT), optional filtering to original-acquisition series only, and attribute-based include/exclude rules using regular expressions.
-- **Study lifecycle management** — Detects study completion by inactivity timeout and assembles a ZIP archive per study.
-- **Remote upload** — Optional HTTP POST upload of study ZIPs to a configurable endpoint with Bearer-token authentication.
+- **Study lifecycle management** — Detects study completion by inactivity timeout, then exports the study. Persistent JSON sidecars survive crashes and enable re-queueing on restart.
+- **Defacing** — Optional nnU-Net-based facial-feature removal for CT/MR head scans. Runs asynchronously after anonymization; uses CUDA/MPS/CPU with automatic fallback. Per-series progress is persisted in the sidecar so a crash mid-defacing resumes from where it left off.
+- **Remote export** — Two configurable transports: DICOM C-STORE (sends individual `.dcm` files to a PACS or DICOM node) or HTTP multipart ZIP upload with Bearer-token authentication. DICOM takes priority if both are configured; omit both to keep archives local.
+- **Storage quota enforcement** — Automatically removes the oldest completed studies when disk usage exceeds the configured `max_storage_gb` limit, targeting 75 % utilisation.
 - **Web dashboard** — `aiohttp`-based HTTP server with a `/stats` JSON API and a live dashboard page that polls metrics periodically.
 - **Structured logging** — Rotating file + console logging with a configurable level and path.
 
@@ -69,57 +71,22 @@ dicom_server:
   port: 4070
   ip: "0.0.0.0"
 
-# Anonymization Settings
-anonymization:
-  profile: "research"   # Active profile: research or gdpr
-  profiles:
-    research:
-      # Research profile: pseudonymized data with preserved study dates
-      PatientName: "PSEUDO"
-      PatientID: "PSEUDO"
-      PatientBirthDate: null
-      PatientSex: null
-      InstitutionName: "DEID_CENTER"
-      StudyID: "RESEARCH"
-      StudyInstanceUID: "PSEUDOUID"
-      SeriesInstanceUID: "PSEUDOUID"
-      FrameOfReferenceUID: "PSEUDOUID"
-      ReferringPhysicianName: null
-      OperatorsName: null
-      PerformingPhysicianName: null
-      AccessionNumber: null
-      KeepPrivateTags: false
-      PixelBlackout: false
-      RetainStudyDate: true
-    gdpr:
-      # GDPR profile: fully anonymized with strong data protection
-      PatientName: "ANON"
-      PatientID: "PSEUDO"
-      PatientBirthDate: null
-      PatientSex: null
-      InstitutionName: null
-      StudyID: "STUDY"
-      StudyInstanceUID: "NEWUID"
-      SeriesInstanceUID: "NEWUID"
-      FrameOfReferenceUID: "NEWUID"
-      ReferringPhysicianName: null
-      OperatorsName: null
-      PerformingPhysicianName: null
-      AccessionNumber: null
-      KeepPrivateTags: false
-      PixelBlackout: true
-      RetainStudyDate: false
-
 # Storage Settings
 storage:
-  base_path: "./data/dicom"        # Organized study tree
-  temp_path: "./tmp/pixieveil"    # Incoming image staging area
+  base_path: "./data/dicom"     # Organized study tree
+  temp_path: "./data/tmp"       # Incoming image staging area
   max_storage_gb: 1000
-  # Optional: omit entire block to disable remote upload
-  remote_storage:
-    http:
-      base_url: "https://your-storage-server"
-      auth_token: "your-bearer-token"
+  # Optional remote export — omit entire block to keep archives local.
+  # DICOM C-STORE takes priority over HTTP ZIP upload if both are configured.
+  # remote_storage:
+  #   dicom:
+  #     host: "192.168.1.100"
+  #     port: 104
+  #     ae_title: "ORTHANC"
+  #     calling_ae: "PIXIEVEIL_SCU"   # defaults to dicom_server.ae_title
+  #   http:
+  #     base_url: "https://your-storage-server"
+  #     auth_token: "your-bearer-token"
 
 # HTTP Dashboard
 http_server:
@@ -142,6 +109,64 @@ series_filter:
 #   SeriesDescription: "(?i)dose\\s+report"
 #   ImageType: "^DERIVED"
 
+# Defacing (optional — requires PyTorch + nnUNetv2, set up via install.py)
+defacing:
+  enabled: false
+  device: "cuda"        # "cuda", "mps" (Apple Silicon), or "cpu"
+                        # falls back to cpu automatically if the device is unavailable
+  keep_backup: false    # set true to keep a <series>_pre_deface/ copy
+  rotation_mode: "auto90"
+  model_dir: ./data/nnUNet
+  body_parts: [HEAD, BRAIN, NECK, SKULL]
+  series_description_pattern: "(?i)(head|brain|skull|cranial|cerebr)"
+
+# Anonymization Settings
+anonymization:
+  profile: "research"   # Active profile: research or gdpr
+  profiles:
+    research:
+      # Research profile: pseudonymized data with preserved study dates
+      PatientName: PSEUDO
+      PatientID: PSEUDO
+      PatientBirthDate: CLEAR
+      PatientAge: KEEP
+      PatientSex: KEEP
+      InstitutionName: DEID_CENTER
+      StudyID: RESEARCH
+      StudyInstanceUID: PSEUDOUID
+      StudyDescription: KEEP
+      SeriesInstanceUID: PSEUDOUID
+      SeriesDescription: KEEP
+      FrameOfReferenceUID: PSEUDOUID
+      ReferringPhysicianName: CLEAR
+      OperatorsName: CLEAR
+      PerformingPhysicianName: CLEAR
+      AccessionNumber: CLEAR
+      KeepPrivateTags: false
+      PixelBlackout: false
+      RetainStudyDate: true
+    gdpr:
+      # GDPR profile: fully anonymized with strong data protection
+      PatientName: ANON
+      PatientID: PSEUDO
+      PatientBirthDate: CLEAR
+      PatientAge: CLEAR
+      PatientSex: CLEAR
+      InstitutionName: CLEAR
+      StudyID: STUDY
+      StudyInstanceUID: NEWUID
+      StudyDescription: CLEAR
+      SeriesInstanceUID: NEWUID
+      SeriesDescription: CLEAR
+      FrameOfReferenceUID: NEWUID
+      ReferringPhysicianName: CLEAR
+      OperatorsName: CLEAR
+      PerformingPhysicianName: CLEAR
+      AccessionNumber: CLEAR
+      KeepPrivateTags: false
+      PixelBlackout: false
+      RetainStudyDate: false
+
 # Logging
 logging:
   level: "INFO"
@@ -149,9 +174,37 @@ logging:
   anontrail: "./data/log/anontrail.jsonl"
 ```
 
-### Remote storage
+### Remote export
 
-If `storage.remote_storage.http.base_url` is set, completed study ZIPs are uploaded via `POST {base_url}/upload` as a multipart form with fields `file` (the ZIP) and `remote_path` (the filename). A `Bearer` token from `auth_token` is sent in the `Authorization` header. If `base_url` is absent or empty, archives are kept locally and no upload is attempted.
+Two export transports are supported under `storage.remote_storage`. DICOM C-STORE takes priority if both are configured.
+
+#### DICOM C-STORE
+
+Sends individual `.dcm` files to a PACS or DICOM node (Orthanc, DCM4CHEE, etc.) after each study completes. The local study directory is removed on success.
+
+```yaml
+storage:
+  remote_storage:
+    dicom:
+      host: "192.168.1.100"
+      port: 104
+      ae_title: "ORTHANC"          # called AE title (remote node)
+      calling_ae: "PIXIEVEIL_SCU"  # our AE title (defaults to dicom_server.ae_title)
+```
+
+#### HTTP ZIP upload
+
+Zips the completed study and uploads it via `POST {base_url}/upload` as a multipart form with fields `file` (the ZIP) and `remote_path` (the filename). A `Bearer` token is sent in the `Authorization` header. The ZIP and local study directory are removed on success.
+
+```yaml
+storage:
+  remote_storage:
+    http:
+      base_url: "https://your-storage-server"
+      auth_token: "your-bearer-token"
+```
+
+If neither block is present, archives are kept locally and no upload is attempted.
 
 ### Series Filtering
 
@@ -272,16 +325,19 @@ Anonymized images are stored under `base_path` in a four-digit padded hierarchy:
 
 ```
 base_path/
-  0001/           ← study number
-    0001/         ← series number
+  0001/           ← study directory
+    0001/         ← series directory
       0001.dcm
       0002.dcm
     0002/
       0001.dcm
+  0001.json       ← study sidecar (persistent state, crash recovery)
   0002/
     ...
-  0001.zip        ← created once the study is complete
+  0001.zip        ← created on study completion (HTTP export only)
 ```
+
+Each study sidecar tracks status (`receiving → complete → defacing → archived`), per-series head/topogram classification, defacing progress, and how the study was exported (`archived_via: "dicom" | "http" | null`). On restart, studies that did not finish processing are automatically re-queued. Studies kept locally (`archived_via: null`) are re-queued for export if a remote transport is now configured.
 
 ## Audit trail
 
