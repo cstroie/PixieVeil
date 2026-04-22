@@ -308,10 +308,16 @@ class Defacer:
             RuntimeError: If the model directory cannot be resolved or if
                           nnUNetv2_predict exits with a non-zero return code.
         """
+        import os
         model_root = self._ensure_model(data_dir)
 
         nifti_in_dir.mkdir(parents=True, exist_ok=True)
         nifti_out_dir.mkdir(parents=True, exist_ok=True)
+
+        # Must be set before nnunetv2 is imported — it reads them at module level.
+        os.environ.setdefault("nnUNet_results",      str(model_root))
+        os.environ.setdefault("nnUNet_preprocessed", str(model_root))
+        os.environ.setdefault("nnUNet_raw",          str(model_root))
 
         import torch
         from nnunetv2.inference.predict_from_raw_data import nnUNetPredictor
