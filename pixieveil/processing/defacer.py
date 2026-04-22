@@ -494,8 +494,8 @@ class Defacer:
         orig_img = nib.load(str(nifti_path))
         orig_data = np.asarray(orig_img.get_fdata())
 
-        fill_value = float(np.percentile(orig_data, 10))
-        logger.debug("Face fill value (10th percentile): %.1f", fill_value)
+        fill_value = -1000.0  # air density in HU
+        logger.debug("Face fill value (air HU): %.1f", fill_value)
 
         defaced_data = np.where(mask, fill_value, orig_data)
         defaced_img = nib.Nifti1Image(defaced_data, orig_img.affine, orig_img.header)
@@ -643,6 +643,9 @@ class Defacer:
         else:
             ref_dtype = np.int16
             sample_orig_slice = None
+
+        # Cap HU values at the physical air density floor before converting back to pixels.
+        arr_slices = np.clip(arr_slices, -1000.0, None)
 
         # Reverse the DICOM rescale so we store raw pixel values, not HU values.
         # SimpleITK applies RescaleSlope/RescaleIntercept when reading to NIfTI,
