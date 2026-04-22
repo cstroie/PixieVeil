@@ -124,7 +124,7 @@ class Settings(BaseModel):
         The method follows this priority order for configuration file loading:
         1. Custom config_path if provided
         2. config/settings.yaml if it exists
-        3. config/settings.yaml.example as fallback
+        3. config/settings.example.yaml as fallback
         
         Args:
             config_path (Path, optional): Custom path to configuration file.
@@ -145,7 +145,7 @@ class Settings(BaseModel):
         if config_path is None:
             config_path = Path("config/settings.yaml")
             if not config_path.exists():
-                config_path = Path("config/settings.yaml.example")
+                config_path = Path("config/settings.example.yaml")
         # After attempting fallbacks, ensure a file actually exists
         if not config_path.exists():
             raise FileNotFoundError(f"Configuration file not found: {config_path}")

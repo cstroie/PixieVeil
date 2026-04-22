@@ -9,7 +9,7 @@ PixieVeil is a DICOM anonymization server. It receives medical imaging data from
 - **Python**: 3.12+
 - **Key dependencies**: pynetdicom, pydicom, aiohttp, pyyaml, pydantic, nibabel, torch, nnunetv2 (defacing only)
 - **Entry point**: `python run.py`
-- **Configuration**: `config/settings.yaml` (copy from `config/settings.yaml.example`)
+- **Configuration**: `config/settings.yaml` (copy from `config/settings.example.yaml`)
 
 ---
 
