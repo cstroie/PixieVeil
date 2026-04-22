@@ -10,6 +10,7 @@ import logging
 import re
 import shutil
 import tempfile
+import threading
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -25,6 +26,9 @@ _HEAD_BODY_PARTS = {"HEAD", "BRAIN", "NECK", "SKULL"}
 
 class Defacer:
     """DICOM defacing conversion utilities."""
+
+    # One nnUNet inference at a time — class-level so all instances share it.
+    _nnunet_semaphore = threading.Semaphore(1)
 
     def __init__(self, config: Optional[dict] = None, temp_path: Optional[Path] = None):
         """
@@ -332,31 +336,34 @@ class Defacer:
         use_mirroring = device != "cpu"  # mirroring TTA is slow on CPU
 
         model_folder = str(model_root / self._MODEL_DATASET / "nnUNetTrainer__nnUNetPlans__3d_fullres")
+
         logger.info(
             "Running nnUNet inference: model=%s device=%s mirroring=%s",
             model_folder, device, use_mirroring,
         )
-
-        predictor = nnUNetPredictor(
-            tile_step_size=0.5,
-            use_gaussian=True,
-            use_mirroring=use_mirroring,
-            perform_everything_on_device=True,
-            device=torch_device,
-            verbose=False,
-            allow_tqdm=True,
-        )
-        predictor.initialize_from_trained_model_folder(
-            model_folder,
-            use_folds=("all",),
-            checkpoint_name="checkpoint_final.pth",
-        )
-        predictor.predict_from_files(
-            str(nifti_in_dir),
-            str(nifti_out_dir),
-            save_probabilities=False,
-            overwrite=True,
-        )
+        logger.debug("Waiting for nnUNet semaphore")
+        with self._nnunet_semaphore:
+            logger.debug("nnUNet semaphore acquired")
+            predictor = nnUNetPredictor(
+                tile_step_size=0.5,
+                use_gaussian=True,
+                use_mirroring=use_mirroring,
+                perform_everything_on_device=True,
+                device=torch_device,
+                verbose=False,
+                allow_tqdm=True,
+            )
+            predictor.initialize_from_trained_model_folder(
+                model_folder,
+                use_folds=("all",),
+                checkpoint_name="checkpoint_final.pth",
+            )
+            predictor.predict_from_files(
+                str(nifti_in_dir),
+                str(nifti_out_dir),
+                save_probabilities=False,
+                overwrite=True,
+            )
 
         logger.info("nnUNet inference complete; output in %s", nifti_out_dir)
 

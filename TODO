@@ -12,7 +12,7 @@
 [ ] Check cuda (runtime)
 [x] Download the model (runtime if defacing enabled)
 [x] check python version (>=3.12)
-[ ] do not run more nnunet in parallel
+[x] do not run more nnunet in parallel
 [x] prepend "ANON-" to all anonymized patient names in dicom tags
 [x] crash recovery and resuming
 [x] acknowledgement (https://github.com/jsfakian/CT-DEFACE)
