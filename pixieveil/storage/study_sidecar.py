@@ -59,7 +59,12 @@ class StudySidecar:
     - ``complete``   inactivity timeout fired; ready to deface + archive
     - ``defacing``   defacing in progress (crash here → re-run on restart,
                      skipping series already marked ``defaced: true``)
-    - ``archived``   ZIP created (and uploaded if configured); terminal state
+    - ``archived``   export succeeded; terminal state
+
+    ``archived_via`` is set when the study is archived:
+    - ``"dicom"``  sent via C-STORE to a DICOM node
+    - ``"http"``   uploaded as a ZIP via HTTP
+    - ``None``     not yet archived (or kept locally with no remote configured)
     """
 
     study_number: int
@@ -71,6 +76,7 @@ class StudySidecar:
     received_at: str
     last_received_at: str
     series: Dict[str, SeriesRecord] = field(default_factory=dict)
+    archived_via: Optional[str] = None   # "dicom" | "http" | None
 
     # ------------------------------------------------------------------
     # Construction helpers

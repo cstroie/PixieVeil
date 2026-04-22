@@ -693,13 +693,16 @@ class StorageManager:
                 logger.warning("Study directory missing for %s: %s", study_uid, study_dir)
                 with self.lock:
                     self.inc_counter('errors', 'total')
-                self.study_manager.mark_study_archived(study_uid)
+                self.study_manager.mark_study_archived(study_uid, via=None)
                 return
 
             logger.info("Processing completed study: %04d (%s)", study_number, study_uid)
 
-            # Defacing — runs blocking nnUNet inference in a thread
-            if self.defacer.enabled:
+            # Defacing — skip if the study was already archived locally and
+            # is now being re-queued only to attempt remote export.
+            sc = self.study_manager._sidecars.get(study_uid)
+            already_processed = sc is not None and sc.status == "archived"
+            if self.defacer.enabled and not already_processed:
                 await asyncio.to_thread(self._deface_study, study_uid, study_number, study_dir)
 
             # Count images (blocking glob — run in thread)
@@ -742,7 +745,7 @@ class StorageManager:
                 self.inc_counter('cleanup', 'studies')
                 self.inc_counter('cleanup', 'images', image_count)
             await asyncio.to_thread(shutil.rmtree, study_dir)
-            self.study_manager.mark_study_archived(study_uid)
+            self.study_manager.mark_study_archived(study_uid, via="dicom")
         else:
             logger.error("DICOM push failed for study %s", study_uid)
             with self.lock:
@@ -774,7 +777,7 @@ class StorageManager:
             with self.lock:
                 self.inc_counter('cleanup', 'studies')
                 self.inc_counter('cleanup', 'images', image_count)
-            self.study_manager.mark_study_archived(study_uid)
+            self.study_manager.mark_study_archived(study_uid, via=None)
         elif success:
             logger.info("Successfully uploaded study %04d", study_number)
             with self.lock:
@@ -785,7 +788,7 @@ class StorageManager:
                 self.inc_counter('cleanup', 'images', image_count)
             await asyncio.to_thread(shutil.rmtree, study_dir)
             await asyncio.to_thread(zip_path.unlink)
-            self.study_manager.mark_study_archived(study_uid)
+            self.study_manager.mark_study_archived(study_uid, via="http")
         else:
             logger.error("Failed to upload study %s", study_uid)
             with self.lock:

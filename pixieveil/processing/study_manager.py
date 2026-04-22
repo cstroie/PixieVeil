@@ -110,13 +110,20 @@ class StudyManager:
                 # Keep the sidecar reference
                 self._sidecars[study_uid] = sc
 
-                # Re-queue studies that did not finish processing
-                if sc.status in ("complete", "defacing") and study_dir.exists():
+                # Re-queue studies that did not finish processing, and studies
+                # that were kept locally (archived_via=None) with their directory
+                # still on disk so they can be exported now that remote may be
+                # configured.
+                needs_requeue = (
+                    sc.status in ("complete", "defacing")
+                    or (sc.status == "archived" and sc.archived_via is None)
+                ) and study_dir.exists()
+                if needs_requeue:
                     self._recovered_studies.append(study_uid)
                     recovered += 1
                     logger.info(
-                        "Study %04d recovered (status=%s) — queued for reprocessing",
-                        sc.study_number, sc.status,
+                        "Study %04d recovered (status=%s, archived_via=%s) — queued for reprocessing",
+                        sc.study_number, sc.status, sc.archived_via,
                     )
 
         logger.info(
@@ -291,8 +298,18 @@ class StudyManager:
         """Called just before defacing begins for a study."""
         self._update_sidecar_status(original_study_uid, "defacing")
 
-    def mark_study_archived(self, original_study_uid: str) -> None:
-        """Mark a study as fully processed and remove it from active tracking."""
+    def mark_study_archived(self, original_study_uid: str,
+                             via: Optional[str] = None) -> None:
+        """Mark a study as fully processed and remove it from active tracking.
+
+        ``via`` should be ``"dicom"`` or ``"http"`` when the study was
+        exported remotely, or ``None`` when it is kept locally.
+        """
+        if self._base_path is not None:
+            with self.lock:
+                sc = self._sidecars.get(original_study_uid)
+                if sc is not None:
+                    sc.archived_via = via
         self._update_sidecar_status(original_study_uid, "archived")
         with self.lock:
             self.study_states.pop(original_study_uid, None)
