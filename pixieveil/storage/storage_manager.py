@@ -88,7 +88,7 @@ class StorageManager:
 
         # Initialize managers
         self.study_manager = StudyManager(settings)
-        self.study_manager.initialize_from_existing_studies(self.base_path)
+        self.study_manager.initialize_from_sidecars(self.base_path)
         self.series_filter = SeriesFilter(settings)
         self.anonymizer = Anonymizer(settings)
         self.defacer = Defacer(settings.defacing, temp_path=self.temp_path)
@@ -535,7 +535,7 @@ class StorageManager:
             # Assign study/series/image numbers using StudyManager
             study_number, series_number, image_number, is_new_series = self.study_manager.add_image_to_study(study_uid, series_uid)
 
-            # Update storage counters for new series
+            # Update storage counters and persist sidecar for new study/series
             if is_new_series:
                 base_path = self.base_path
                 study_dir = base_path / f"{study_number:04d}"
@@ -545,9 +545,18 @@ class StorageManager:
                 with self.lock:
                     self.inc_counter('storage', 'series')
                 logger.debug(f"Creating new series {series_number} for study {study_number}")
-            
+
+                anon_study_uid  = self.anonymizer.get_study_uid_mapping(study_uid)
+                anon_series_uid = self.anonymizer.get_series_uid_mapping(series_uid)
+                anon_patient_id = self.anonymizer.get_patient_id_mapping(patient_id)
+                self.study_manager.record_new_series(
+                    study_uid, series_uid, patient_id,
+                    anon_study_uid, anon_series_uid, anon_patient_id,
+                    study_number, series_number,
+                )
+
             # Log the anonymization mapping after study/series numbers are assigned
-            self.log_anonymization_mapping(study_uid, series_uid, patient_id, image_id, 
+            self.log_anonymization_mapping(study_uid, series_uid, patient_id, image_id,
                                             study_number, series_number)
 
             # Create numeric paths (4-digit padded)
@@ -659,18 +668,49 @@ class StorageManager:
 
             # Deface head-scan series before archiving
             if self.defacer.enabled:
+                self.study_manager.mark_study_defacing(study_uid)
                 for series_dir in sorted(study_dir.iterdir()):
                     if not series_dir.is_dir():
                         continue
+                    if series_dir.name.endswith("_pre_deface"):
+                        continue
+
+                    series_number = int(series_dir.name) if series_dir.name.isdigit() else None
+                    orig_series_uid = (
+                        self.study_manager.get_original_series_uid(study_uid, series_number)
+                        if series_number is not None else None
+                    )
+
+                    # Skip series already defaced (crash recovery)
+                    if orig_series_uid and self.study_manager.is_series_defaced(study_uid, orig_series_uid):
+                        logger.info(
+                            f"Series {series_dir.name} already defaced — skipping"
+                        )
+                        continue
+
                     if self.defacer.is_topogram(series_dir):
                         logger.info(
                             f"Series {series_dir.name} is a topogram/scout — skipping defacing"
                         )
+                        if orig_series_uid:
+                            self.study_manager.set_series_classification(
+                                study_uid, orig_series_uid, is_head=False, is_topogram=True
+                            )
                     elif self.defacer.is_head_scan(series_dir):
+                        if orig_series_uid:
+                            self.study_manager.set_series_classification(
+                                study_uid, orig_series_uid, is_head=True, is_topogram=False
+                            )
                         logger.info(f"Defacing series {series_dir.name} in study {study_number:04d}")
-                        self.defacer.deface_series(series_dir, data_dir=self.base_path)
+                        ok = self.defacer.deface_series(series_dir, data_dir=self.base_path)
+                        if ok and orig_series_uid:
+                            self.study_manager.mark_series_defaced(study_uid, orig_series_uid)
                     else:
                         logger.debug(f"Series {series_dir.name} is not a head scan, skipping defacing")
+                        if orig_series_uid:
+                            self.study_manager.set_series_classification(
+                                study_uid, orig_series_uid, is_head=False, is_topogram=False
+                            )
 
             image_count = sum(
                 1 for f in study_dir.rglob("*.dcm")

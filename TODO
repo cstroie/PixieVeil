@@ -13,3 +13,7 @@
 [x] Download the model (runtime if defacing enabled)
 [x] check python version (>=3.12)
 [ ] do not run more nnunet in parallel
+[x] prepend "ANON-" to all anonymized patient names in dicom tags
+[x] crash recovery and resuming
+[ ] acknowledgement (https://github.com/jsfakian/CT-DEFACE#)
+[ ] feat: q/r the pacs for new ct studies and request them

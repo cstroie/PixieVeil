@@ -270,6 +270,8 @@ class Anonymizer:
         # PatientName
         if "PatientName" in ds:
             new_value = self.apply_field_value_strategy(ds.PatientName, self.profile.PatientName)
+            if new_value and str(new_value).strip():
+                new_value = f"ANON-{new_value}"
             self.set_field(ds, "PatientName", new_value)
         
         # PatientID
