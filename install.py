@@ -5,16 +5,19 @@ PixieVeil Installation & Environment Setup
 
 Interactive setup script. Run once after cloning / updating the repo:
 
-    python install.py [--config PATH] [--non-interactive]
+    python install.py [--config PATH] [--non-interactive] [--download-model]
 
 Steps
 -----
-  1. Ask whether defacing should be enabled and which compute backend to use.
-  2. Install torch and nnUNetv2 for the chosen backend (pip subprocess).
-  3. Verify Python version and imported packages.
-  4. Create required runtime directories.
-  5. Download the nnUNet defacing model from Google Drive if missing.
-  6. Final sanity checks (core imports).
+  0. Verify Python >= 3.12 (hard gate).
+  1. Detect CUDA version (nvcc, then nvidia-smi fallback).
+  2. Ask whether defacing should be enabled and which compute backend to use.
+  3. Install / verify torch and nnUNetv2 for the chosen backend (pip subprocess).
+  4. Verify Python version and imported packages.
+  5. Create required runtime directories.
+  6. Download the nnUNet defacing model from Google Drive if missing.
+  7. Persist defacing choice to settings.yaml.
+  8. Final sanity checks (core imports).
 
 Exit code 0 on success, non-zero on any failure.
 """
@@ -48,56 +51,52 @@ _TORCH_CPU = [
     "--index-url", "https://download.pytorch.org/whl/cpu",
 ]
 
-# Maps major CUDA toolkit versions to the PyTorch wheel tag and index URL.
-# Wheels for newer CUDA versions are backwards-compatible with older drivers,
-# so we pick the highest supported tag that is <= the installed toolkit version.
+# Ascending by CUDA version so ceiling selection (first entry >= installed) works naturally.
 _CUDA_WHEEL_MAP = [
-    ((12, 8), "cu128", "https://download.pytorch.org/whl/cu128"),
-    ((12, 6), "cu126", "https://download.pytorch.org/whl/cu126"),
-    ((12, 4), "cu124", "https://download.pytorch.org/whl/cu124"),
-    ((12, 1), "cu121", "https://download.pytorch.org/whl/cu121"),
     ((11, 8), "cu118", "https://download.pytorch.org/whl/cu118"),
+    ((12, 1), "cu121", "https://download.pytorch.org/whl/cu121"),
+    ((12, 4), "cu124", "https://download.pytorch.org/whl/cu124"),
+    ((12, 6), "cu126", "https://download.pytorch.org/whl/cu126"),
+    ((12, 8), "cu128", "https://download.pytorch.org/whl/cu128"),
 ]
 
 
 def _detect_cuda_version() -> tuple[int, int] | None:
-    """Return (major, minor) of the installed CUDA toolkit, or None."""
-    result = subprocess.run(
-        ["nvcc", "--version"], capture_output=True, text=True
-    )
-    if result.returncode != 0:
-        # nvcc not on PATH — try nvidia-smi as fallback
-        result = subprocess.run(
-            ["nvidia-smi", "--query-gpu=driver_version", "--format=csv,noheader"],
-            capture_output=True, text=True,
-        )
-        return None  # driver version ≠ toolkit version; can't map reliably
-    m = re.search(r"release (\d+)\.(\d+)", result.stdout)
-    if m:
-        return int(m.group(1)), int(m.group(2))
+    """Return (major, minor) of the CUDA version available on this machine, or None."""
+    # Prefer nvcc — gives the actual toolkit version.
+    result = subprocess.run(["nvcc", "--version"], capture_output=True, text=True)
+    if result.returncode == 0:
+        m = re.search(r"release (\d+)\.(\d+)", result.stdout)
+        if m:
+            return int(m.group(1)), int(m.group(2))
+
+    # Fallback: nvidia-smi table header includes "CUDA Version: X.Y"
+    # (this is the max CUDA version the driver supports, good enough for wheel selection)
+    result = subprocess.run(["nvidia-smi"], capture_output=True, text=True)
+    if result.returncode == 0:
+        m = re.search(r"CUDA Version:\s*(\d+)\.(\d+)", result.stdout)
+        if m:
+            return int(m.group(1)), int(m.group(2))
+
     return None
 
 
-def _torch_cuda_args() -> list[str]:
-    """Return pip args to install the CUDA-enabled PyTorch matching the system toolkit."""
-    cuda_ver = _detect_cuda_version()
-    if cuda_ver is None:
-        _info("Could not detect CUDA toolkit version — installing unpinned CUDA wheels from PyPI.")
-        return ["torch==2.4.0", "torchvision==0.19.0", "torchaudio==2.4.0"]
+def _select_wheel(cuda_ver: tuple[int, int]) -> tuple[tuple[int, int], str, str]:
+    """Return the wheel map entry whose version is the ceiling of *cuda_ver*.
 
-    _info(f"Detected CUDA toolkit {cuda_ver[0]}.{cuda_ver[1]}")
-    for (min_ver, tag, index_url) in _CUDA_WHEEL_MAP:
-        if cuda_ver >= min_ver:
-            _info(f"Selecting PyTorch wheels for {tag}")
-            return [
-                f"torch==2.4.0+{tag}",
-                f"torchvision==0.19.0+{tag}",
-                f"torchaudio==2.4.0+{tag}",
-                "--index-url", index_url,
-            ]
+    Ceiling = smallest wheel_ver >= cuda_ver, so CUDA 12.0 → cu121.
+    Falls back to the highest entry when cuda_ver exceeds all known wheels.
+    """
+    for entry in _CUDA_WHEEL_MAP:
+        if entry[0] >= cuda_ver:
+            return entry
+    return _CUDA_WHEEL_MAP[-1]
 
-    _info(f"CUDA {cuda_ver[0]}.{cuda_ver[1]} is older than cu118 — falling back to cu118 wheels.")
-    _, tag, index_url = _CUDA_WHEEL_MAP[-1]
+
+def _torch_cuda_args(cuda_ver: tuple[int, int]) -> list[str]:
+    """Return pip install args for the CUDA-enabled PyTorch wheel matching *cuda_ver*."""
+    wheel_ver, tag, index_url = _select_wheel(cuda_ver)
+    _info(f"CUDA {cuda_ver[0]}.{cuda_ver[1]} → selecting PyTorch wheels for {tag}")
     return [
         f"torch==2.4.0+{tag}",
         f"torchvision==0.19.0+{tag}",
@@ -140,24 +139,17 @@ class DefacingChoice:
     CUDA = "cuda"
 
 
-def ask_defacing_choice(non_interactive: bool, current_enabled: bool) -> str:
-    """
-    Ask the user whether to enable defacing and which backend to use.
+def ask_defacing_choice(
+    non_interactive: bool,
+    current_enabled: bool,
+    cuda_ver: tuple[int, int] | None,
+) -> str:
+    """Ask the user whether to enable defacing and which backend to use.
 
-    Returns one of DefacingChoice.{NONE, CPU, CUDA}.  Always returns NONE when
-    the running Python is older than 3.12.
+    Returns one of DefacingChoice.{NONE, CPU, CUDA}.
+    Option 2 (CUDA) is only offered when *cuda_ver* is not None.
     """
-    _section("Step 0 — Defacing configuration")
-
-    if sys.version_info < (3, 12):
-        print(
-            f"\n  WARNING: Python {sys.version_info.major}.{sys.version_info.minor} detected.\n"
-            f"  Defacing requires Python >= 3.12.\n"
-            f"  Defacing installation will be skipped.\n"
-            f"  Re-run install.py with Python 3.12 or later to enable defacing.\n",
-            file=sys.stderr,
-        )
-        return DefacingChoice.NONE
+    _section("Step 1 — Defacing configuration")
 
     if non_interactive:
         choice = DefacingChoice.CPU if current_enabled else DefacingChoice.NONE
@@ -165,26 +157,32 @@ def ask_defacing_choice(non_interactive: bool, current_enabled: bool) -> str:
               f"({'enabled/cpu' if current_enabled else 'disabled'}).")
         return choice
 
-    print("""
-  Defacing removes facial features from head CT scans (requires nnUNetv2).
+    cuda_label = (
+        f"Enable defacing, CUDA {cuda_ver[0]}.{cuda_ver[1]} (GPU)"
+        if cuda_ver else None
+    )
+    print("\n  Defacing removes facial features from head CT scans (requires nnUNetv2).\n")
+    print("  Options:")
+    print("    0 – No defacing")
+    print("    1 – Enable defacing, CPU only")
+    if cuda_label:
+        print(f"    2 – {cuda_label}")
+    else:
+        _info("CUDA not detected — GPU option unavailable.")
+    print()
 
-  Options:
-    0 – No defacing
-    1 – Enable defacing, CPU only
-    2 – Enable defacing, CUDA (GPU)
-""")
+    valid = {"0", "1"} | ({"2"} if cuda_ver else set())
     default = "1" if current_enabled else "0"
+    prompt = f"  Your choice [{'0/1/2' if cuda_ver else '0/1'}] (default: {default}): "
     while True:
-        raw = input(f"  Your choice [0/1/2] (current: {default}): ").strip()
-        if raw == "":
-            raw = default
+        raw = input(prompt).strip() or default
         if raw == "0":
             return DefacingChoice.NONE
         if raw == "1":
             return DefacingChoice.CPU
-        if raw == "2":
+        if raw == "2" and cuda_ver:
             return DefacingChoice.CUDA
-        print("  Please enter 0, 1, or 2.")
+        print(f"  Please enter one of: {', '.join(sorted(valid))}.")
 
 
 # ---------------------------------------------------------------------------
@@ -212,8 +210,8 @@ def _pip_install(packages: list[str], label: str) -> bool:
     return True
 
 
-def install_packages(choice: str) -> bool:
-    _section("Step 1 — Package installation")
+def install_packages(choice: str, cuda_ver: tuple[int, int] | None) -> bool:
+    _section("Step 2 — Package installation")
 
     if choice == DefacingChoice.NONE:
         _skip("Defacing disabled — skipping torch / nnUNetv2 installation.")
@@ -222,26 +220,46 @@ def install_packages(choice: str) -> bool:
     # --- PyTorch ---
     torch_ver = _check_package("torch")
     needs_install = not torch_ver
+
     if torch_ver and choice == DefacingChoice.CUDA:
-        # Verify the installed wheel actually has CUDA support.
         try:
             import torch as _torch
             if not _torch.cuda.is_available():
                 _info(f"torch {torch_ver} installed but CUDA unavailable — reinstalling CUDA build.")
                 needs_install = True
+            elif cuda_ver is not None:
+                # Check if the installed wheel matches the expected ceiling wheel.
+                installed_cuda = _torch.version.cuda  # e.g. "12.1" or None
+                if installed_cuda:
+                    installed_parts = tuple(int(x) for x in installed_cuda.split(".")[:2])
+                    expected_ver, expected_tag, _ = _select_wheel(cuda_ver)
+                    if installed_parts != expected_ver:
+                        _info(
+                            f"torch built for CUDA {installed_cuda}, "
+                            f"expected {expected_tag} for CUDA {cuda_ver[0]}.{cuda_ver[1]} "
+                            f"— reinstalling."
+                        )
+                        needs_install = True
+                    else:
+                        _ok(f"torch {torch_ver} (CUDA {installed_cuda}) matches {expected_tag} — skipping.")
+                else:
+                    _info("torch CUDA build version unknown — reinstalling to be safe.")
+                    needs_install = True
         except ImportError:
             needs_install = True
 
     if needs_install:
-        _info(
-            "torch not found — installing CPU-only build"
-            if choice == DefacingChoice.CPU
-            else "torch not found — installing CUDA build"
-        )
-        torch_args = _TORCH_CPU if choice == DefacingChoice.CPU else _torch_cuda_args()
+        if choice == DefacingChoice.CPU:
+            _info("Installing CPU-only PyTorch.")
+            torch_args = _TORCH_CPU
+        elif cuda_ver is not None:
+            torch_args = _torch_cuda_args(cuda_ver)
+        else:
+            _info("CUDA version unknown — installing unpinned CUDA wheels from PyPI.")
+            torch_args = ["torch==2.4.0", "torchvision==0.19.0", "torchaudio==2.4.0"]
         if not _pip_install(torch_args, f"PyTorch ({choice.upper()})"):
             return False
-    else:
+    elif not (torch_ver and choice == DefacingChoice.CUDA):
         _ok(f"torch {torch_ver} already installed — skipping.")
 
     # --- nnunetv2 ---
@@ -270,16 +288,12 @@ def install_packages(choice: str) -> bool:
 # ---------------------------------------------------------------------------
 
 def check_python_and_deps(choice: str) -> bool:
-    _section("Step 2 — Runtime requirements")
+    _section("Step 3 — Runtime requirements")
 
     ok = True
 
     vi = sys.version_info
-    if vi >= (3, 12):
-        _ok(f"Python {vi.major}.{vi.minor}.{vi.micro}")
-    else:
-        _fail(f"Python >= 3.12 required (running {vi.major}.{vi.minor}.{vi.micro})")
-        ok = False
+    _ok(f"Python {vi.major}.{vi.minor}.{vi.micro}")  # already gated in main()
 
     if choice == DefacingChoice.NONE:
         _skip("Defacing disabled — skipping torch / nnUNetv2 checks.")
@@ -326,7 +340,7 @@ def check_python_and_deps(choice: str) -> bool:
 # ---------------------------------------------------------------------------
 
 def prepare_directories(settings) -> bool:
-    _section("Step 3 — Directory layout")
+    _section("Step 4 — Directory layout")
 
     ok = True
     dirs = [
@@ -406,7 +420,7 @@ def _print_manual_download(model_root: Path) -> None:
 
 
 def prepare_model(settings, choice: str) -> bool:
-    _section("Step 4 — nnUNet defacing model")
+    _section("Step 5 — nnUNet defacing model")
 
     if choice == DefacingChoice.NONE:
         _skip("Defacing disabled — skipping model setup.")
@@ -431,7 +445,7 @@ def prepare_model(settings, choice: str) -> bool:
 # ---------------------------------------------------------------------------
 
 def update_settings(settings, choice: str, config_path: Optional[str]) -> bool:
-    _section("Step 5 — Persist defacing choice to settings.yaml")
+    _section("Step 6 — Persist defacing choice to settings.yaml")
 
     enabled = choice != DefacingChoice.NONE
 
@@ -477,7 +491,7 @@ def update_settings(settings, choice: str, config_path: Optional[str]) -> bool:
 # ---------------------------------------------------------------------------
 
 def sanity_checks(settings, choice: str) -> bool:
-    _section("Step 6 — Sanity checks")
+    _section("Step 7 — Sanity checks")
 
     ok = True
 
@@ -531,6 +545,16 @@ def main() -> int:
     print(f"Python : {sys.version}")
     print(f"Prefix : {sys.prefix}")
 
+    # Hard gate: Python version must be satisfied before anything else.
+    if sys.version_info < (3, 12):
+        print(
+            f"\n{_FAIL}  Python >= 3.12 required "
+            f"(running {sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}).\n"
+            f"  Re-run install.py with Python 3.12 or later.",
+            file=sys.stderr,
+        )
+        return 1
+
     try:
         from pixieveil.config import Settings
         settings = Settings.load(args.config) if args.config else Settings.load()
@@ -548,13 +572,20 @@ def main() -> int:
         model_root.mkdir(parents=True, exist_ok=True)
         return 0 if download_model(model_root) else 1
 
+    # Detect CUDA once; everything downstream reuses this result.
+    _section("Step 0 — System detection")
+    cuda_ver = _detect_cuda_version()
+    if cuda_ver:
+        _ok(f"CUDA {cuda_ver[0]}.{cuda_ver[1]} detected")
+    else:
+        _info("No CUDA detected — GPU option will not be available.")
+
     current_enabled = settings.defacing.get("enabled", False)
 
-    # --- Step 0: ask user
-    choice = ask_defacing_choice(args.non_interactive, current_enabled)
+    choice = ask_defacing_choice(args.non_interactive, current_enabled, cuda_ver)
 
     results = [
-        install_packages(choice),
+        install_packages(choice, cuda_ver),
         check_python_and_deps(choice),
         prepare_directories(settings),
         prepare_model(settings, choice),
