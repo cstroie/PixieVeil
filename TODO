@@ -9,7 +9,7 @@
 [x] Acknowledgement
 [x] Export to dicom
 [x] Analyze the workflow
-[ ] Check cuda (runtime)
+[x] Check cuda (runtime)
 [x] Download the model (runtime if defacing enabled)
 [x] check python version (>=3.12)
 [x] do not run more nnunet in parallel

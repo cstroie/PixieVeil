@@ -53,6 +53,59 @@ class Defacer:
                                r"(?i)(head|brain|skull|cranial|cerebr)")
         self._desc_re: re.Pattern = re.compile(desc_pattern)
 
+        self.device: str = self._resolve_device(cfg.get("device", "cuda"))
+
+    # ------------------------------------------------------------------
+    # Device resolution
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _resolve_device(requested: str) -> str:
+        """
+        Validate the requested torch device and fall back to CPU if unavailable.
+
+        Returns the effective device string (``"cuda"``, ``"mps"``, or ``"cpu"``).
+        """
+        try:
+            import torch
+        except ImportError:
+            # torch not installed — defacing will fail later with a clear error
+            return requested
+
+        if requested == "cuda":
+            if torch.cuda.is_available():
+                try:
+                    # Attempt a tiny allocation to verify the device really works
+                    torch.zeros(1, device="cuda")
+                    logger.info("CUDA is available and functional — using GPU for defacing")
+                    return "cuda"
+                except Exception as exc:
+                    logger.warning(
+                        "CUDA reported as available but a test allocation failed (%s); "
+                        "falling back to CPU for defacing",
+                        exc,
+                    )
+                    return "cpu"
+            else:
+                logger.warning(
+                    "Defacing device configured as 'cuda' but CUDA is not available; "
+                    "falling back to CPU — defacing will be significantly slower"
+                )
+                return "cpu"
+
+        if requested == "mps":
+            if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
+                logger.info("MPS is available — using Apple GPU for defacing")
+                return "mps"
+            else:
+                logger.warning(
+                    "Defacing device configured as 'mps' but MPS is not available; "
+                    "falling back to CPU"
+                )
+                return "cpu"
+
+        return "cpu"
+
     # ------------------------------------------------------------------
     # Head-scan detection
     # ------------------------------------------------------------------
@@ -384,12 +437,14 @@ class Defacer:
         return the path to the defaced NIfTI.
         """
         return self._run_nnunet_and_apply_mask(
-            nifti_path, nifti_in_dir, nifti_out_dir, data_dir=data_dir
+            nifti_path, nifti_in_dir, nifti_out_dir, data_dir=data_dir,
+            device=self.device,
         )
 
     def _run_nnunet_and_apply_mask(self, nifti_path: Path,
                                    nifti_in_dir: Path, nifti_out_dir: Path,
-                                   data_dir: Optional[Path] = None) -> Path:
+                                   data_dir: Optional[Path] = None,
+                                   device: str = "cpu") -> Path:
         """
         Run nnUNet inference to get a face-region mask, then apply it.
 
@@ -402,7 +457,7 @@ class Defacer:
         import nibabel as nib
         import numpy as np
 
-        self.run_nnunet_inference(nifti_in_dir, nifti_out_dir, data_dir=data_dir)
+        self.run_nnunet_inference(nifti_in_dir, nifti_out_dir, data_dir=data_dir, device=device)
 
         # Derive the case stem from the input path (strip _0000.nii.gz or .nii.gz/.nii)
         fname = nifti_path.name
