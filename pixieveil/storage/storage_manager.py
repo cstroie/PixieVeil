@@ -662,7 +662,11 @@ class StorageManager:
                 for series_dir in sorted(study_dir.iterdir()):
                     if not series_dir.is_dir():
                         continue
-                    if self.defacer.is_head_scan(series_dir):
+                    if self.defacer.is_topogram(series_dir):
+                        logger.info(
+                            f"Series {series_dir.name} is a topogram/scout — skipping defacing"
+                        )
+                    elif self.defacer.is_head_scan(series_dir):
                         logger.info(f"Defacing series {series_dir.name} in study {study_number:04d}")
                         self.defacer.deface_series(series_dir, data_dir=self.base_path)
                     else:

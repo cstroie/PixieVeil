@@ -87,6 +87,48 @@ class Defacer:
 
         return False
 
+    _TOPOGRAM_DESC_RE = re.compile(
+        r"(?i)(topogram|scout|scanogram|localizer|surview|overview|pilot)"
+    )
+
+    def is_topogram(self, series_dir: Path) -> bool:
+        """
+        Return True if the series is a topogram / scout / localizer.
+
+        Checks (in order, on the first readable DICOM file):
+        - ImageType contains ``LOCALIZER``
+        - SeriesDescription matches the topogram pattern
+        - ScanOptions contains ``TOPOGRAM``
+        """
+        for f in sorted(series_dir.iterdir()):
+            if not f.is_file():
+                continue
+            try:
+                ds = pydicom.dcmread(str(f), stop_before_pixels=True, force=True)
+            except Exception:
+                continue
+
+            image_type = [str(v).upper() for v in getattr(ds, "ImageType", [])]
+            if "LOCALIZER" in image_type:
+                logger.debug("Topogram detected by ImageType=LOCALIZER in %s", series_dir)
+                return True
+
+            description = str(getattr(ds, "SeriesDescription", ""))
+            if description and self._TOPOGRAM_DESC_RE.search(description):
+                logger.debug(
+                    "Topogram detected by SeriesDescription=%r in %s", description, series_dir
+                )
+                return True
+
+            scan_options = str(getattr(ds, "ScanOptions", "")).upper()
+            if "TOPOGRAM" in scan_options:
+                logger.debug("Topogram detected by ScanOptions in %s", series_dir)
+                return True
+
+            break
+
+        return False
+
     # ------------------------------------------------------------------
     # Orchestration
     # ------------------------------------------------------------------
