@@ -11,6 +11,7 @@ import re
 import shutil
 import tempfile
 import threading
+import warnings
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -341,23 +342,31 @@ class Defacer:
             "Running nnUNet inference: model=%s device=%s mirroring=%s",
             model_folder, device, use_mirroring,
         )
+        perform_on_device = torch_device.type == "cuda"
+
         logger.debug("Waiting for nnUNet semaphore")
         with self._nnunet_semaphore:
             logger.debug("nnUNet semaphore acquired")
-            predictor = nnUNetPredictor(
-                tile_step_size=0.5,
-                use_gaussian=True,
-                use_mirroring=use_mirroring,
-                perform_everything_on_device=True,
-                device=torch_device,
-                verbose=False,
-                allow_tqdm=True,
-            )
-            predictor.initialize_from_trained_model_folder(
-                model_folder,
-                use_folds=("all",),
-                checkpoint_name="checkpoint_final.pth",
-            )
+            with warnings.catch_warnings():
+                warnings.filterwarnings(
+                    "ignore",
+                    message=".*old nnU-Net plans format.*",
+                    category=UserWarning,
+                )
+                predictor = nnUNetPredictor(
+                    tile_step_size=0.5,
+                    use_gaussian=True,
+                    use_mirroring=use_mirroring,
+                    perform_everything_on_device=perform_on_device,
+                    device=torch_device,
+                    verbose=False,
+                    allow_tqdm=True,
+                )
+                predictor.initialize_from_trained_model_folder(
+                    model_folder,
+                    use_folds=("all",),
+                    checkpoint_name="checkpoint_final.pth",
+                )
             predictor.predict_from_files(
                 str(nifti_in_dir),
                 str(nifti_out_dir),
