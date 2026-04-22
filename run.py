@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python3.12
 
 """
 PixieVeil Application Entry Point
@@ -18,6 +18,7 @@ processing service. It is responsible for:
 
 import asyncio
 import logging
+import sys
 from pathlib import Path
 from typing import Any
 from logging.handlers import RotatingFileHandler
@@ -142,6 +143,11 @@ if __name__ == "__main__":
     ``KeyboardInterrupt`` is caught.  This ensures a clean shutdown message
     is always emitted, even in error scenarios.
     """
+    _settings = Settings.load()
+    if _settings.defacing.get("enabled", False) and sys.version_info < (3, 12):
+        sys.exit(
+            f"Defacing requires Python >= 3.12 (running {sys.version.split()[0]})"
+        )
     try:
         asyncio.run(main())
     except KeyboardInterrupt:

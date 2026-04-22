@@ -1,5 +1,14 @@
 # TODO
 
-+ Implement a maximum allowed study size, using the setting `max_study_size_mb`
-+ Document the `anontrail` - audit trail
-- Black out an image if it contains the patient name
+[x] nifti support
+[x] Implement a maximum allowed study size, using the setting `max_study_size_mb`
+[x] Document the `anontrail` - audit trail
+[ ] Black out an image if it contains the patient name
+[ ] Install script
+[ ] Nnunet (pythonic)
+[ ] Acknowledgement
+[ ] Export to dicom
+[ ] Analyze the workflow
+[ ] Check cuda (runtime)
+[ ] Download the model (runtime if defacing enabled)
+[x] check python version (>=3.12)
