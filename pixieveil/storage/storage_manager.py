@@ -90,6 +90,7 @@ class StorageManager:
         # Initialize managers
         self.study_manager = StudyManager(settings)
         self.study_manager.initialize_from_sidecars(self.base_path)
+        self._init_counters_from_sidecars()
         self.series_filter = SeriesFilter(settings)
         self.anonymizer = Anonymizer(settings)
         self.defacer = Defacer(settings.defacing, temp_path=self.temp_path)
@@ -354,6 +355,34 @@ class StorageManager:
             if subcategory not in self.counters[category]:
                 self.counters[category][subcategory] = 0
             self.counters[category][subcategory] += increment
+
+    def _init_counters_from_sidecars(self) -> None:
+        """Seed in-memory counters from the sidecars loaded at startup."""
+        sidecars = self.study_manager._sidecars
+        if not sidecars:
+            return
+
+        total_series = 0
+        total_images = 0
+        archived_studies = 0
+
+        for study_uid, sc in sidecars.items():
+            total_series += len(sc.series)
+            for rec in sc.series.values():
+                key = (sc.study_number, rec.series_number)
+                total_images += self.study_manager.image_counters.get(key, 0)
+            if sc.status == "archived":
+                archived_studies += 1
+
+        self.counters['storage']['studies'] = len(sidecars)
+        self.counters['storage']['series'] = total_series
+        self.counters['storage']['images'] = total_images
+        self.counters['archive']['studies'] = archived_studies
+
+        logger.info(
+            "Counters restored from sidecars: %d studies, %d series, %d images, %d archived",
+            len(sidecars), total_series, total_images, archived_studies,
+        )
 
     def save_temp_image(self, ds: pydicom.Dataset, image_id: str) -> Path:
         """
