@@ -11,13 +11,27 @@ authors = [
 ]
 license = {text = "GPL-3.0"}
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.12"
 dependencies = [
     "pynetdicom>=2.0.0",
     "pydicom>=2.0.0",
     "aiohttp>=3.0.0",
-    "dicom_anonymization>=1.0.0"
+    "pydantic>=2.0.0",
+    "pyyaml>=6.0"
 ]
+
+[project.optional-dependencies]
+deface = [
+    "simpleitk>=2.0.0",
+    "nibabel>=4.0.0",
+    "numpy>=1.21.0",
+    "gdown>=5.0.0",
+    "nnunetv2"
+]
+
+[project.scripts]
+pixieveil = "run:run"
+pixieveil-install = "install:main"
 
 [project.urls]
 Homepage = "https://github.com/cstroie/PixieVeil"
