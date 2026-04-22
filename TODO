@@ -5,7 +5,7 @@
 [x] Document the `anontrail` - audit trail
 [ ] Black out an image if it contains the patient name
 [x] Install script
-[ ] Nnunet (pythonic)
+[x] Nnunet (pythonic)
 [x] Acknowledgement
 [ ] Export to dicom
 [x] Analyze the workflow
@@ -17,5 +17,5 @@
 [x] crash recovery and resuming
 [x] acknowledgement (https://github.com/jsfakian/CT-DEFACE)
 [ ] feat: q/r the pacs for new ct studies and request them
-[ ] rename data/pixieveil to data/dicom
+[x] rename data/pixieveil to data/dicom
 [ ] add support for filling dicom tags after aquisition (e.g. patient weight or size)

@@ -8,7 +8,7 @@ dicom_server:
 
 # Storage Settings
 storage:
-  base_path: "./data/pixieveil"
+  base_path: "./data/dicom"
   temp_path: "./data/tmp"
   max_storage_gb: 100
 
@@ -46,13 +46,10 @@ series_filter:
 
 # Defacing
 # Runs after anonymization on series identified as head scans.
-# The external tool is called via `tool_command`, which receives the NIfTI
-# input dir as {input_dir} and the output dir as {output_dir}.
 defacing:
   enabled: false
   keep_backup: true          # keep anonymized-but-not-defaced series as <series>_pre_deface/; set false in production
   rotation_mode: "auto90"    # "none", "auto90", or "auto_all"
-  tool_command: null         # e.g. "python run_CT-DEFACE.py -i {input_dir} -o {output_dir}"
   model_dir: ./data/nnUNet
   body_parts:                # BodyPartExamined values that indicate a head scan (case-insensitive)
     - HEAD

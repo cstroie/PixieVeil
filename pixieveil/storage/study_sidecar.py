@@ -9,7 +9,7 @@ never a partial file.
 
 Layout::
 
-    data/pixieveil/
+    data/dicom/
       0001/           ← study directory
         0001/         ← series directories
         0002/

@@ -112,7 +112,7 @@ anonymization:
 
 # Storage Settings
 storage:
-  base_path: "./data/pixieveil"   # Organized study tree
+  base_path: "./data/dicom"        # Organized study tree
   temp_path: "./tmp/pixieveil"    # Incoming image staging area
   max_storage_gb: 1000
   # Optional: omit entire block to disable remote upload

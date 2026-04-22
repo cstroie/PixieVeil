@@ -243,7 +243,7 @@ class Defacer:
 
         1. ``defacing.model_dir`` from config (if set).
         2. ``<data_dir>.parent/nnUNet`` when *data_dir* is supplied
-           (e.g. ``./data/nnUNet`` when ``base_path`` is ``./data/pixieveil``).
+           (e.g. ``./data/nnUNet`` when ``base_path`` is ``./data/dicom``).
 
         Model download is handled by ``install.py``, not here. If the dataset
         directory is missing, a RuntimeError is raised with instructions.
