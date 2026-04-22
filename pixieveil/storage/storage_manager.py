@@ -90,7 +90,6 @@ class StorageManager:
         # Initialize managers
         self.study_manager = StudyManager(settings)
         self.study_manager.initialize_from_sidecars(self.base_path)
-        self._init_counters_from_sidecars()
         self.series_filter = SeriesFilter(settings)
         self.anonymizer = Anonymizer(settings)
         self.defacer = Defacer(settings.defacing, temp_path=self.temp_path)
@@ -159,6 +158,7 @@ class StorageManager:
                 'timeout_errors': 0
             }
         }
+        self._init_counters_from_sidecars()
         logger.debug("StorageManager initialization complete")
 
         # -----------------------------------------------------------------
