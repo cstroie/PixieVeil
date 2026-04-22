@@ -4,11 +4,11 @@
 [x] Implement a maximum allowed study size, using the setting `max_study_size_mb`
 [x] Document the `anontrail` - audit trail
 [ ] Black out an image if it contains the patient name
-[ ] Install script
+[x] Install script
 [ ] Nnunet (pythonic)
 [ ] Acknowledgement
 [ ] Export to dicom
-[ ] Analyze the workflow
+[x] Analyze the workflow
 [ ] Check cuda (runtime)
-[ ] Download the model (runtime if defacing enabled)
+[x] Download the model (runtime if defacing enabled)
 [x] check python version (>=3.12)

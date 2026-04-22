@@ -9,6 +9,7 @@ capabilities for implementing a defacing pipeline. The full defacing workflow
 import logging
 import os
 import re
+import sys
 import shutil
 import subprocess
 import tempfile
@@ -176,6 +177,72 @@ class Defacer:
         logger.info("Defacing complete for %s", series_dir)
         return True
 
+    # ------------------------------------------------------------------
+    # Model management
+    # ------------------------------------------------------------------
+
+    _MODEL_DATASET = "Dataset001_DEFACE"
+    _MODEL_GDRIVE_URL = (
+        "https://drive.google.com/drive/folders/"
+        "1k4o35Dkl7PWd2yvHqWA2ia-BNKrWBrqg?usp=sharing"
+    )
+
+    def _ensure_model(self, data_dir: Optional[Path] = None) -> Path:
+        """
+        Resolve the nnUNet model root and verify the expected dataset directory
+        is present.
+
+        Directory layout expected::
+
+            <model_root>/
+                Dataset001_DEFACE/
+                    nnUNetTrainer__nnUNetPlans__3d_fullres/
+                        fold_all/
+                            checkpoint_final.pth
+
+        Resolution order for ``model_root``:
+
+        1. ``defacing.model_dir`` from config (if set).
+        2. ``<data_dir>.parent/nnUNet`` when *data_dir* is supplied
+           (e.g. ``./data/nnUNet`` when ``base_path`` is ``./data/pixieveil``).
+
+        Model download is handled by ``install.py``, not here. If the dataset
+        directory is missing, a RuntimeError is raised with instructions.
+
+        Args:
+            data_dir: Fallback base path (typically ``storage.base_path``).
+
+        Returns:
+            Resolved ``model_root`` path.
+
+        Raises:
+            RuntimeError: If the model root cannot be resolved or the dataset
+                          directory is absent.
+        """
+        if self.model_dir is not None:
+            model_root = self.model_dir
+        elif data_dir is not None:
+            model_root = Path(data_dir).parent / "nnUNet"
+        else:
+            raise RuntimeError(
+                "Cannot resolve nnUNet model directory: set defacing.model_dir "
+                "in settings.yaml or re-run install.py."
+            )
+
+        model_root.mkdir(parents=True, exist_ok=True)
+
+        dataset_dir = model_root / self._MODEL_DATASET
+        if dataset_dir.is_dir():
+            logger.debug("nnUNet model found at %s", dataset_dir)
+            return model_root
+
+        raise RuntimeError(
+            f"nnUNet model dataset '{self._MODEL_DATASET}' not found in {model_root}.\n"
+            f"Run  python install.py  to download it automatically, or place the\n"
+            f"'{self._MODEL_DATASET}' folder there manually:\n"
+            f"  {self._MODEL_GDRIVE_URL}"
+        )
+
     def run_nnunet_inference(self, nifti_in_dir: Path, nifti_out_dir: Path,
                              data_dir: Optional[Path] = None,
                              device: str = "cpu") -> None:
@@ -184,7 +251,7 @@ class Defacer:
 
         The nnUNet model is expected at ``<model_dir>/nnUNet``, where
         ``model_dir`` comes from config (``defacing.model_dir``) or falls back
-        to ``<data_dir>/nnUNet`` when *data_dir* is supplied.
+        to ``<data_dir>.parent/nnUNet`` when *data_dir* is supplied.
 
         The three nnUNet environment variables (``nnUNet_results``,
         ``nnUNet_preprocessed``, ``nnUNet_raw``) are set to the model root
@@ -202,20 +269,10 @@ class Defacer:
             RuntimeError: If the model directory cannot be resolved or if
                           nnUNetv2_predict exits with a non-zero return code.
         """
-        if self.model_dir is not None:
-            model_root = self.model_dir
-        elif data_dir is not None:
-            model_root = Path(data_dir) / "nnUNet"
-        else:
-            raise RuntimeError(
-                "Cannot resolve nnUNet model directory: set defacing.model_dir "
-                "in settings.yaml or pass data_dir to run_nnunet_inference()."
-            )
+        model_root = self._ensure_model(data_dir)
 
-        if not model_root.is_dir():
-            raise RuntimeError(
-                f"nnUNet model directory not found: {model_root}"
-            )
+        nifti_in_dir.mkdir(parents=True, exist_ok=True)
+        nifti_out_dir.mkdir(parents=True, exist_ok=True)
 
         nnunet_env = {
             "nnUNet_results":      str(model_root),
@@ -224,7 +281,16 @@ class Defacer:
         }
         env = {**os.environ, **nnunet_env}
 
-        nnunet_bin = shutil.which("nnUNetv2_predict") or "nnUNetv2_predict"
+        _venv_candidate = Path(sys.executable).parent / "nnUNetv2_predict"
+        nnunet_bin = (
+            shutil.which("nnUNetv2_predict")
+            or (str(_venv_candidate) if _venv_candidate.exists() else None)
+        )
+        if nnunet_bin is None:
+            raise RuntimeError(
+                "nnUNetv2_predict not found in PATH or next to the Python executable. "
+                "Run  python install.py  to install nnUNetv2."
+            )
 
         command = [
             nnunet_bin,

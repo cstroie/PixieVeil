@@ -62,6 +62,29 @@ def setup_logging(settings: Settings) -> None:
     )
 
 
+def check_defacing_requirements() -> None:
+    """
+    Verify all runtime requirements for defacing are satisfied.
+
+    Checks Python version (>= 3.12), PyTorch, and nnUNetv2.
+    Calls sys.exit with a descriptive message on the first unmet requirement.
+    """
+    if sys.version_info < (3, 12):
+        sys.exit(
+            f"Defacing requires Python >= 3.12 (running {sys.version.split()[0]})"
+        )
+    try:
+        import torch
+        print(f"Torch: {torch.__version__}")
+    except ImportError:
+        sys.exit("Defacing requires PyTorch — install it and retry.")
+    try:
+        import nnunetv2
+        print("nnUNetv2 OK")
+    except ImportError:
+        sys.exit("Defacing requires nnUNetv2 — install it and retry.")
+
+
 async def main() -> None:
     """
     Main application entry point.
@@ -145,20 +168,7 @@ if __name__ == "__main__":
     """
     _settings = Settings.load()
     if _settings.defacing.get("enabled", False):
-        if sys.version_info < (3, 12):
-            sys.exit(
-                f"Defacing requires Python >= 3.12 (running {sys.version.split()[0]})"
-            )
-        try:
-            import torch
-            print(f"Torch: {torch.__version__}")
-        except ImportError:
-            sys.exit("Defacing requires PyTorch — install it and retry.")
-        try:
-            import nnunetv2
-            print("nnUNetv2 OK")
-        except ImportError:
-            sys.exit("Defacing requires nnUNetv2 — install it and retry.")
+        check_defacing_requirements()
     try:
         asyncio.run(main())
     except KeyboardInterrupt:

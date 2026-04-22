@@ -40,23 +40,23 @@ All services run concurrently in a single asyncio event loop. Blocking I/O (ZIP 
 
 ## Requirements
 
-- Python 3.8+
+- Python 3.12+
 - pynetdicom >= 2.0.0
 - pydicom >= 2.0.0
 - aiohttp >= 3.0.0
-- pyyaml
-- pydantic
+- pyyaml, pydantic
+- **Defacing only:** torch 2.4+, nnunetv2, gdown (installed automatically by `install.py`)
 
 ## Installation
 
 ```bash
 git clone https://github.com/cstroie/PixieVeil
 cd PixieVeil
-pip install -r requirements.txt
-cp config/settings.yaml.example config/settings.yaml
-# Edit config/settings.yaml for your environment
-python run.py
+pip install -e .
+python install.py
 ```
+
+`install.py` interactively configures defacing (disabled / CPU / CUDA), installs the required packages, downloads the nnUNet model, and verifies the environment. See [QUICKSTART.md](QUICKSTART.md) for full details.
 
 ## Configuration
 
