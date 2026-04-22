@@ -664,7 +664,7 @@ class StorageManager:
                         continue
                     if self.defacer.is_head_scan(series_dir):
                         logger.info(f"Defacing series {series_dir.name} in study {study_number:04d}")
-                        self.defacer.deface_series(series_dir)
+                        self.defacer.deface_series(series_dir, data_dir=self.base_path)
                     else:
                         logger.debug(f"Series {series_dir.name} is not a head scan, skipping defacing")
 

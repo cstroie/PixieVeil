@@ -91,7 +91,8 @@ class Defacer:
     # Orchestration
     # ------------------------------------------------------------------
 
-    def deface_series(self, series_dir: Path) -> bool:
+    def deface_series(self, series_dir: Path,
+                      data_dir: Optional[Path] = None) -> bool:
         """
         Run the full defacing pipeline for one series directory.
 
@@ -135,10 +136,10 @@ class Defacer:
 
         logger.info("NIfTI files kept at %s for manual inspection", nifti_in_dir)
 
-        # Step 2: external defacing tool (or simulation)
+        # Step 2: external defacing tool (or nnUNet inference)
         try:
             defaced_nifti = self._run_defacing_tool(
-                Path(nifti_path), nifti_in_dir, nifti_out_dir
+                Path(nifti_path), nifti_in_dir, nifti_out_dir, data_dir=data_dir
             )
         except Exception as e:
             logger.error("Defacing tool failed for %s: %s", series_dir, e)
@@ -303,6 +304,11 @@ class Defacer:
             "-device", device,
         ]
 
+        logger.info(
+            "nnU-Net citation: Isensee F, Jaeger PF, Kohl SAA, Petersen J, Maier-Hein KH. "
+            "nnU-Net: a self-configuring method for deep learning-based biomedical image "
+            "segmentation. Nat Methods. 2021;18(2):203-211. doi:10.1038/s41592-020-01008-z"
+        )
         logger.info("Running nnUNet inference: %s", " ".join(command))
         logger.debug("nnUNet env: %s", nnunet_env)
 
@@ -315,42 +321,109 @@ class Defacer:
         logger.info("nnUNet inference complete; output in %s", nifti_out_dir)
 
     def _run_defacing_tool(self, nifti_path: Path,
-                           nifti_in_dir: Path, nifti_out_dir: Path) -> Path:
+                           nifti_in_dir: Path, nifti_out_dir: Path,
+                           data_dir: Optional[Path] = None) -> Path:
         """
-        Call the external defacing tool, or run built-in nnUNet inference when
-        tool_command is None.
+        Run defacing and return the path to the defaced NIfTI.
 
-        Returns the path to the defaced NIfTI file.
+        When tool_command is None (default):
+          1. Run nnUNet inference — produces a segmentation mask NIfTI where
+             non-zero voxels mark the face region to remove.
+          2. Apply the mask to the original image: face voxels are replaced with
+             the 10th-percentile intensity of the original volume.
+          3. Save the result as ``<stem>_defaced.nii.gz`` in nifti_out_dir.
+
+        When tool_command is set, the command is expected to write the defaced
+        NIfTI directly to nifti_out_dir; the first non-mask .nii* file found
+        there is returned.
         """
         if self.tool_command is None:
-            self.run_nnunet_inference(nifti_in_dir, nifti_out_dir)
-        else:
-            cmd = self.tool_command.format(
-                input_dir=str(nifti_in_dir),
-                output_dir=str(nifti_out_dir),
+            return self._run_nnunet_and_apply_mask(
+                nifti_path, nifti_in_dir, nifti_out_dir, data_dir=data_dir
             )
-            logger.info("Running defacing tool: %s", cmd)
-            result = subprocess.run(cmd, shell=True)
-            if result.returncode != 0:
-                logger.warning("Defacing tool exited with code %d", result.returncode)
 
-        # Find the defaced NIfTI — prefer files not named *mask*
+        cmd = self.tool_command.format(
+            input_dir=str(nifti_in_dir),
+            output_dir=str(nifti_out_dir),
+        )
+        logger.info("Running defacing tool: %s", cmd)
+        result = subprocess.run(cmd, shell=True)
+        if result.returncode != 0:
+            logger.warning("Defacing tool exited with code %d", result.returncode)
+
         candidates = [
             f for f in sorted(nifti_out_dir.glob("*.nii*"))
             if "mask" not in f.name.lower()
         ]
         if not candidates:
             raise RuntimeError(f"Defacing tool produced no NIfTI in {nifti_out_dir}")
-
-        # Prefer a file whose name matches the input series UID stem
-        stem = nifti_path.name
-        for suffix in (".nii.gz", ".nii"):
-            if stem.endswith(suffix):
-                stem = stem[: -len(suffix)]
-        preferred = [f for f in candidates if f.name.startswith(stem)]
-        chosen = preferred[0] if preferred else candidates[0]
+        chosen = candidates[0]
         logger.info("Selected defaced NIfTI: %s", chosen)
         return chosen
+
+    def _run_nnunet_and_apply_mask(self, nifti_path: Path,
+                                   nifti_in_dir: Path, nifti_out_dir: Path,
+                                   data_dir: Optional[Path] = None) -> Path:
+        """
+        Run nnUNet inference to get a face-region mask, then apply it.
+
+        nnUNet writes one prediction file per input case (same stem, no _0000).
+        We locate the matching prediction, binarise it (>0 = face), and set
+        those voxels in the original volume to its 10th-percentile intensity.
+
+        Returns the path to the saved defaced NIfTI.
+        """
+        import nibabel as nib
+        import numpy as np
+
+        self.run_nnunet_inference(nifti_in_dir, nifti_out_dir, data_dir=data_dir)
+
+        # Derive the case stem from the input path (strip _0000.nii.gz or .nii.gz/.nii)
+        fname = nifti_path.name
+        for suffix in ("_0000.nii.gz", "_0000.nii", ".nii.gz", ".nii"):
+            if fname.endswith(suffix):
+                case_stem = fname[: -len(suffix)]
+                break
+        else:
+            case_stem = nifti_path.stem
+
+        # Locate the nnUNet prediction for this case
+        mask_path: Optional[Path] = None
+        for candidate in sorted(nifti_out_dir.glob("*.nii*")):
+            if candidate.name.startswith(case_stem):
+                mask_path = candidate
+                break
+        if mask_path is None:
+            # Fall back to the first prediction file present
+            predictions = sorted(nifti_out_dir.glob("*.nii*"))
+            if not predictions:
+                raise RuntimeError(
+                    f"nnUNet produced no prediction in {nifti_out_dir}"
+                )
+            mask_path = predictions[0]
+            logger.warning(
+                "No prediction matching stem %r; using %s", case_stem, mask_path
+            )
+
+        logger.info("Applying face mask from %s to %s", mask_path, nifti_path)
+
+        mask_img = nib.load(str(mask_path))
+        mask = (np.asarray(mask_img.get_fdata()) > 0)
+
+        orig_img = nib.load(str(nifti_path))
+        orig_data = np.asarray(orig_img.get_fdata())
+
+        fill_value = float(np.percentile(orig_data, 10))
+        logger.debug("Face fill value (10th percentile): %.1f", fill_value)
+
+        defaced_data = np.where(mask, fill_value, orig_data)
+        defaced_img = nib.Nifti1Image(defaced_data, orig_img.affine, orig_img.header)
+
+        defaced_path = nifti_out_dir / f"{case_stem}_defaced.nii.gz"
+        nib.save(defaced_img, str(defaced_path))
+        logger.info("Defaced NIfTI saved to %s", defaced_path)
+
+        return defaced_path
 
     # ------------------------------------------------------------------
     # DICOM → NIfTI
