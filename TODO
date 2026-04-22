@@ -19,3 +19,4 @@
 [ ] feat: q/r the pacs for new ct studies and request them
 [x] rename data/pixieveil to data/dicom
 [ ] add support for filling dicom tags after aquisition (e.g. patient weight or size)
+[ ] update the statistics with deface and remote dicom store
