@@ -224,6 +224,25 @@ def check_python_and_deps(choice: str) -> bool:
     except ImportError:
         _fail("torch not importable — run install.py again or install PyTorch manually.")
         ok = False
+        return ok  # remaining checks all need torch
+
+    if choice == DefacingChoice.CUDA:
+        if torch.cuda.is_available():
+            device_name = torch.cuda.get_device_name(0)
+            _ok(f"CUDA available — {device_name}")
+            try:
+                t = torch.tensor([1.0]).cuda()
+                _ = (t * 2).item()
+                _ok("CUDA tensor round-trip passed")
+            except Exception as e:
+                _fail(f"CUDA tensor round-trip failed: {e}")
+                ok = False
+        else:
+            _fail(
+                "CUDA not available — drivers may be missing or incompatible. "
+                "Re-run install.py and choose CPU, or fix your CUDA/driver install."
+            )
+            ok = False
 
     try:
         import nnunetv2
