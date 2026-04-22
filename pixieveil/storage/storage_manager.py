@@ -167,6 +167,8 @@ class StorageManager:
         self._completion_task: Optional[asyncio.Task] = None
         self._stop_event: Optional[asyncio.Event] = None
         self._shutting_down = False
+        # UIDs of studies currently being processed (defaced/zipped/uploaded)
+        self._processing_studies: set = set()
 
     # -----------------------------------------------------------------
     # Public lifecycle helpers
@@ -626,149 +628,152 @@ class StorageManager:
 
     async def check_study_completions(self, interval=30):
         """
-        Check for completed studies and process them.
-
-        This method performs a single pass over active studies, identifying any
-        that have timed out (no new images received within the configured
-        timeout period). For each timed‑out study it:
-        1. Creates a ZIP archive of the study
-        2. Uploads the archive to remote storage (if configured)
-        3. Cleans up local files
-        4. Updates study tracking counters
-
-        Args:
-            interval (int): Check interval in seconds (default: 30).  The
-                caller (the background loop) is responsible for sleeping
-                between calls.
+        Detect completed studies and launch each one as an independent background
+        task so the event loop is never blocked by defacing, ZIP creation, or upload.
         """
-        # Use StudyManager to check for completed studies
         completed_study_uids = self.study_manager.check_study_completions()
-        
         if not completed_study_uids:
             return
-        
-        logger.info(f"Found {len(completed_study_uids)} completed studies to process")
-        
+
+        logger.info("Found %d completed studies to process", len(completed_study_uids))
+
         for study_uid in completed_study_uids:
-            # Get study number from StudyManager
+            if study_uid in self._processing_studies:
+                logger.debug("Study %s already being processed — skipping", study_uid)
+                continue
+            self._processing_studies.add(study_uid)
+            asyncio.create_task(self._process_study(study_uid))
+
+    async def _process_study(self, study_uid: str) -> None:
+        """
+        Process one completed study end-to-end in a background task.
+
+        Blocking work (defacing, ZIP creation, file cleanup) is offloaded to a
+        thread via asyncio.to_thread so the event loop stays responsive.
+        """
+        try:
             study_number = self.study_manager.get_study_number(study_uid)
             if not study_number:
-                logger.warning(f"No study number found for completed study {study_uid}")
-                continue
+                logger.warning("No study number found for completed study %s", study_uid)
+                return
 
             study_dir = self.base_path / f"{study_number:04d}"
             if not study_dir.exists():
-                logger.warning(f"Study directory missing for {study_uid}: {study_dir}")
+                logger.warning("Study directory missing for %s: %s", study_uid, study_dir)
                 with self.lock:
                     self.inc_counter('errors', 'total')
                 self.study_manager.mark_study_archived(study_uid)
-                continue
+                return
 
-            logger.info(f"Processing completed study: {study_number:04d} ({study_uid})")
+            logger.info("Processing completed study: %04d (%s)", study_number, study_uid)
 
-            # Deface head-scan series before archiving
+            # Defacing — runs blocking nnUNet inference in a thread
             if self.defacer.enabled:
-                self.study_manager.mark_study_defacing(study_uid)
-                for series_dir in sorted(study_dir.iterdir()):
-                    if not series_dir.is_dir():
-                        continue
-                    if series_dir.name.endswith("_pre_deface"):
-                        continue
+                await asyncio.to_thread(self._deface_study, study_uid, study_number, study_dir)
 
-                    series_number = int(series_dir.name) if series_dir.name.isdigit() else None
-                    orig_series_uid = (
-                        self.study_manager.get_original_series_uid(study_uid, series_number)
-                        if series_number is not None else None
-                    )
-
-                    # Skip series already defaced (crash recovery)
-                    if orig_series_uid and self.study_manager.is_series_defaced(study_uid, orig_series_uid):
-                        logger.info(
-                            f"Series {series_dir.name} already defaced — skipping"
-                        )
-                        continue
-
-                    if self.defacer.is_topogram(series_dir):
-                        logger.info(
-                            f"Series {series_dir.name} is a topogram/scout — skipping defacing"
-                        )
-                        if orig_series_uid:
-                            self.study_manager.set_series_classification(
-                                study_uid, orig_series_uid, is_head=False, is_topogram=True
-                            )
-                    elif self.defacer.is_head_scan(series_dir):
-                        if orig_series_uid:
-                            self.study_manager.set_series_classification(
-                                study_uid, orig_series_uid, is_head=True, is_topogram=False
-                            )
-                        logger.info(f"Defacing series {series_dir.name} in study {study_number:04d}")
-                        ok = self.defacer.deface_series(series_dir, data_dir=self.base_path)
-                        if ok and orig_series_uid:
-                            self.study_manager.mark_series_defaced(study_uid, orig_series_uid)
-                    else:
-                        logger.debug(f"Series {series_dir.name} is not a head scan, skipping defacing")
-                        if orig_series_uid:
-                            self.study_manager.set_series_classification(
-                                study_uid, orig_series_uid, is_head=False, is_topogram=False
-                            )
-
-            image_count = sum(
-                1 for f in study_dir.rglob("*.dcm")
-                if not any(part.endswith("_pre_deface") for part in f.parts)
+            # Count images (blocking glob — run in thread)
+            image_count = await asyncio.to_thread(
+                lambda: sum(
+                    1 for f in study_dir.rglob("*.dcm")
+                    if not any(part.endswith("_pre_deface") for part in f.parts)
+                )
             )
-            logger.debug(f"Study {study_number:04d} contains {image_count} images")
+            logger.debug("Study %04d contains %d images", study_number, image_count)
 
-            # Update archive counters
             with self.lock:
                 self.inc_counter('archive', 'studies')
                 self.inc_counter('archive', 'images', image_count)
 
-            # Create ZIP archive
+            # ZIP creation (blocking — run in thread)
             zip_filename = f"{study_number:04d}"
-            logger.debug(f"Creating ZIP archive for study {zip_filename}")
             zip_path = await self.zip_manager.create_zip(zip_filename, self.base_path)
             if not zip_path:
-                logger.error(f"Failed to create ZIP for study {study_uid}")
+                logger.error("Failed to create ZIP for study %s", study_uid)
                 with self.lock:
                     self.inc_counter('archive', 'errors')
                     self.inc_counter('errors', 'total')
-                continue
+                return
 
-            logger.info(f"Created ZIP archive: {zip_path}")
+            logger.info("Created ZIP archive: %s", zip_path)
 
-            # Update export counters
             with self.lock:
                 self.inc_counter('export', 'studies')
                 self.inc_counter('export', 'images', image_count)
 
-            # Upload to remote storage
-            logger.debug(f"Uploading study {zip_path} to remote storage")
+            # Upload (async HTTP)
             success = await self.remote_storage.upload_file(zip_path, zip_path.name)
 
             if success is None:
-                logger.info(f"Remote storage not configured, keeping local files for study {zip_filename}")
+                logger.info("Remote storage not configured — keeping local files for study %s", zip_filename)
                 with self.lock:
                     self.inc_counter('cleanup', 'studies')
                     self.inc_counter('cleanup', 'images', image_count)
                 self.study_manager.mark_study_archived(study_uid)
             elif success:
-                logger.info(f"Successfully uploaded study {study_number:04d}")
+                logger.info("Successfully uploaded study %04d", study_number)
                 with self.lock:
                     self.inc_counter('remote_storage', 'studies')
                     self.inc_counter('remote_storage', 'images', image_count)
                     self.inc_counter('remote_storage', 'bytes', zip_path.stat().st_size)
                     self.inc_counter('cleanup', 'studies')
                     self.inc_counter('cleanup', 'images', image_count)
-                logger.debug(f"Cleaning up study directory: {study_dir}")
-                shutil.rmtree(study_dir)
-                zip_path.unlink()
+                await asyncio.to_thread(shutil.rmtree, study_dir)
+                await asyncio.to_thread(zip_path.unlink)
                 self.study_manager.mark_study_archived(study_uid)
             else:
-                logger.error(f"Failed to upload study {study_uid}")
+                logger.error("Failed to upload study %s", study_uid)
                 with self.lock:
                     self.inc_counter('remote_storage', 'errors')
                     self.inc_counter('archive', 'errors')
                     self.inc_counter('errors', 'total')
+        except Exception:
+            logger.exception("Unexpected error processing study %s", study_uid)
+        finally:
+            self._processing_studies.discard(study_uid)
+
+    def _deface_study(self, study_uid: str, study_number: int, study_dir: Path) -> None:
+        """
+        Blocking: deface all head-scan series in one study.
+        Called via asyncio.to_thread — must not use await.
+        """
+        self.study_manager.mark_study_defacing(study_uid)
+        for series_dir in sorted(study_dir.iterdir()):
+            if not series_dir.is_dir():
+                continue
+            if series_dir.name.endswith("_pre_deface"):
+                continue
+
+            series_number = int(series_dir.name) if series_dir.name.isdigit() else None
+            orig_series_uid = (
+                self.study_manager.get_original_series_uid(study_uid, series_number)
+                if series_number is not None else None
+            )
+
+            if orig_series_uid and self.study_manager.is_series_defaced(study_uid, orig_series_uid):
+                logger.info("Series %s already defaced — skipping", series_dir.name)
+                continue
+
+            if self.defacer.is_topogram(series_dir):
+                logger.info("Series %s is a topogram/scout — skipping defacing", series_dir.name)
+                if orig_series_uid:
+                    self.study_manager.set_series_classification(
+                        study_uid, orig_series_uid, is_head=False, is_topogram=True
+                    )
+            elif self.defacer.is_head_scan(series_dir):
+                if orig_series_uid:
+                    self.study_manager.set_series_classification(
+                        study_uid, orig_series_uid, is_head=True, is_topogram=False
+                    )
+                logger.info("Defacing series %s in study %04d", series_dir.name, study_number)
+                ok = self.defacer.deface_series(series_dir, data_dir=self.base_path)
+                if ok and orig_series_uid:
+                    self.study_manager.mark_series_defaced(study_uid, orig_series_uid)
+            else:
+                logger.debug("Series %s is not a head scan — skipping defacing", series_dir.name)
+                if orig_series_uid:
+                    self.study_manager.set_series_classification(
+                        study_uid, orig_series_uid, is_head=False, is_topogram=False
+                    )
     
     def enforce_storage_quota_sync(self) -> None:
         """
