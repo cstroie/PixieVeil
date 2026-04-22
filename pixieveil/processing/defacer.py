@@ -7,11 +7,8 @@ capabilities for implementing a defacing pipeline. The full defacing workflow
 """
 
 import logging
-import os
 import re
-import sys
 import shutil
-import subprocess
 import tempfile
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -39,7 +36,6 @@ class Defacer:
         self.enabled: bool = cfg.get("enabled", False)
         self.keep_backup: bool = cfg.get("keep_backup", True)
         self.rotation_mode: str = cfg.get("rotation_mode", "auto90")
-        self.tool_command: Optional[str] = cfg.get("tool_command", None)
         self.temp_path: Optional[Path] = temp_path
 
         raw_model_dir = cfg.get("model_dir", None)
@@ -140,7 +136,7 @@ class Defacer:
 
         Steps:
         1. Convert DICOM series → NIfTI
-        2. Run external defacing tool (or simulate if tool_command is None)
+        2. Run nnUNet inference to produce a face mask and apply it
         3. Convert defaced NIfTI → DICOM (replacing pixel data, keeping headers)
         4. Optionally back up the anonymized-but-not-defaced series
 
@@ -296,9 +292,9 @@ class Defacer:
         ``model_dir`` comes from config (``defacing.model_dir``) or falls back
         to ``<data_dir>.parent/nnUNet`` when *data_dir* is supplied.
 
-        The three nnUNet environment variables (``nnUNet_results``,
-        ``nnUNet_preprocessed``, ``nnUNet_raw``) are set to the model root
-        directory for the duration of the subprocess call.
+        Calls ``nnUNetPredictor`` directly — no subprocess.  The model folder
+        is resolved from ``model_root`` and the
+        ``nnUNetTrainer__nnUNetPlans__3d_fullres`` configuration is assumed.
 
         Args:
             nifti_in_dir:  Folder containing input ``*_0000.nii.gz`` files.
@@ -317,48 +313,44 @@ class Defacer:
         nifti_in_dir.mkdir(parents=True, exist_ok=True)
         nifti_out_dir.mkdir(parents=True, exist_ok=True)
 
-        nnunet_env = {
-            "nnUNet_results":      str(model_root),
-            "nnUNet_preprocessed": str(model_root),
-            "nnUNet_raw":          str(model_root),
-        }
-        env = {**os.environ, **nnunet_env}
-
-        _venv_candidate = Path(sys.executable).parent / "nnUNetv2_predict"
-        nnunet_bin = (
-            shutil.which("nnUNetv2_predict")
-            or (str(_venv_candidate) if _venv_candidate.exists() else None)
-        )
-        if nnunet_bin is None:
-            raise RuntimeError(
-                "nnUNetv2_predict not found in PATH or next to the Python executable. "
-                "Run  python install.py  to install nnUNetv2."
-            )
-
-        command = [
-            nnunet_bin,
-            "-i", str(nifti_in_dir),
-            "-o", str(nifti_out_dir),
-            "-d", "001",
-            "-c", "3d_fullres",
-            "-f", "all",
-            "--disable_tta",
-            "-device", device,
-        ]
+        import torch
+        from nnunetv2.inference.predict_from_raw_data import nnUNetPredictor
 
         logger.info(
             "nnU-Net citation: Isensee F, Jaeger PF, Kohl SAA, Petersen J, Maier-Hein KH. "
             "nnU-Net: a self-configuring method for deep learning-based biomedical image "
             "segmentation. Nat Methods. 2021;18(2):203-211. doi:10.1038/s41592-020-01008-z"
         )
-        logger.info("Running nnUNet inference: %s", " ".join(command))
-        logger.debug("nnUNet env: %s", nnunet_env)
 
-        result = subprocess.run(command, env=env)
-        if result.returncode != 0:
-            raise RuntimeError(
-                f"nnUNetv2_predict exited with code {result.returncode}"
-            )
+        torch_device = torch.device(device)
+        use_mirroring = device != "cpu"  # mirroring TTA is slow on CPU
+
+        model_folder = str(model_root / self._MODEL_DATASET / "nnUNetTrainer__nnUNetPlans__3d_fullres")
+        logger.info(
+            "Running nnUNet inference: model=%s device=%s mirroring=%s",
+            model_folder, device, use_mirroring,
+        )
+
+        predictor = nnUNetPredictor(
+            tile_step_size=0.5,
+            use_gaussian=True,
+            use_mirroring=use_mirroring,
+            perform_everything_on_device=True,
+            device=torch_device,
+            verbose=False,
+            allow_tqdm=True,
+        )
+        predictor.initialize_from_trained_model_folder(
+            model_folder,
+            use_folds=("all",),
+            checkpoint_name="checkpoint_final.pth",
+        )
+        predictor.predict_from_files(
+            str(nifti_in_dir),
+            str(nifti_out_dir),
+            save_probabilities=False,
+            overwrite=True,
+        )
 
         logger.info("nnUNet inference complete; output in %s", nifti_out_dir)
 
@@ -366,42 +358,12 @@ class Defacer:
                            nifti_in_dir: Path, nifti_out_dir: Path,
                            data_dir: Optional[Path] = None) -> Path:
         """
-        Run defacing and return the path to the defaced NIfTI.
-
-        When tool_command is None (default):
-          1. Run nnUNet inference — produces a segmentation mask NIfTI where
-             non-zero voxels mark the face region to remove.
-          2. Apply the mask to the original image: face voxels are replaced with
-             the 10th-percentile intensity of the original volume.
-          3. Save the result as ``<stem>_defaced.nii.gz`` in nifti_out_dir.
-
-        When tool_command is set, the command is expected to write the defaced
-        NIfTI directly to nifti_out_dir; the first non-mask .nii* file found
-        there is returned.
+        Run nnUNet inference to produce a face-region mask, apply it, and
+        return the path to the defaced NIfTI.
         """
-        if self.tool_command is None:
-            return self._run_nnunet_and_apply_mask(
-                nifti_path, nifti_in_dir, nifti_out_dir, data_dir=data_dir
-            )
-
-        cmd = self.tool_command.format(
-            input_dir=str(nifti_in_dir),
-            output_dir=str(nifti_out_dir),
+        return self._run_nnunet_and_apply_mask(
+            nifti_path, nifti_in_dir, nifti_out_dir, data_dir=data_dir
         )
-        logger.info("Running defacing tool: %s", cmd)
-        result = subprocess.run(cmd, shell=True)
-        if result.returncode != 0:
-            logger.warning("Defacing tool exited with code %d", result.returncode)
-
-        candidates = [
-            f for f in sorted(nifti_out_dir.glob("*.nii*"))
-            if "mask" not in f.name.lower()
-        ]
-        if not candidates:
-            raise RuntimeError(f"Defacing tool produced no NIfTI in {nifti_out_dir}")
-        chosen = candidates[0]
-        logger.info("Selected defaced NIfTI: %s", chosen)
-        return chosen
 
     def _run_nnunet_and_apply_mask(self, nifti_path: Path,
                                    nifti_in_dir: Path, nifti_out_dir: Path,

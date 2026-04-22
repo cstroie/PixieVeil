@@ -17,3 +17,5 @@
 [x] crash recovery and resuming
 [x] acknowledgement (https://github.com/jsfakian/CT-DEFACE)
 [ ] feat: q/r the pacs for new ct studies and request them
+[ ] rename data/pixieveil to data/dicom
+[ ] add support for filling dicom tags after aquisition (e.g. patient weight or size)
