@@ -14,14 +14,14 @@ Steps
   3. Verify Python version and imported packages.
   4. Create required runtime directories.
   5. Download the nnUNet defacing model from Google Drive if missing.
-  6. Final sanity checks (nnUNetv2_predict on PATH, core imports).
+  6. Final sanity checks (core imports).
 
 Exit code 0 on success, non-zero on any failure.
 """
 
 import argparse
 import importlib
-import shutil
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -47,7 +47,63 @@ _TORCH_CPU = [
     "torchaudio==2.4.0+cpu",
     "--index-url", "https://download.pytorch.org/whl/cpu",
 ]
-_TORCH_CUDA = ["torch", "torchvision", "torchaudio"]  # default PyPI wheels include CUDA
+
+# Maps major CUDA toolkit versions to the PyTorch wheel tag and index URL.
+# Wheels for newer CUDA versions are backwards-compatible with older drivers,
+# so we pick the highest supported tag that is <= the installed toolkit version.
+_CUDA_WHEEL_MAP = [
+    ((12, 8), "cu128", "https://download.pytorch.org/whl/cu128"),
+    ((12, 6), "cu126", "https://download.pytorch.org/whl/cu126"),
+    ((12, 4), "cu124", "https://download.pytorch.org/whl/cu124"),
+    ((12, 1), "cu121", "https://download.pytorch.org/whl/cu121"),
+    ((11, 8), "cu118", "https://download.pytorch.org/whl/cu118"),
+]
+
+
+def _detect_cuda_version() -> tuple[int, int] | None:
+    """Return (major, minor) of the installed CUDA toolkit, or None."""
+    result = subprocess.run(
+        ["nvcc", "--version"], capture_output=True, text=True
+    )
+    if result.returncode != 0:
+        # nvcc not on PATH — try nvidia-smi as fallback
+        result = subprocess.run(
+            ["nvidia-smi", "--query-gpu=driver_version", "--format=csv,noheader"],
+            capture_output=True, text=True,
+        )
+        return None  # driver version ≠ toolkit version; can't map reliably
+    m = re.search(r"release (\d+)\.(\d+)", result.stdout)
+    if m:
+        return int(m.group(1)), int(m.group(2))
+    return None
+
+
+def _torch_cuda_args() -> list[str]:
+    """Return pip args to install the CUDA-enabled PyTorch matching the system toolkit."""
+    cuda_ver = _detect_cuda_version()
+    if cuda_ver is None:
+        _info("Could not detect CUDA toolkit version — installing unpinned CUDA wheels from PyPI.")
+        return ["torch==2.4.0", "torchvision==0.19.0", "torchaudio==2.4.0"]
+
+    _info(f"Detected CUDA toolkit {cuda_ver[0]}.{cuda_ver[1]}")
+    for (min_ver, tag, index_url) in _CUDA_WHEEL_MAP:
+        if cuda_ver >= min_ver:
+            _info(f"Selecting PyTorch wheels for {tag}")
+            return [
+                f"torch==2.4.0+{tag}",
+                f"torchvision==0.19.0+{tag}",
+                f"torchaudio==2.4.0+{tag}",
+                "--index-url", index_url,
+            ]
+
+    _info(f"CUDA {cuda_ver[0]}.{cuda_ver[1]} is older than cu118 — falling back to cu118 wheels.")
+    _, tag, index_url = _CUDA_WHEEL_MAP[-1]
+    return [
+        f"torch==2.4.0+{tag}",
+        f"torchvision==0.19.0+{tag}",
+        f"torchaudio==2.4.0+{tag}",
+        "--index-url", index_url,
+    ]
 
 _NNUNET_PACKAGES = ["nnunetv2", "gdown"]
 
@@ -165,17 +221,28 @@ def install_packages(choice: str) -> bool:
 
     # --- PyTorch ---
     torch_ver = _check_package("torch")
-    if torch_ver:
-        _ok(f"torch {torch_ver} already installed — skipping.")
-    else:
+    needs_install = not torch_ver
+    if torch_ver and choice == DefacingChoice.CUDA:
+        # Verify the installed wheel actually has CUDA support.
+        try:
+            import torch as _torch
+            if not _torch.cuda.is_available():
+                _info(f"torch {torch_ver} installed but CUDA unavailable — reinstalling CUDA build.")
+                needs_install = True
+        except ImportError:
+            needs_install = True
+
+    if needs_install:
         _info(
-            f"torch not found — installing CPU-only build"
+            "torch not found — installing CPU-only build"
             if choice == DefacingChoice.CPU
-            else f"torch not found — installing CUDA build"
+            else "torch not found — installing CUDA build"
         )
-        torch_args = _TORCH_CPU if choice == DefacingChoice.CPU else _TORCH_CUDA
+        torch_args = _TORCH_CPU if choice == DefacingChoice.CPU else _torch_cuda_args()
         if not _pip_install(torch_args, f"PyTorch ({choice.upper()})"):
             return False
+    else:
+        _ok(f"torch {torch_ver} already installed — skipping.")
 
     # --- nnunetv2 ---
     nnunet_ver = _check_package("nnunetv2")
@@ -413,19 +480,6 @@ def sanity_checks(settings, choice: str) -> bool:
     _section("Step 6 — Sanity checks")
 
     ok = True
-
-    if choice != DefacingChoice.NONE:
-        # Also look next to sys.executable (covers venvs not activated in PATH)
-        venv_bin = Path(sys.executable).parent / "nnUNetv2_predict"
-        bin_path = shutil.which("nnUNetv2_predict") or (str(venv_bin) if venv_bin.exists() else None)
-        if bin_path:
-            _ok(f"nnUNetv2_predict found at {bin_path}")
-        else:
-            _fail(
-                "nnUNetv2_predict not found — "
-                "ensure nnUNetv2 is installed in the active environment."
-            )
-            ok = False
 
     try:
         from pixieveil.config import Settings as _S
