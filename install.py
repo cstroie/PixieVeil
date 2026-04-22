@@ -63,18 +63,25 @@ _CUDA_WHEEL_MAP = [
 
 def _detect_cuda_version() -> tuple[int, int] | None:
     """Return (major, minor) of the CUDA version available on this machine, or None."""
+    def _run(*cmd: str) -> str | None:
+        try:
+            r = subprocess.run(cmd, capture_output=True, text=True)
+            return r.stdout if r.returncode == 0 else None
+        except FileNotFoundError:
+            return None
+
     # Prefer nvcc — gives the actual toolkit version.
-    result = subprocess.run(["nvcc", "--version"], capture_output=True, text=True)
-    if result.returncode == 0:
-        m = re.search(r"release (\d+)\.(\d+)", result.stdout)
+    out = _run("nvcc", "--version")
+    if out:
+        m = re.search(r"release (\d+)\.(\d+)", out)
         if m:
             return int(m.group(1)), int(m.group(2))
 
     # Fallback: nvidia-smi table header includes "CUDA Version: X.Y"
     # (this is the max CUDA version the driver supports, good enough for wheel selection)
-    result = subprocess.run(["nvidia-smi"], capture_output=True, text=True)
-    if result.returncode == 0:
-        m = re.search(r"CUDA Version:\s*(\d+)\.(\d+)", result.stdout)
+    out = _run("nvidia-smi")
+    if out:
+        m = re.search(r"CUDA Version:\s*(\d+)\.(\d+)", out)
         if m:
             return int(m.group(1)), int(m.group(2))
 
