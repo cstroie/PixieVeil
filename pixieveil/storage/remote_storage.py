@@ -41,8 +41,9 @@ class RemoteStorage:
                       configuration including base URL and authentication token
         """
         self.settings = settings
-        self.base_url = settings.storage.get("remote_storage", {}).get("base_url")
-        self.auth_token = settings.storage.get("remote_storage", {}).get("auth_token")
+        http_cfg = settings.storage.get("remote_storage", {}).get("http", {})
+        self.base_url = http_cfg.get("base_url")
+        self.auth_token = http_cfg.get("auth_token")
 
     async def upload_file(self, file_path: Path, remote_path: str) -> Optional[bool]:
         """

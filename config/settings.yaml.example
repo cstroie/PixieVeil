@@ -12,10 +12,19 @@ storage:
   temp_path: "./data/tmp"
   max_storage_gb: 100
 
-# Optional: remove or leave empty to keep archives local only
+# Optional remote storage — remove entire block to keep archives local.
+# DICOM C-STORE takes priority over HTTP ZIP upload if both are configured.
 #remote_storage:
-#  base_url: "https://your-storage-server"
-#  auth_token: "your-bearer-token"
+#  # HTTP ZIP upload
+#    http:
+#      base_url: "https://your-storage-server"
+#      auth_token: "your-bearer-token"
+#  # DICOM C-STORE (send individual .dcm files to a DICOM node / PACS)
+#    dicom:
+#      host: "127.0.0.1"
+#      port: 4070
+#      ae_title: "ORTHANC"          # called AE title (remote node)
+#      calling_ae: "PIXIEVEIL_SCU"  # our AE title (defaults to dicom_server.ae_title)
 
 # HTTP Server Settings
 http_server:

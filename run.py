@@ -81,7 +81,8 @@ def check_defacing_requirements() -> None:
         sys.exit("Defacing requires PyTorch — install it and retry.")
     try:
         import nnunetv2
-        log.info("nnUNetv2: %s", nnunetv2.__version__)
+        version = getattr(nnunetv2, "__version__", None) or getattr(nnunetv2, "VERSION", "unknown")
+        log.info("nnUNetv2: %s", version)
     except ImportError:
         sys.exit("Defacing requires nnUNetv2 — install it and retry.")
 

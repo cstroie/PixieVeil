@@ -7,7 +7,7 @@
 [x] Install script
 [x] Nnunet (pythonic)
 [x] Acknowledgement
-[ ] Export to dicom
+[x] Export to dicom
 [x] Analyze the workflow
 [ ] Check cuda (runtime)
 [x] Download the model (runtime if defacing enabled)

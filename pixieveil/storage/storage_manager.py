@@ -27,6 +27,7 @@ import pydicom
 
 from pixieveil.config import Settings
 from pixieveil.storage.remote_storage import RemoteStorage
+from pixieveil.storage.dicom_storage import DicomStorage
 from pixieveil.storage.zip_manager import ZipManager
 from pixieveil.processing.anonymizer import Anonymizer
 from pixieveil.processing.study_manager import StudyManager, StudyState
@@ -94,6 +95,7 @@ class StorageManager:
         self.defacer = Defacer(settings.defacing, temp_path=self.temp_path)
         self.zip_manager = ZipManager(settings)
         self.remote_storage = RemoteStorage(settings)
+        self.dicom_storage = DicomStorage(settings)
         
         # Thread safety
         self.lock = threading.Lock()
@@ -684,52 +686,83 @@ class StorageManager:
                 self.inc_counter('archive', 'studies')
                 self.inc_counter('archive', 'images', image_count)
 
-            # ZIP creation (blocking — run in thread)
-            zip_filename = f"{study_number:04d}"
-            zip_path = await self.zip_manager.create_zip(zip_filename, self.base_path)
-            if not zip_path:
-                logger.error("Failed to create ZIP for study %s", study_uid)
-                with self.lock:
-                    self.inc_counter('archive', 'errors')
-                    self.inc_counter('errors', 'total')
-                return
-
-            logger.info("Created ZIP archive: %s", zip_path)
-
-            with self.lock:
-                self.inc_counter('export', 'studies')
-                self.inc_counter('export', 'images', image_count)
-
-            # Upload (async HTTP)
-            success = await self.remote_storage.upload_file(zip_path, zip_path.name)
-
-            if success is None:
-                logger.info("Remote storage not configured — keeping local files for study %s", zip_filename)
-                with self.lock:
-                    self.inc_counter('cleanup', 'studies')
-                    self.inc_counter('cleanup', 'images', image_count)
-                self.study_manager.mark_study_archived(study_uid)
-            elif success:
-                logger.info("Successfully uploaded study %04d", study_number)
-                with self.lock:
-                    self.inc_counter('remote_storage', 'studies')
-                    self.inc_counter('remote_storage', 'images', image_count)
-                    self.inc_counter('remote_storage', 'bytes', zip_path.stat().st_size)
-                    self.inc_counter('cleanup', 'studies')
-                    self.inc_counter('cleanup', 'images', image_count)
-                await asyncio.to_thread(shutil.rmtree, study_dir)
-                await asyncio.to_thread(zip_path.unlink)
-                self.study_manager.mark_study_archived(study_uid)
+            # --- Export: DICOM push takes priority over HTTP ZIP upload ---
+            if self.dicom_storage.enabled:
+                await self._export_via_dicom(
+                    study_uid, study_number, study_dir, image_count
+                )
             else:
-                logger.error("Failed to upload study %s", study_uid)
-                with self.lock:
-                    self.inc_counter('remote_storage', 'errors')
-                    self.inc_counter('archive', 'errors')
-                    self.inc_counter('errors', 'total')
+                await self._export_via_http_zip(
+                    study_uid, study_number, study_dir, image_count
+                )
         except Exception:
             logger.exception("Unexpected error processing study %s", study_uid)
         finally:
             self._processing_studies.discard(study_uid)
+
+    async def _export_via_dicom(self, study_uid: str, study_number: int,
+                                study_dir: Path, image_count: int) -> None:
+        """Send study files to the configured DICOM node via C-STORE."""
+        logger.info("Sending study %04d to DICOM node %s:%d",
+                    study_number, self.dicom_storage.host, self.dicom_storage.port)
+        success = await self.dicom_storage.send_study(study_dir)
+        if success:
+            with self.lock:
+                self.inc_counter('remote_storage', 'studies')
+                self.inc_counter('remote_storage', 'images', image_count)
+                self.inc_counter('cleanup', 'studies')
+                self.inc_counter('cleanup', 'images', image_count)
+            await asyncio.to_thread(shutil.rmtree, study_dir)
+            self.study_manager.mark_study_archived(study_uid)
+        else:
+            logger.error("DICOM push failed for study %s", study_uid)
+            with self.lock:
+                self.inc_counter('remote_storage', 'errors')
+                self.inc_counter('errors', 'total')
+
+    async def _export_via_http_zip(self, study_uid: str, study_number: int,
+                                   study_dir: Path, image_count: int) -> None:
+        """Create a ZIP and upload it via HTTP, or keep locally if not configured."""
+        zip_filename = f"{study_number:04d}"
+        zip_path = await self.zip_manager.create_zip(zip_filename, self.base_path)
+        if not zip_path:
+            logger.error("Failed to create ZIP for study %s", study_uid)
+            with self.lock:
+                self.inc_counter('archive', 'errors')
+                self.inc_counter('errors', 'total')
+            return
+
+        logger.info("Created ZIP archive: %s", zip_path)
+
+        with self.lock:
+            self.inc_counter('export', 'studies')
+            self.inc_counter('export', 'images', image_count)
+
+        success = await self.remote_storage.upload_file(zip_path, zip_path.name)
+
+        if success is None:
+            logger.info("Remote storage not configured — keeping local files for study %s", zip_filename)
+            with self.lock:
+                self.inc_counter('cleanup', 'studies')
+                self.inc_counter('cleanup', 'images', image_count)
+            self.study_manager.mark_study_archived(study_uid)
+        elif success:
+            logger.info("Successfully uploaded study %04d", study_number)
+            with self.lock:
+                self.inc_counter('remote_storage', 'studies')
+                self.inc_counter('remote_storage', 'images', image_count)
+                self.inc_counter('remote_storage', 'bytes', zip_path.stat().st_size)
+                self.inc_counter('cleanup', 'studies')
+                self.inc_counter('cleanup', 'images', image_count)
+            await asyncio.to_thread(shutil.rmtree, study_dir)
+            await asyncio.to_thread(zip_path.unlink)
+            self.study_manager.mark_study_archived(study_uid)
+        else:
+            logger.error("Failed to upload study %s", study_uid)
+            with self.lock:
+                self.inc_counter('remote_storage', 'errors')
+                self.inc_counter('archive', 'errors')
+                self.inc_counter('errors', 'total')
 
     def _deface_study(self, study_uid: str, study_number: int, study_dir: Path) -> None:
         """

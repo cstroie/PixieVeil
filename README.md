@@ -117,8 +117,9 @@ storage:
   max_storage_gb: 1000
   # Optional: omit entire block to disable remote upload
   remote_storage:
-    base_url: "https://your-storage-server"
-    auth_token: "your-bearer-token"
+    http:
+      base_url: "https://your-storage-server"
+      auth_token: "your-bearer-token"
 
 # HTTP Dashboard
 http_server:
@@ -150,7 +151,7 @@ logging:
 
 ### Remote storage
 
-If `storage.remote_storage.base_url` is set, completed study ZIPs are uploaded via `POST {base_url}/upload` as a multipart form with fields `file` (the ZIP) and `remote_path` (the filename). A `Bearer` token from `auth_token` is sent in the `Authorization` header. If `base_url` is absent or empty, archives are kept locally and no upload is attempted.
+If `storage.remote_storage.http.base_url` is set, completed study ZIPs are uploaded via `POST {base_url}/upload` as a multipart form with fields `file` (the ZIP) and `remote_path` (the filename). A `Bearer` token from `auth_token` is sent in the `Authorization` header. If `base_url` is absent or empty, archives are kept locally and no upload is attempted.
 
 ### Series Filtering
 
