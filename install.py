@@ -562,6 +562,17 @@ def main() -> int:
         )
         return 1
 
+    for _mod, _pkg in [("yaml", "PyYAML"), ("pydantic", "pydantic")]:
+        try:
+            importlib.import_module(_mod)
+        except ImportError:
+            print(
+                f"\n{_FAIL}  {_pkg} is required to load settings.\n"
+                f"  Run: pip install -r requirements.txt",
+                file=sys.stderr,
+            )
+            return 1
+
     try:
         from pixieveil.config import Settings
         settings = Settings.load(args.config) if args.config else Settings.load()
