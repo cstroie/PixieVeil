@@ -73,14 +73,15 @@ def check_defacing_requirements() -> None:
         sys.exit(
             f"Defacing requires Python >= 3.12 (running {sys.version.split()[0]})"
         )
+    log = logging.getLogger(__name__)
     try:
         import torch
-        print(f"Torch: {torch.__version__}")
+        log.info("Torch: %s", torch.__version__)
     except ImportError:
         sys.exit("Defacing requires PyTorch — install it and retry.")
     try:
         import nnunetv2
-        print("nnUNetv2 OK")
+        log.info("nnUNetv2: %s", nnunetv2.__version__)
     except ImportError:
         sys.exit("Defacing requires nnUNetv2 — install it and retry.")
 
