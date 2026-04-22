@@ -5,7 +5,7 @@ PixieVeil Installation & Environment Setup
 
 Interactive setup script. Run once after cloning / updating the repo:
 
-    python install.py [--config PATH] [--non-interactive] [--download-model]
+    python install.py [--venv [PATH]] [--config PATH] [--non-interactive] [--download-model]
 
 Steps
 -----
@@ -24,9 +24,11 @@ Exit code 0 on success, non-zero on any failure.
 
 import argparse
 import importlib
+import os
 import re
 import subprocess
 import sys
+import venv as _venv_mod
 from pathlib import Path
 from typing import Optional
 
@@ -134,6 +136,54 @@ def _section(title: str) -> None:
     print(f"\n{'=' * 60}")
     print(f"  {title}")
     print('=' * 60)
+
+
+# ---------------------------------------------------------------------------
+# Virtual environment
+# ---------------------------------------------------------------------------
+
+def _create_venv(venv_path: Path) -> int:
+    """Create a venv at *venv_path*, install requirements.txt, then re-exec inside it.
+
+    Re-exec passes all original sys.argv args unchanged; on re-entry the prefix
+    check at the top of main() detects we're already inside the venv and skips
+    this function.  Never returns on success (os.execv replaces the process).
+    """
+    _section("Virtual environment setup")
+
+    if venv_path.exists():
+        _info(f"Directory {venv_path} already exists — reusing.")
+    else:
+        _info(f"Creating virtual environment at {venv_path} ...")
+        try:
+            _venv_mod.create(str(venv_path), with_pip=True)
+            _ok(f"Virtual environment created at {venv_path}")
+        except Exception as exc:
+            _fail(f"venv creation failed: {exc}")
+            return 1
+
+    venv_python = venv_path / "bin" / "python"
+    if not venv_python.exists():
+        _fail(f"Python binary not found at {venv_python}")
+        return 1
+
+    req = Path("requirements.txt")
+    if req.exists():
+        _info("Installing requirements.txt ...")
+        result = subprocess.run(
+            [str(venv_python), "-m", "pip", "install", "-r", str(req)]
+        )
+        if result.returncode != 0:
+            _fail("requirements.txt installation failed.")
+            return 1
+        _ok("requirements.txt installed.")
+    else:
+        _info("requirements.txt not found — skipping base install.")
+
+    _info("Re-launching inside the virtual environment ...")
+    script = os.path.abspath(__file__)
+    os.execv(str(venv_python), [str(venv_python), script] + sys.argv[1:])
+    return 0  # unreachable
 
 
 # ---------------------------------------------------------------------------
@@ -510,13 +560,17 @@ def sanity_checks(settings, choice: str) -> bool:
         _fail(f"settings.yaml failed to load: {exc}")
         ok = False
 
-    packages = {
-        "pydicom":   "pydicom",
-        "SimpleITK": "simpleitk",
-        "nibabel":   "nibabel",
-        "numpy":     "numpy",
-    }
-    for module, pkg in packages.items():
+    core_packages = {"pydicom": "pydicom"}
+    defacing_packages = {"SimpleITK": "simpleitk", "nibabel": "nibabel", "numpy": "numpy"}
+
+    check_sets = list(core_packages.items())
+    if choice != DefacingChoice.NONE:
+        check_sets += list(defacing_packages.items())
+    else:
+        for module in defacing_packages:
+            _skip(f"{module} — defacing disabled")
+
+    for module, pkg in check_sets:
         try:
             mod = importlib.import_module(module)
             ver = getattr(mod, "__version__", "?")
@@ -546,7 +600,18 @@ def main() -> int:
         "--download-model", action="store_true",
         help="Download the nnUNet defacing model and exit (skips all other steps)",
     )
+    parser.add_argument(
+        "--venv", metavar="PATH", nargs="?", const=".venv",
+        help="Create a virtual environment at PATH (default: .venv) and run setup inside it",
+    )
     args = parser.parse_args()
+
+    # Venv: create and re-exec unless we're already running inside it.
+    if args.venv:
+        venv_path = Path(args.venv).resolve()
+        if Path(sys.prefix).resolve() != venv_path:
+            return _create_venv(venv_path)
+        _ok(f"Running inside virtual environment at {venv_path}")
 
     print("PixieVeil setup")
     print(f"Python : {sys.version}")

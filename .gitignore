@@ -1,7 +1,9 @@
 .git*
 .aider*
 .vscode*
+.venv*
 data*
+examples*
 *.log
 __pycache__
 settings.yaml
