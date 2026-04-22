@@ -144,10 +144,21 @@ if __name__ == "__main__":
     is always emitted, even in error scenarios.
     """
     _settings = Settings.load()
-    if _settings.defacing.get("enabled", False) and sys.version_info < (3, 12):
-        sys.exit(
-            f"Defacing requires Python >= 3.12 (running {sys.version.split()[0]})"
-        )
+    if _settings.defacing.get("enabled", False):
+        if sys.version_info < (3, 12):
+            sys.exit(
+                f"Defacing requires Python >= 3.12 (running {sys.version.split()[0]})"
+            )
+        try:
+            import torch
+            print(f"Torch: {torch.__version__}")
+        except ImportError:
+            sys.exit("Defacing requires PyTorch — install it and retry.")
+        try:
+            import nnunetv2
+            print("nnUNetv2 OK")
+        except ImportError:
+            sys.exit("Defacing requires nnUNetv2 — install it and retry.")
     try:
         asyncio.run(main())
     except KeyboardInterrupt:

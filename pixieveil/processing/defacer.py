@@ -7,6 +7,7 @@ capabilities for implementing a defacing pipeline. The full defacing workflow
 """
 
 import logging
+import os
 import re
 import shutil
 import subprocess
@@ -39,6 +40,9 @@ class Defacer:
         self.rotation_mode: str = cfg.get("rotation_mode", "auto90")
         self.tool_command: Optional[str] = cfg.get("tool_command", None)
         self.temp_path: Optional[Path] = temp_path
+
+        raw_model_dir = cfg.get("model_dir", None)
+        self.model_dir: Optional[Path] = Path(raw_model_dir) if raw_model_dir else None
 
         body_parts = cfg.get("body_parts", list(_HEAD_BODY_PARTS))
         self._body_parts: set = {bp.upper() for bp in body_parts}
@@ -172,29 +176,97 @@ class Defacer:
         logger.info("Defacing complete for %s", series_dir)
         return True
 
+    def run_nnunet_inference(self, nifti_in_dir: Path, nifti_out_dir: Path,
+                             data_dir: Optional[Path] = None,
+                             device: str = "cpu") -> None:
+        """
+        Run nnUNetv2_predict on all cases in nifti_in_dir.
+
+        The nnUNet model is expected at ``<model_dir>/nnUNet``, where
+        ``model_dir`` comes from config (``defacing.model_dir``) or falls back
+        to ``<data_dir>/nnUNet`` when *data_dir* is supplied.
+
+        The three nnUNet environment variables (``nnUNet_results``,
+        ``nnUNet_preprocessed``, ``nnUNet_raw``) are set to the model root
+        directory for the duration of the subprocess call.
+
+        Args:
+            nifti_in_dir:  Folder containing input ``*_0000.nii.gz`` files.
+            nifti_out_dir: Folder where predictions will be written.
+            data_dir:      Fallback base path when ``model_dir`` is not
+                           configured (typically ``storage.base_path``).
+            device:        nnUNet inference device: ``"cpu"``, ``"cuda"``,
+                           or ``"mps"``.
+
+        Raises:
+            RuntimeError: If the model directory cannot be resolved or if
+                          nnUNetv2_predict exits with a non-zero return code.
+        """
+        if self.model_dir is not None:
+            model_root = self.model_dir
+        elif data_dir is not None:
+            model_root = Path(data_dir) / "nnUNet"
+        else:
+            raise RuntimeError(
+                "Cannot resolve nnUNet model directory: set defacing.model_dir "
+                "in settings.yaml or pass data_dir to run_nnunet_inference()."
+            )
+
+        if not model_root.is_dir():
+            raise RuntimeError(
+                f"nnUNet model directory not found: {model_root}"
+            )
+
+        nnunet_env = {
+            "nnUNet_results":      str(model_root),
+            "nnUNet_preprocessed": str(model_root),
+            "nnUNet_raw":          str(model_root),
+        }
+        env = {**os.environ, **nnunet_env}
+
+        nnunet_bin = shutil.which("nnUNetv2_predict") or "nnUNetv2_predict"
+
+        command = [
+            nnunet_bin,
+            "-i", str(nifti_in_dir),
+            "-o", str(nifti_out_dir),
+            "-d", "001",
+            "-c", "3d_fullres",
+            "-f", "all",
+            "--disable_tta",
+            "-device", device,
+        ]
+
+        logger.info("Running nnUNet inference: %s", " ".join(command))
+        logger.debug("nnUNet env: %s", nnunet_env)
+
+        result = subprocess.run(command, env=env)
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"nnUNetv2_predict exited with code {result.returncode}"
+            )
+
+        logger.info("nnUNet inference complete; output in %s", nifti_out_dir)
+
     def _run_defacing_tool(self, nifti_path: Path,
                            nifti_in_dir: Path, nifti_out_dir: Path) -> Path:
         """
-        Call the external defacing tool, or simulate it by copying the NIfTI.
+        Call the external defacing tool, or run built-in nnUNet inference when
+        tool_command is None.
 
         Returns the path to the defaced NIfTI file.
         """
         if self.tool_command is None:
-            # Simulation: copy the input NIfTI to the output dir unchanged
-            defaced = nifti_out_dir / nifti_path.name
-            shutil.copy2(nifti_path, defaced)
-            logger.info("Defacing simulated (tool_command not set): copied %s → %s",
-                        nifti_path.name, defaced)
-            return defaced
-
-        cmd = self.tool_command.format(
-            input_dir=str(nifti_in_dir),
-            output_dir=str(nifti_out_dir),
-        )
-        logger.info("Running defacing tool: %s", cmd)
-        result = subprocess.run(cmd, shell=True)
-        if result.returncode != 0:
-            logger.warning("Defacing tool exited with code %d", result.returncode)
+            self.run_nnunet_inference(nifti_in_dir, nifti_out_dir)
+        else:
+            cmd = self.tool_command.format(
+                input_dir=str(nifti_in_dir),
+                output_dir=str(nifti_out_dir),
+            )
+            logger.info("Running defacing tool: %s", cmd)
+            result = subprocess.run(cmd, shell=True)
+            if result.returncode != 0:
+                logger.warning("Defacing tool exited with code %d", result.returncode)
 
         # Find the defaced NIfTI — prefer files not named *mask*
         candidates = [
