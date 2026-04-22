@@ -159,6 +159,18 @@ async def main() -> None:
         except asyncio.TimeoutError:
             logger.error("Storage manager did not stop within 5 second timeout")
 
+def run() -> None:
+    """Sync entry point for the ``pixieveil`` console script."""
+    _settings = Settings.load()
+    if _settings.defacing.get("enabled", False):
+        check_defacing_requirements()
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        logging.basicConfig(level=logging.INFO)
+        logging.getLogger(__name__).info("Application shutdown by user")
+
+
 if __name__ == "__main__":
     """
     Entry‑point used when executing ``run.py`` directly.
@@ -168,12 +180,4 @@ if __name__ == "__main__":
     ``KeyboardInterrupt`` is caught.  This ensures a clean shutdown message
     is always emitted, even in error scenarios.
     """
-    _settings = Settings.load()
-    if _settings.defacing.get("enabled", False):
-        check_defacing_requirements()
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        # Minimal fallback logger in case configuration failed
-        logging.basicConfig(level=logging.INFO)
-        logging.getLogger(__name__).info("Application shutdown by user")
+    run()

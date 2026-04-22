@@ -30,7 +30,6 @@ from pixieveil.storage.remote_storage import RemoteStorage
 from pixieveil.storage.dicom_storage import DicomStorage
 from pixieveil.storage.zip_manager import ZipManager
 from pixieveil.processing.anonymizer import Anonymizer
-from pixieveil.processing.study_manager import StudyManager, StudyState
 from pixieveil.processing.series_filter import SeriesFilter
 from pixieveil.processing.defacer import Defacer
 
@@ -88,6 +87,7 @@ class StorageManager:
         logger.debug(f"Anonymization mapping trail will be written to: {self.anontrail_path}")
 
         # Initialize managers
+        from pixieveil.processing.study_manager import StudyManager
         self.study_manager = StudyManager(settings)
         self.study_manager.initialize_from_sidecars(self.base_path)
         self.series_filter = SeriesFilter(settings)
