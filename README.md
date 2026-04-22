@@ -369,3 +369,15 @@ Stop with `Ctrl-C`. All services shut down gracefully with a 10-second timeout.
 - CT Image Storage
 - MR Image Storage
 - Secondary Capture Image Storage
+
+## Acknowledgements
+
+**Defacing pipeline** is based on [CT-DEFACE](https://github.com/jsfakian/CT-DEFACE) by jsfakian, which itself is derived from [CTA-DEFACE](https://github.com/CCI-Bonn/CTA-DEFACE) (CCI Bonn). The underlying segmentation model is nnU-Net; please cite:
+
+> Isensee F, Jaeger PF, Kohl SAA, Petersen J, Maier-Hein KH. nnU-Net: a self-configuring method for deep learning-based biomedical image segmentation. *Nat Methods.* 2021;18(2):203–211. doi:10.1038/s41592-020-01008-z
+
+The CT-DEFACE tool is described in:
+
+> Mahmutoglu MA, Rastogi A, Schell M, Foltyn-Dumitru M, Baumgartner M, Maier-Hein KH, Deike-Hofmann K, Radbruch A, Bendszus M, Brugnara G, Vollmuth P. Deep learning-based defacing tool for CT angiography: CTA-DEFACE. *Eur Radiol Exp.* 2024;8(1):111. doi:10.1186/s41747-024-00510-9
+
+**Anonymization profiles** are inspired by [dicom_anonymization](https://github.com/jsfakian/dicom_anonymization) by jsfakian (MIT License), which introduced the JSON-profile approach, deterministic salt-based pseudonymisation, and the GDPR-strict profile concept adopted here.
