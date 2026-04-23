@@ -30,7 +30,7 @@ python install.py --download-model
 
 ## Minimum configuration
 
-Copy `config/settings.yaml.example` to `config/settings.yaml` and set at least:
+Copy `config/settings.example.yaml` to `config/settings.yaml` and set at least:
 
 ```yaml
 dicom_server:

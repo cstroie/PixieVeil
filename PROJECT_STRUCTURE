@@ -6,7 +6,7 @@ PixieVeil/
 │
 ├── config/
 │   ├── settings.yaml               # Active configuration (not committed)
-│   └── settings.yaml.example       # Reference configuration with all options documented
+│   └── settings.example.yaml       # Reference configuration with all options documented
 │
 └── pixieveil/
     ├── config/

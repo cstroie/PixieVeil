@@ -62,7 +62,7 @@ python install.py
 
 ## Configuration
 
-All configuration lives in `config/settings.yaml`. Copy `config/settings.yaml.example` as a starting point.
+All configuration lives in `config/settings.yaml`. Copy `config/settings.example.yaml` as a starting point.
 
 ```yaml
 # DICOM Server Settings

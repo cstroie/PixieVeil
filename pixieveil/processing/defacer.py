@@ -656,6 +656,9 @@ class Defacer:
         else:
             ref_dtype = np.int16
 
+        # Cap HU values at the physical air density floor before converting back to pixels.
+        arr_slices = np.clip(arr_slices, -1000.0, None)
+
         # Reverse the DICOM rescale so we store raw pixel values, not HU values.
         # SimpleITK applies RescaleSlope/RescaleIntercept when reading to NIfTI,
         # so arr_slices contains physical HU values. Without this step the viewer
