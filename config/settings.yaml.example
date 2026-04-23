@@ -59,7 +59,7 @@ defacing:
   enabled: false
   device: "cuda"             # "cuda" (GPU), "mps" (Apple Silicon), or "cpu"; falls back to cpu automatically
   keep_backup: true          # keep anonymized-but-not-defaced series as <series>_pre_deface/; set false in production
-  rotation_mode: "auto90"    # "none", "auto90", or "auto_all"
+  rotation_mode: "iop"       # "none" to skip; anything else applies IOP-based transpose (recommended)
   model_dir: ./data/nnUNet
   body_parts:                # BodyPartExamined values that indicate a head scan (case-insensitive)
     - HEAD

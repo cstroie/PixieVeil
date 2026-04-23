@@ -39,7 +39,7 @@ class Defacer:
         cfg = config or {}
         self.enabled: bool = cfg.get("enabled", False)
         self.keep_backup: bool = cfg.get("keep_backup", True)
-        self.rotation_mode: str = cfg.get("rotation_mode", "auto90")
+        self.rotation_mode: str = cfg.get("rotation_mode", "iop")
         self.temp_path: Path | None = temp_path
 
         raw_model_dir = cfg.get("model_dir", None)
@@ -572,7 +572,7 @@ class Defacer:
     # ------------------------------------------------------------------
 
     def nifti_to_dicom(self, nifti_file: str, dicom_template_dir: str,
-                       output_dir: str, rotation_mode: str = "auto90") -> list[str]:
+                       output_dir: str, rotation_mode: str = "iop") -> list[str]:
         """
         Convert NIfTI file back to DICOM format using template DICOM headers.
 
@@ -585,7 +585,7 @@ class Defacer:
             nifti_file: Path to NIfTI file to convert
             dicom_template_dir: Directory containing template DICOM files
             output_dir: Path to output directory for DICOM files
-            rotation_mode: "none", "auto90" (default), or "auto_all"
+            rotation_mode: "none" to skip, anything else uses IOP-based transpose (default "iop")
 
         Returns:
             list[str]: Paths to created DICOM files
@@ -648,10 +648,8 @@ class Defacer:
         sample_ds = pydicom.dcmread(chosen_list[0][0])
         if hasattr(sample_ds, "pixel_array"):
             ref_dtype = sample_ds.pixel_array.dtype
-            sample_orig_slice = sample_ds.pixel_array
         else:
             ref_dtype = np.int16
-            sample_orig_slice = None
 
         # Reverse the DICOM rescale so we store raw pixel values, not HU values.
         # SimpleITK applies RescaleSlope/RescaleIntercept when reading to NIfTI,
@@ -676,13 +674,20 @@ class Defacer:
             clip_min, clip_max,
         )
 
-        if sample_orig_slice is not None:
-            mid = n_update // 2
-            best_k, best_flip = self._determine_best_rotation(arr_slices[mid], sample_orig_slice, rotation_mode)
-        else:
+        if rotation_mode == "none":
             best_k, best_flip = 0, False
+        else:
+            iop = getattr(sample_ds, "ImageOrientationPatient", None)
+            if iop is not None:
+                best_k, best_flip = self._rotation_from_iop([float(v) for v in iop])
+            else:
+                logger.warning(
+                    "ImageOrientationPatient missing from %s; defaulting to transpose",
+                    chosen_list[0][0],
+                )
+                best_k, best_flip = 1, True
 
-        created_files: List[str] = []
+        created_files: list[str] = []
 
         for (src_path, ds), slice_data in zip(
             chosen_list[:n_update], arr_slices[:n_update]
@@ -763,53 +768,42 @@ class Defacer:
 
         return groups
 
-    def _determine_best_rotation(self, slice_def, slice_dcm, mode: str) -> tuple[int, bool]:
+    @staticmethod
+    def _rotation_from_iop(iop: list[float]) -> tuple[int, bool]:
         """
-        Return (k, flip) for the transform that best maps a NIfTI slice to the
-        original DICOM pixel array.
+        Return the (k, flip) that maps a 2D NIfTI slice to DICOM pixel_array orientation.
 
-        Searches over all combinations of rot90(k) and an optional horizontal
-        flip so that the coordinate-system difference between NIfTI (RAS) and
-        DICOM (LPS) is handled correctly regardless of scanner orientation.
+        SimpleITK writes NIfTI with axis 0 = row cosines (F) and axis 1 = column
+        cosines (C).  DICOM pixel_array has axis 0 = rows (C direction) and axis 1 =
+        cols (F direction).  The LPS↔RAS conversion preserves the anatomical direction
+        of both vectors, so IPP anchors i=0↔col=0 and j=0↔row=0.  The in-plane
+        transform is therefore always a pure transpose:
+
+            np.rot90(arr, k=1) then flip axis=1  ≡  arr.T
+
+        The IOP is validated and logged; the return value is always (1, True).
         """
         import numpy as np
 
-        if mode == "none":
-            return 0, False
-        if mode == "auto90":
-            k_values = [0, 1, 3]       # 0°, 90° CCW, 90° CW — skip 180°
-        elif mode == "auto_all":
-            k_values = [0, 1, 2, 3]
+        F = np.array(iop[:3], dtype=float)
+        C = np.array(iop[3:], dtype=float)
+        norm_F, norm_C = np.linalg.norm(F), np.linalg.norm(C)
+
+        if norm_F > 1e-6 and norm_C > 1e-6:
+            dot = abs(float(np.dot(F / norm_F, C / norm_C)))
+            if dot > 0.3:
+                logger.warning(
+                    "IOP row/col cosines are not orthogonal (|dot|=%.3f); "
+                    "proceeding with transpose anyway",
+                    dot,
+                )
+            else:
+                logger.debug("IOP F=%s C=%s → transpose", np.round(F, 3), np.round(C, 3))
         else:
-            logger.warning("Unknown rotation_mode %r, defaulting to no transform.", mode)
-            return 0, False
+            logger.warning("IOP vectors are near-zero (|F|=%.3f |C|=%.3f); using transpose", norm_F, norm_C)
 
-        sd = slice_def.astype(np.float32)
-        so = slice_dcm.astype(np.float32)
-        if sd.shape != so.shape:
-            return 0, False
-
-        best_mse = float("inf")
-        best_k, best_flip = 0, False
-
-        for k in k_values:
-            for do_flip in (False, True):
-                cand = np.rot90(sd, k=k)
-                if do_flip:
-                    cand = np.flip(cand, axis=1)
-                if cand.shape != so.shape:
-                    continue
-                mse = float(np.mean((so - cand) ** 2))
-                if mse < best_mse:
-                    best_mse = mse
-                    best_k = k
-                    best_flip = do_flip
-
-        logger.debug(
-            "Orientation search: mode=%s  chosen k=%d flip=%s  MSE=%.2f",
-            mode, best_k, best_flip, best_mse,
-        )
-        return best_k, best_flip
+        # Pure transpose: rot90(k=1) then flip axis=1 gives result[i,j] = arr[j,i]
+        return 1, True
 
     @staticmethod
     def _prepare_for_write(ds: pydicom.Dataset) -> None:
