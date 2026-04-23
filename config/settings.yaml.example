@@ -60,7 +60,7 @@ defacing:
   device: "cuda"             # "cuda" (GPU), "mps" (Apple Silicon), or "cpu"; falls back to cpu automatically
   keep_backup: true          # keep anonymized-but-not-defaced series as <series>_pre_deface/; set false in production
   rotation_mode: "iop"       # "none" to skip; anything else applies IOP-based transpose (recommended)
-  mask_dilation_mm: 5.0      # grow the face mask by this many mm before applying; eliminates skin-edge residue
+  mask_dilation_mm: 2.0      # grow the face mask by this many mm before applying; eliminates skin-edge residue
   model_dir: ./data/nnUNet
   body_parts:                # BodyPartExamined values that indicate a head scan (case-insensitive)
     - HEAD

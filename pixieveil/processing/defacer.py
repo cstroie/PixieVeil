@@ -40,7 +40,7 @@ class Defacer:
         self.enabled: bool = cfg.get("enabled", False)
         self.keep_backup: bool = cfg.get("keep_backup", True)
         self.rotation_mode: str = cfg.get("rotation_mode", "iop")
-        self.mask_dilation_mm: float = float(cfg.get("mask_dilation_mm", 5.0))
+        self.mask_dilation_mm: float = float(cfg.get("mask_dilation_mm", 2.0))
         self.temp_path: Path | None = temp_path
 
         raw_model_dir = cfg.get("model_dir", None)
