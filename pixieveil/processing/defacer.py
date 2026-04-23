@@ -13,7 +13,6 @@ import tempfile
 import threading
 import warnings
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
 
 import pydicom
 from pydicom.dataset import FileMetaDataset
@@ -31,7 +30,7 @@ class Defacer:
     # One nnUNet inference at a time — class-level so all instances share it.
     _nnunet_semaphore = threading.Semaphore(1)
 
-    def __init__(self, config: Optional[dict] = None, temp_path: Optional[Path] = None):
+    def __init__(self, config: dict | None = None, temp_path: Path | None = None):
         """
         Args:
             config: The ``defacing`` section of Settings, or None to use defaults.
@@ -41,10 +40,10 @@ class Defacer:
         self.enabled: bool = cfg.get("enabled", False)
         self.keep_backup: bool = cfg.get("keep_backup", True)
         self.rotation_mode: str = cfg.get("rotation_mode", "auto90")
-        self.temp_path: Optional[Path] = temp_path
+        self.temp_path: Path | None = temp_path
 
         raw_model_dir = cfg.get("model_dir", None)
-        self.model_dir: Optional[Path] = Path(raw_model_dir) if raw_model_dir else None
+        self.model_dir: Path | None = Path(raw_model_dir) if raw_model_dir else None
 
         body_parts = cfg.get("body_parts", list(_HEAD_BODY_PARTS))
         self._body_parts: set = {bp.upper() for bp in body_parts}
@@ -188,7 +187,7 @@ class Defacer:
     # ------------------------------------------------------------------
 
     def deface_series(self, series_dir: Path,
-                      data_dir: Optional[Path] = None) -> bool:
+                      data_dir: Path | None = None) -> bool:
         """
         Run the full defacing pipeline for one series directory.
 
@@ -253,8 +252,18 @@ class Defacer:
             logger.error("NIfTI→DICOM failed for %s: %s", series_dir, e)
             return False
 
-        # Step 4: atomic swap with optional backup
+        # Step 4: atomic swap with optional backup.
+        # Stage defaced files to a sibling directory first so that the original
+        # series is only removed after the copy succeeds.
         backup_dir = series_dir.parent / f"{series_dir.name}_pre_deface"
+        staged_dir = series_dir.parent / f"{series_dir.name}_staged"
+        try:
+            shutil.copytree(dicom_out_dir, staged_dir)
+        except Exception as e:
+            logger.error("Staging defaced series failed for %s: %s", series_dir, e)
+            shutil.rmtree(staged_dir, ignore_errors=True)
+            return False
+
         try:
             if self.keep_backup:
                 series_dir.rename(backup_dir)
@@ -262,10 +271,10 @@ class Defacer:
             else:
                 shutil.rmtree(series_dir)
 
-            shutil.copytree(dicom_out_dir, series_dir)
+            staged_dir.rename(series_dir)
         except Exception as e:
             logger.error("Atomic swap failed for %s: %s", series_dir, e)
-            # Try to restore from backup if we already moved the original
+            shutil.rmtree(staged_dir, ignore_errors=True)
             if self.keep_backup and backup_dir.exists() and not series_dir.exists():
                 backup_dir.rename(series_dir)
                 logger.warning("Restored original series from backup after swap failure")
@@ -284,7 +293,7 @@ class Defacer:
         "1k4o35Dkl7PWd2yvHqWA2ia-BNKrWBrqg?usp=sharing"
     )
 
-    def _ensure_model(self, data_dir: Optional[Path] = None) -> Path:
+    def _ensure_model(self, data_dir: Path | None = None) -> Path:
         """
         Resolve the nnUNet model root and verify the expected dataset directory
         is present.
@@ -341,7 +350,7 @@ class Defacer:
         )
 
     def run_nnunet_inference(self, nifti_in_dir: Path, nifti_out_dir: Path,
-                             data_dir: Optional[Path] = None,
+                             data_dir: Path | None = None,
                              device: str = "cpu") -> None:
         """
         Run nnUNetv2_predict on all cases in nifti_in_dir.
@@ -431,7 +440,7 @@ class Defacer:
 
     def _run_defacing_tool(self, nifti_path: Path,
                            nifti_in_dir: Path, nifti_out_dir: Path,
-                           data_dir: Optional[Path] = None) -> Path:
+                           data_dir: Path | None = None) -> Path:
         """
         Run nnUNet inference to produce a face-region mask, apply it, and
         return the path to the defaced NIfTI.
@@ -443,7 +452,7 @@ class Defacer:
 
     def _run_nnunet_and_apply_mask(self, nifti_path: Path,
                                    nifti_in_dir: Path, nifti_out_dir: Path,
-                                   data_dir: Optional[Path] = None,
+                                   data_dir: Path | None = None,
                                    device: str = "cpu") -> Path:
         """
         Run nnUNet inference to get a face-region mask, then apply it.
@@ -469,7 +478,7 @@ class Defacer:
             case_stem = nifti_path.stem
 
         # Locate the nnUNet prediction for this case
-        mask_path: Optional[Path] = None
+        mask_path: Path | None = None
         for candidate in sorted(nifti_out_dir.glob("*.nii*")):
             if candidate.name.startswith(case_stem):
                 mask_path = candidate
@@ -511,7 +520,7 @@ class Defacer:
     # ------------------------------------------------------------------
 
     def dicom_to_nifti(self, dicom_dir: str, output_dir: str,
-                       series_instance_uid: Optional[str] = None) -> str:
+                       series_instance_uid: str | None = None) -> str:
         """
         Convert DICOM files to NIfTI format.
 
@@ -563,7 +572,7 @@ class Defacer:
     # ------------------------------------------------------------------
 
     def nifti_to_dicom(self, nifti_file: str, dicom_template_dir: str,
-                       output_dir: str, rotation_mode: str = "auto90") -> List[str]:
+                       output_dir: str, rotation_mode: str = "auto90") -> list[str]:
         """
         Convert NIfTI file back to DICOM format using template DICOM headers.
 
@@ -579,7 +588,7 @@ class Defacer:
             rotation_mode: "none", "auto90" (default), or "auto_all"
 
         Returns:
-            List[str]: Paths to created DICOM files
+            list[str]: Paths to created DICOM files
 
         Raises:
             ValueError: If conversion fails
@@ -694,10 +703,13 @@ class Defacer:
             ds.save_as(str(out_path))
             created_files.append(str(out_path))
 
-        for src_path, ds in chosen_list[n_update:]:
-            self._prepare_for_write(ds)
+        # chosen_list entries were loaded stop_before_pixels=True; re-read with
+        # full pixel data for slices that were not replaced by the defaced volume.
+        for src_path, _ in chosen_list[n_update:]:
+            ds_full = pydicom.dcmread(src_path, force=True)
+            self._prepare_for_write(ds_full)
             out_path = output_dir / Path(src_path).name
-            ds.save_as(str(out_path))
+            ds_full.save_as(str(out_path))
             created_files.append(str(out_path))
 
         logger.info("Wrote %d DICOM slices to %s", len(created_files), output_dir)
@@ -709,7 +721,7 @@ class Defacer:
 
     def _load_series_groups(
         self, dicom_dir: Path
-    ) -> Dict[str, List[Tuple[str, pydicom.Dataset]]]:
+    ) -> dict[str, list[tuple[str, pydicom.Dataset]]]:
         """Load all DICOMs in dicom_dir grouped by SeriesInstanceUID, sorted by position."""
         files: set = set()
         for pattern in ("*.dcm", "*"):
@@ -717,7 +729,7 @@ class Defacer:
                 if p.is_file():
                     files.add(p)
 
-        groups: Dict[str, List[Tuple[str, pydicom.Dataset]]] = {}
+        groups: dict[str, list[tuple[str, pydicom.Dataset]]] = {}
         for f in sorted(files):
             try:
                 ds = pydicom.dcmread(str(f), stop_before_pixels=True, force=True)
@@ -731,7 +743,7 @@ class Defacer:
         if not groups:
             raise ValueError(f"No readable DICOM series found in {dicom_dir!r}")
 
-        def _sort_key(item: Tuple[str, pydicom.Dataset]) -> float:
+        def _sort_key(item: tuple[str, pydicom.Dataset]) -> float:
             ds = item[1]
             if hasattr(ds, "InstanceNumber"):
                 try:
@@ -751,7 +763,7 @@ class Defacer:
 
         return groups
 
-    def _determine_best_rotation(self, slice_def, slice_dcm, mode: str) -> Tuple[int, bool]:
+    def _determine_best_rotation(self, slice_def, slice_dcm, mode: str) -> tuple[int, bool]:
         """
         Return (k, flip) for the transform that best maps a NIfTI slice to the
         original DICOM pixel array.
@@ -812,20 +824,17 @@ class Defacer:
         if not getattr(ds.file_meta, "TransferSyntaxUID", None):
             ds.file_meta.TransferSyntaxUID = ImplicitVRLittleEndian
 
-        if ds.file_meta.TransferSyntaxUID == ImplicitVRLittleEndian:
-            ds.is_implicit_VR = True
-            ds.is_little_endian = True
 
 
 # Convenience functions
 
 def dicom_to_nifti(dicom_dir: str, output_dir: str,
-                   series_instance_uid: Optional[str] = None) -> str:
+                   series_instance_uid: str | None = None) -> str:
     """Convenience function for DICOM to NIfTI conversion."""
     return Defacer().dicom_to_nifti(dicom_dir, output_dir, series_instance_uid)
 
 
 def nifti_to_dicom(nifti_file: str, dicom_template_dir: str,
-                   output_dir: str, rotation_mode: str = "auto90") -> List[str]:
+                   output_dir: str, rotation_mode: str = "auto90") -> list[str]:
     """Convenience function for NIfTI to DICOM conversion."""
     return Defacer().nifti_to_dicom(nifti_file, dicom_template_dir, output_dir, rotation_mode)
