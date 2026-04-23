@@ -40,6 +40,7 @@ class Defacer:
         self.enabled: bool = cfg.get("enabled", False)
         self.keep_backup: bool = cfg.get("keep_backup", True)
         self.rotation_mode: str = cfg.get("rotation_mode", "iop")
+        self.mask_dilation_mm: float = float(cfg.get("mask_dilation_mm", 5.0))
         self.temp_path: Path | None = temp_path
 
         raw_model_dir = cfg.get("model_dir", None)
@@ -459,7 +460,7 @@ class Defacer:
 
         nnUNet writes one prediction file per input case (same stem, no _0000).
         We locate the matching prediction, binarise it (>0 = face), and set
-        those voxels in the original volume to its 10th-percentile intensity.
+        those voxels in the original volume to its 1st-percentile intensity (background air).
 
         Returns the path to the saved defaced NIfTI.
         """
@@ -500,11 +501,15 @@ class Defacer:
         mask_img = nib.load(str(mask_path))
         mask = (np.asarray(mask_img.get_fdata()) > 0)
 
+        if self.mask_dilation_mm > 0:
+            mask = self._dilate_mask(mask, mask_img, self.mask_dilation_mm)
+
         orig_img = nib.load(str(nifti_path))
         orig_data = np.asarray(orig_img.get_fdata())
 
-        fill_value = float(np.percentile(orig_data, 10))
-        logger.debug("Face fill value (10th percentile): %.1f", fill_value)
+        # 1st percentile captures background air reliably without pulling in tissue.
+        fill_value = float(np.percentile(orig_data, 1))
+        logger.debug("Face fill value (1st percentile): %.1f", fill_value)
 
         defaced_data = np.where(mask, fill_value, orig_data)
         defaced_img = nib.Nifti1Image(defaced_data, orig_img.affine, orig_img.header)
@@ -767,6 +772,53 @@ class Defacer:
             lst.sort(key=_sort_key)
 
         return groups
+
+    @staticmethod
+    def _dilate_mask(mask: "np.ndarray", mask_img: "nib.Nifti1Image",
+                     dilation_mm: float) -> "np.ndarray":
+        """
+        Grow a binary mask by *dilation_mm* millimetres using a spherical
+        structuring element sized from the image voxel spacing.
+
+        Uses scipy.ndimage.binary_dilation when available; falls back to a
+        slower numpy-only box dilation otherwise.
+        """
+        import numpy as np
+
+        zooms = np.array(mask_img.header.get_zooms()[:3], dtype=float)
+        # Radius in voxels per axis, minimum 1
+        radii = np.maximum(np.round(dilation_mm / zooms).astype(int), 1)
+
+        try:
+            from scipy.ndimage import binary_dilation
+
+            # Build an ellipsoidal (spherical for isotropic) footprint
+            slices = tuple(slice(-r, r + 1) for r in radii)
+            coords = np.mgrid[slices]
+            footprint = sum((coords[ax] / radii[ax]) ** 2 for ax in range(3)) <= 1.0
+            dilated = binary_dilation(mask, structure=footprint)
+            logger.debug(
+                "Mask dilated by %.1f mm (radii %s vox) using scipy", dilation_mm, radii
+            )
+        except ImportError:
+            # Fallback: repeated single-step dilation along each axis.
+            # One step ORs each voxel with its two face-neighbours on that axis.
+            dilated = mask.copy()
+            for ax, r in enumerate(radii):
+                for _ in range(int(r)):
+                    fwd = np.roll(dilated, 1, axis=ax)
+                    bwd = np.roll(dilated, -1, axis=ax)
+                    # Zero out wrap-around edges introduced by roll
+                    idx_fwd = [slice(None)] * 3; idx_fwd[ax] = slice(0, 1)
+                    idx_bwd = [slice(None)] * 3; idx_bwd[ax] = slice(-1, None)
+                    fwd[tuple(idx_fwd)] = False
+                    bwd[tuple(idx_bwd)] = False
+                    dilated = dilated | fwd | bwd
+            logger.debug(
+                "Mask dilated by %.1f mm (radii %s vox) using numpy fallback", dilation_mm, radii
+            )
+
+        return dilated
 
     @staticmethod
     def _rotation_from_iop(iop: list[float]) -> tuple[int, bool]:
