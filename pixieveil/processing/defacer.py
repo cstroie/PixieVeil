@@ -684,16 +684,28 @@ class Defacer:
 
         if rotation_mode == "none":
             best_k, best_flip = 0, False
+            logger.info("Rotation correction: disabled (rotation_mode=none)")
         else:
             iop = getattr(sample_ds, "ImageOrientationPatient", None)
             if iop is not None:
                 best_k, best_flip = self._rotation_from_iop([float(v) for v in iop])
+                logger.info(
+                    "Rotation correction: IOP=[%s] → rot90(k=%d) flip=%s",
+                    " ".join(f"{v:.3f}" for v in iop),
+                    best_k,
+                    best_flip,
+                )
             else:
                 logger.warning(
                     "ImageOrientationPatient missing from %s; defaulting to transpose",
                     chosen_list[0][0],
                 )
                 best_k, best_flip = 1, True
+                logger.info(
+                    "Rotation correction: IOP absent → rot90(k=%d) flip=%s (transpose fallback)",
+                    best_k,
+                    best_flip,
+                )
 
         created_files: list[str] = []
 
@@ -702,7 +714,7 @@ class Defacer:
         ):
             slice_arr = np.rot90(np.asarray(slice_data), k=best_k)
             if best_flip:
-                slice_arr = np.flip(slice_arr, axis=1)
+                slice_arr = np.flip(slice_arr, axis=0)
 
             if slice_arr.shape != (ds.Rows, ds.Columns):
                 raise ValueError(
@@ -834,7 +846,7 @@ class Defacer:
         of both vectors, so IPP anchors i=0↔col=0 and j=0↔row=0.  The in-plane
         transform is therefore always a pure transpose:
 
-            np.rot90(arr, k=1) then flip axis=1  ≡  arr.T
+            np.rot90(arr, k=1) then flip axis=0  ≡  arr.T
 
         The IOP is validated and logged; the return value is always (1, True).
         """
@@ -853,7 +865,7 @@ class Defacer:
                     dot,
                 )
             else:
-                logger.debug("IOP F=%s C=%s → transpose", np.round(F, 3), np.round(C, 3))
+                logger.debug("IOP validated: F=%s C=%s", np.round(F, 3), np.round(C, 3))
         else:
             logger.warning("IOP vectors are near-zero (|F|=%.3f |C|=%.3f); using transpose", norm_F, norm_C)
 
