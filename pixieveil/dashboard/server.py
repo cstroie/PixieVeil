@@ -87,7 +87,12 @@ class Dashboard:
         # Create runner and site
         self.runner = web.AppRunner(self.app)
         await self.runner.setup()
-        self.site = web.TCPSite(self.runner, self.settings.http_server["ip"], self.settings.http_server["port"])
+        self.site = web.TCPSite(
+            self.runner,
+            self.settings.http_server["ip"],
+            self.settings.http_server["port"],
+            reuse_address=True,
+        )
 
         # Start the site
         await self.site.start()

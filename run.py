@@ -115,17 +115,14 @@ async def main() -> None:
     dicom_server = DicomServer(settings, storage_manager)
     dashboard = Dashboard(settings, storage_manager)
 
-    # Initialize task variables to None to prevent NameError in finally block
-    dashboard_task = None
-    dicom_task = None
-
     try:
         # Start the background study‑completion checker first
         await storage_manager.start()
 
-        # Start services as background tasks
-        dashboard_task = asyncio.create_task(dashboard.start())
-        dicom_task = asyncio.create_task(dicom_server.start())
+        # Both start() methods return quickly (they bind ports / launch threads).
+        # Await them directly so startup errors surface immediately.
+        await dashboard.start()
+        await dicom_server.start()
 
         # Wait indefinitely until cancelled (e.g., Ctrl‑C)
         await asyncio.Event().wait()
@@ -135,11 +132,6 @@ async def main() -> None:
         logger.exception("Unexpected error – shutting down")
     finally:
         logger.info("Stopping services...")
-        # Cancel running service tasks if they are still active
-        for task in (dashboard_task, dicom_task):
-            if task and not task.done():
-                task.cancel()
-        
         # Wait for services to stop with timeouts to prevent hanging
         try:
             await asyncio.wait_for(
@@ -152,7 +144,7 @@ async def main() -> None:
             )
         except asyncio.TimeoutError:
             logger.error("Failed to stop services within 10 second timeout")
-        
+
         # Stop storage manager with timeout
         try:
             await asyncio.wait_for(storage_manager.stop(), timeout=5.0)
