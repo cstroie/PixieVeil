@@ -3,7 +3,8 @@ DICOM Storage Module
 
 Sends anonymized (and optionally defaced) DICOM files to a remote DICOM node
 via C-STORE.  All files in a study directory are sent in a single association
-for efficiency.  Pre-deface backup directories (_pre_deface) are skipped.
+for efficiency.  All standard storage SOP classes are negotiated.
+Pre-deface backup directories (_pre_deface) are skipped.
 
 Configuration (under storage.remote_storage.dicom in settings.yaml)::
 
@@ -20,23 +21,11 @@ from pathlib import Path
 from typing import Optional
 
 import pydicom
-from pynetdicom import AE
-from pynetdicom.sop_class import (
-    CTImageStorage,
-    MRImageStorage,
-    SecondaryCaptureImageStorage,
-)
+from pynetdicom import AE, StoragePresentationContexts
 
 from pixieveil.config import Settings
 
 logger = logging.getLogger(__name__)
-
-# SOP classes we offer as SCU
-_PRESENTATION_CONTEXTS = [
-    CTImageStorage,
-    MRImageStorage,
-    SecondaryCaptureImageStorage,
-]
 
 
 class DicomStorage:
@@ -83,8 +72,7 @@ class DicomStorage:
             return False
 
         ae = AE(ae_title=self.calling_ae)
-        for ctx in _PRESENTATION_CONTEXTS:
-            ae.add_requested_context(ctx)
+        ae.requested_contexts = StoragePresentationContexts
 
         logger.info(
             "Connecting to DICOM node %s:%d (AE=%s) to send %d files from %s",
