@@ -180,6 +180,7 @@ class StorageManager:
         self._processing_studies: set = set()
         # Active pipeline stage counters (thread-safe via self.lock)
         self._active_receiving: int = 0
+        self._active_waiting: int = 0
         self._active_defacing: int = 0
         self._active_exporting: int = 0
 
@@ -295,11 +296,9 @@ class StorageManager:
         """Return which pipeline stages are currently active."""
         with self.lock:
             receiving = self._active_receiving > 0
+            waiting = self._active_waiting > 0
             defacing = self._active_defacing > 0
             exporting = self._active_exporting > 0
-            waiting = (
-                len(self._processing_studies) - self._active_defacing - self._active_exporting > 0
-            )
         return {
             "receiving": receiving,
             "waiting": waiting,
@@ -705,6 +704,7 @@ class StorageManager:
                 logger.debug("Study %s already being processed — skipping", study_uid)
                 continue
             self._processing_studies.add(study_uid)
+            self._active_waiting += 1
             asyncio.create_task(self._process_study(study_uid))
 
     async def _process_study(self, study_uid: str) -> None:
@@ -715,6 +715,9 @@ class StorageManager:
         thread via asyncio.to_thread so the event loop stays responsive.
         """
         try:
+            with self.lock:
+                self._active_waiting -= 1
+
             study_number = self.study_manager.get_study_number(study_uid)
             if not study_number:
                 logger.warning("No study number found for completed study %s", study_uid)
