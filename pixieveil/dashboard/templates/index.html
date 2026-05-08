@@ -58,10 +58,6 @@
                 background-color: var(--pico-form-element-valid-focus-color);
                 box-shadow: 0 0 6px var(--pico-form-element-valid-focus-color);
             }
-            .led-dot.active.led-idle {
-                background-color: var(--pico-primary);
-                box-shadow: 0 0 6px var(--pico-primary);
-            }
             .led-dot.active.led-error {
                 background-color: var(--pico-form-element-invalid-focus-color);
                 box-shadow: 0 0 6px var(--pico-form-element-invalid-focus-color);
@@ -88,7 +84,6 @@
                     <span class="led"><span class="led-dot" id="led-waiting"></span>Waiting</span>
                     <span class="led"><span class="led-dot" id="led-defacing"></span>Defacing</span>
                     <span class="led"><span class="led-dot" id="led-exporting"></span>Exporting</span>
-                    <span class="led"><span class="led-dot led-idle" id="led-idle"></span>Idle</span>
                 </div>
                 <p class="last-updated">Last updated: <span id="last-updated">Never</span></p>
             </article>
@@ -149,7 +144,6 @@
                 setLed('led-waiting',   !!ps.waiting,   null);
                 setLed('led-defacing',  !!ps.defacing,  null);
                 setLed('led-exporting', !!ps.exporting, null);
-                setLed('led-idle',      !!ps.idle,      'led-idle');
 
                 document.getElementById('last-updated').textContent = new Date().toLocaleTimeString();
 

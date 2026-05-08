@@ -304,7 +304,6 @@ class StorageManager:
             "waiting": waiting,
             "defacing": defacing,
             "exporting": exporting,
-            "idle": not any([receiving, waiting, defacing, exporting]),
         }
 
     def set_counter(self, category: str, subcategory: str = None, value: Any = 0) -> None:
