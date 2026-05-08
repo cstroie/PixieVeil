@@ -33,18 +33,38 @@
                 color: var(--pico-muted-color);
                 font-size: 0.875rem;
             }
-            .status-indicator {
+            .status-bar {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 0.75rem;
+                align-items: center;
+            }
+            .led {
+                display: inline-flex;
+                align-items: center;
+                gap: 0.4rem;
+                font-size: 0.9rem;
+            }
+            .led-dot {
                 display: inline-block;
                 width: 12px;
                 height: 12px;
                 border-radius: 50%;
-                margin: 0 0.5rem;
+                background-color: var(--pico-muted-border-color);
+                flex-shrink: 0;
+                transition: background-color 0.3s;
             }
-            .status-running {
+            .led-dot.active {
                 background-color: var(--pico-form-element-valid-focus-color);
+                box-shadow: 0 0 6px var(--pico-form-element-valid-focus-color);
             }
-            .status-stopped {
+            .led-dot.active.led-idle {
+                background-color: var(--pico-primary);
+                box-shadow: 0 0 6px var(--pico-primary);
+            }
+            .led-dot.active.led-error {
                 background-color: var(--pico-form-element-invalid-focus-color);
+                box-shadow: 0 0 6px var(--pico-form-element-invalid-focus-color);
             }
             .last-updated {
                 font-size: 0.75rem;
@@ -62,7 +82,14 @@
         <header>
             <h2>System Status</h2>
             <article>
-                <p><strong>Status</strong> <span id="status"><span class="status-indicator status-stopped"></span>Loading...</span></p>
+                <div class="status-bar" id="status-bar">
+                    <span class="led"><span class="led-dot" id="led-server"></span>Server</span>
+                    <span class="led"><span class="led-dot" id="led-receiving"></span>Receiving</span>
+                    <span class="led"><span class="led-dot" id="led-waiting"></span>Waiting</span>
+                    <span class="led"><span class="led-dot" id="led-defacing"></span>Defacing</span>
+                    <span class="led"><span class="led-dot" id="led-exporting"></span>Exporting</span>
+                    <span class="led"><span class="led-dot led-idle" id="led-idle"></span>Idle</span>
+                </div>
                 <p class="last-updated">Last updated: <span id="last-updated">Never</span></p>
             </article>
         </header>
@@ -90,7 +117,8 @@
                     updateDashboard(data);
                 } catch (error) {
                     console.error('Error fetching stats:', error);
-                    document.getElementById('status').innerHTML = '<span class="status-indicator status-stopped"></span>Error';
+                    const serverDot = document.getElementById('led-server');
+                    serverDot.classList.add('active', 'led-error');
                     document.getElementById('metrics-container').innerHTML = '<p>Could not load metrics. Retrying…</p>';
                 }
             }
@@ -102,13 +130,26 @@
                 return value;
             }
 
+            function setLed(id, active, extraClass) {
+                const dot = document.getElementById(id);
+                dot.classList.toggle('active', active);
+                if (extraClass) dot.classList.toggle(extraClass, active);
+            }
+
             function updateDashboard(data) {
-                const statusElement = document.getElementById('status');
-                if (data.server_status === 'running') {
-                    statusElement.innerHTML = '<span class="status-indicator status-running"></span>Running';
-                } else {
-                    statusElement.innerHTML = '<span class="status-indicator status-stopped"></span>Stopped';
-                }
+                const ps = data.pipeline_status || {};
+                const serverUp = data.server_status === 'running';
+
+                // Server LED: always lit, green when up, red when stopped
+                const serverDot = document.getElementById('led-server');
+                serverDot.classList.add('active');
+                serverDot.classList.toggle('led-error', !serverUp);
+
+                setLed('led-receiving', !!ps.receiving, null);
+                setLed('led-waiting',   !!ps.waiting,   null);
+                setLed('led-defacing',  !!ps.defacing,  null);
+                setLed('led-exporting', !!ps.exporting, null);
+                setLed('led-idle',      !!ps.idle,      'led-idle');
 
                 document.getElementById('last-updated').textContent = new Date().toLocaleTimeString();
 

@@ -178,6 +178,10 @@ class StorageManager:
         self._shutting_down = False
         # UIDs of studies currently being processed (defaced/zipped/uploaded)
         self._processing_studies: set = set()
+        # Active pipeline stage counters (thread-safe via self.lock)
+        self._active_receiving: int = 0
+        self._active_defacing: int = 0
+        self._active_exporting: int = 0
 
     # -----------------------------------------------------------------
     # Public lifecycle helpers
@@ -286,6 +290,23 @@ class StorageManager:
                     return self.counters[category]['errors']
             
             return default
+
+    def get_pipeline_status(self) -> dict:
+        """Return which pipeline stages are currently active."""
+        with self.lock:
+            receiving = self._active_receiving > 0
+            defacing = self._active_defacing > 0
+            exporting = self._active_exporting > 0
+            waiting = (
+                len(self._processing_studies) - self._active_defacing - self._active_exporting > 0
+            )
+        return {
+            "receiving": receiving,
+            "waiting": waiting,
+            "defacing": defacing,
+            "exporting": exporting,
+            "idle": not any([receiving, waiting, defacing, exporting]),
+        }
 
     def set_counter(self, category: str, subcategory: str = None, value: Any = 0) -> None:
         """
@@ -495,7 +516,9 @@ class StorageManager:
         if self._shutting_down:
             logger.debug(f"Skipping image {image_id} during shutdown")
             return
-            
+
+        with self.lock:
+            self._active_receiving += 1
         logger.debug(f"Starting processing of image {image_id} from {image_path}")
         start_time = time.time()
         study_uid = None
@@ -638,6 +661,9 @@ class StorageManager:
             with self.lock:
                 self.counters['processing']['errors']['processing'] += 1
                 self.inc_counter('errors', 'total')
+        finally:
+            with self.lock:
+                self._active_receiving -= 1
 
     def validate_dicom(self, ds: pydicom.Dataset) -> bool:
         """
@@ -709,7 +735,13 @@ class StorageManager:
             sc = self.study_manager._sidecars.get(study_uid)
             already_processed = sc is not None and sc.status == "archived"
             if self.defacer.enabled and not already_processed:
-                await asyncio.to_thread(self._deface_study, study_uid, study_number, study_dir)
+                with self.lock:
+                    self._active_defacing += 1
+                try:
+                    await asyncio.to_thread(self._deface_study, study_uid, study_number, study_dir)
+                finally:
+                    with self.lock:
+                        self._active_defacing -= 1
 
             # Count images (blocking glob — run in thread)
             image_count = await asyncio.to_thread(
@@ -725,14 +757,20 @@ class StorageManager:
                 self.inc_counter('archive', 'images', image_count)
 
             # --- Export: DICOM push takes priority over HTTP ZIP upload ---
-            if self.dicom_storage.enabled:
-                await self._export_via_dicom(
-                    study_uid, study_number, study_dir, image_count
-                )
-            else:
-                await self._export_via_http_zip(
-                    study_uid, study_number, study_dir, image_count
-                )
+            with self.lock:
+                self._active_exporting += 1
+            try:
+                if self.dicom_storage.enabled:
+                    await self._export_via_dicom(
+                        study_uid, study_number, study_dir, image_count
+                    )
+                else:
+                    await self._export_via_http_zip(
+                        study_uid, study_number, study_dir, image_count
+                    )
+            finally:
+                with self.lock:
+                    self._active_exporting -= 1
         except Exception:
             logger.exception("Unexpected error processing study %s", study_uid)
         finally:

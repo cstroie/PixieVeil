@@ -272,6 +272,7 @@ class Dashboard:
             "server_status": "running",
             "timestamp": time.time(),
             "defacing_enabled": storage_manager.defacer.enabled,
+            "pipeline_status": storage_manager.get_pipeline_status(),
             "sections": sections
         }
         
