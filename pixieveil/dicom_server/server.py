@@ -10,6 +10,7 @@ Classes:
 
 import asyncio
 import logging
+import socket
 from pathlib import Path
 from typing import Dict, Any, Optional
 
@@ -78,6 +79,20 @@ class DicomServer:
             Exception: If the server fails to start
         """
         logger.debug("Starting DICOM server...")
+
+        # Probe the port before handing off to the executor thread so a bind
+        # failure surfaces immediately as an OSError in this coroutine.
+        probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            probe.bind(('', self.ae_port))
+        except OSError as e:
+            probe.close()
+            logger.error(f"DICOM server cannot bind to port {self.ae_port} — address already in use: {e}")
+            raise
+        finally:
+            probe.close()
+
         self.ae = AE(ae_title=self.settings.dicom_server["ae_title"])
         self.ae.port = self.ae_port
         

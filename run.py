@@ -128,6 +128,9 @@ async def main() -> None:
         await asyncio.Event().wait()
     except (asyncio.CancelledError, KeyboardInterrupt):
         logger.info("Shutdown requested by user / cancellation")
+    except OSError:
+        logger.error("Cannot start: a required address/port is already in use — exiting")
+        sys.exit(1)
     except Exception as exc:
         logger.exception("Unexpected error – shutting down")
     finally:

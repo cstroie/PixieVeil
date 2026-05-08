@@ -95,7 +95,13 @@ class Dashboard:
         )
 
         # Start the site
-        await self.site.start()
+        try:
+            await self.site.start()
+        except OSError as e:
+            host = self.settings.http_server["ip"]
+            port = self.settings.http_server["port"]
+            logger.error(f"Dashboard cannot bind to {host}:{port} — address already in use: {e}")
+            raise
 
         logger.info(f"Dashboard started on http://{self.settings.http_server['ip']}:{self.settings.http_server['port']}")
 
