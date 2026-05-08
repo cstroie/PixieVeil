@@ -193,7 +193,6 @@ class Dashboard:
         total_studies = completed_studies + studies_in_progress
         
         def bytes_to_mb(bytes_val):
-            # Convert bytes to MB and return as float for JS formatting
             return int(round(bytes_val / (1024 * 1024)))
         
         # Get processing errors dict for nested access
@@ -243,8 +242,16 @@ class Dashboard:
                 "metrics": [
                     {"label": "Avg Processing Time", "value": int(round(storage_manager.get_counter('performance', 'average_time', 0) * 1000)), "suffix": "ms"},
                     {"label": "Total Processing Time", "value": int(round(storage_manager.get_counter('performance', 'total_time', 0) * 1000)), "suffix": "ms"},
-                    {"label": "Images Processed", "value": storage_manager.get_counter('processing', 'images')},
                     {"label": "Images Anonymized", "value": storage_manager.get_counter('processing', 'anonymized_images')},
+                ]
+            },
+            {
+                "title": "Defacing",
+                "metrics": [
+                    {"label": "Studies Defaced", "value": storage_manager.get_counter('defacing', 'studies')},
+                    {"label": "Series Defaced", "value": storage_manager.get_counter('defacing', 'series_defaced')},
+                    {"label": "Series Skipped", "value": storage_manager.get_counter('defacing', 'series_skipped')},
+                    {"label": "Errors", "value": storage_manager.get_counter('defacing', 'errors')},
                 ]
             },
             {
@@ -264,6 +271,7 @@ class Dashboard:
         stats = {
             "server_status": "running",
             "timestamp": time.time(),
+            "defacing_enabled": storage_manager.defacer.enabled,
             "sections": sections
         }
         

@@ -148,6 +148,12 @@ class StorageManager:
                 'count_time': 0,
                 'average_time': 0
             },
+            'defacing': {
+                'studies': 0,
+                'series_defaced': 0,
+                'series_skipped': 0,
+                'errors': 0,
+            },
             'cleanup': {
                 'studies': 0,
                 'images': 0
@@ -802,6 +808,7 @@ class StorageManager:
         Called via asyncio.to_thread — must not use await.
         """
         self.study_manager.mark_study_defacing(study_uid)
+        self.inc_counter('defacing', 'studies')
         for series_dir in sorted(study_dir.iterdir()):
             if not series_dir.is_dir():
                 continue
@@ -820,6 +827,7 @@ class StorageManager:
 
             if self.defacer.is_topogram(series_dir):
                 logger.info("Series %s is a topogram/scout — skipping defacing", series_dir.name)
+                self.inc_counter('defacing', 'series_skipped')
                 if orig_series_uid:
                     self.study_manager.set_series_classification(
                         study_uid, orig_series_uid, is_head=False, is_topogram=True
@@ -831,10 +839,15 @@ class StorageManager:
                     )
                 logger.info("Defacing series %s in study %04d", series_dir.name, study_number)
                 ok = self.defacer.deface_series(series_dir, data_dir=self.base_path)
-                if ok and orig_series_uid:
-                    self.study_manager.mark_series_defaced(study_uid, orig_series_uid)
+                if ok:
+                    self.inc_counter('defacing', 'series_defaced')
+                    if orig_series_uid:
+                        self.study_manager.mark_series_defaced(study_uid, orig_series_uid)
+                else:
+                    self.inc_counter('defacing', 'errors')
             else:
                 logger.debug("Series %s is not a head scan — skipping defacing", series_dir.name)
+                self.inc_counter('defacing', 'series_skipped')
                 if orig_series_uid:
                     self.study_manager.set_series_classification(
                         study_uid, orig_series_uid, is_head=False, is_topogram=False

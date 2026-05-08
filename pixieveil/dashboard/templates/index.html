@@ -15,8 +15,13 @@
                 font-weight: bold;
                 color: var(--pico-primary);
             }
-            .metrics.errors article span {
+            .metrics.errors article span,
+            .metrics article span.error-value {
                 color: var(--pico-form-element-invalid-focus-color);
+            }
+            .defacing-disabled {
+                color: var(--pico-muted-color);
+                font-style: italic;
             }
             .metrics article strong {
                 display: block;
@@ -49,7 +54,6 @@
         </style>
     </head>
     <body class="container">
-        <nav></nav>
         <hgroup>
             <h1>PixieVeil Dashboard</h1>
             <p>Real-time DICOM Anonymization Server</p>
@@ -60,21 +64,21 @@
             <article>
                 <p><strong>Status</strong> <span id="status"><span class="status-indicator status-stopped"></span>Loading...</span></p>
                 <p class="last-updated">Last updated: <span id="last-updated">Never</span></p>
-            </div>
+            </article>
         </header>
         
         <main>
-            <div id="metrics-container"></div>
+            <div id="metrics-container"><p aria-busy="true">Loading metrics…</p></div>
         </main>
-        
+
         <footer class="grid">
             <button onclick="refreshData()" role="button">Refresh Data</button>
-            <button onclick="toggleAutoRefresh()" id="auto-refresh-btn" role="button">Enable Auto Refresh</button>
+            <button onclick="toggleAutoRefresh()" id="auto-refresh-btn" role="button" class="secondary">Disable Auto Refresh</button>
         </footer>
 
         <script>
             let autoRefreshInterval = null;
-            let isAutoRefreshEnabled = false;
+            let isAutoRefreshEnabled = true;
 
             async function fetchStats() {
                 try {
@@ -87,11 +91,18 @@
                 } catch (error) {
                     console.error('Error fetching stats:', error);
                     document.getElementById('status').innerHTML = '<span class="status-indicator status-stopped"></span>Error';
+                    document.getElementById('metrics-container').innerHTML = '<p>Could not load metrics. Retrying…</p>';
                 }
             }
 
+            function formatValue(value) {
+                if (typeof value === 'number') {
+                    return value.toLocaleString();
+                }
+                return value;
+            }
+
             function updateDashboard(data) {
-                // Update status
                 const statusElement = document.getElementById('status');
                 if (data.server_status === 'running') {
                     statusElement.innerHTML = '<span class="status-indicator status-running"></span>Running';
@@ -99,25 +110,52 @@
                     statusElement.innerHTML = '<span class="status-indicator status-stopped"></span>Stopped';
                 }
 
-                // Update timestamp
-                const now = new Date();
-                document.getElementById('last-updated').textContent = now.toLocaleTimeString();
+                document.getElementById('last-updated').textContent = new Date().toLocaleTimeString();
 
-                // Clear and rebuild metrics container
                 const container = document.getElementById('metrics-container');
                 container.innerHTML = '';
 
-                // Iterate over sections
                 data.sections.forEach(section => {
+                    const isDefacing = section.title === 'Defacing';
+
                     const sectionEl = document.createElement('section');
                     sectionEl.className = 'metrics';
                     if (section.class) {
                         sectionEl.classList.add(section.class);
                     }
 
+                    const titleRow = document.createElement('div');
+                    titleRow.style.display = 'flex';
+                    titleRow.style.alignItems = 'baseline';
+                    titleRow.style.gap = '0.75rem';
+
                     const title = document.createElement('h3');
+                    title.style.margin = '0';
                     title.textContent = section.title;
-                    sectionEl.appendChild(title);
+                    titleRow.appendChild(title);
+
+                    if (isDefacing) {
+                        const badge = document.createElement('small');
+                        if (data.defacing_enabled) {
+                            badge.textContent = 'enabled';
+                            badge.style.color = 'var(--pico-form-element-valid-focus-color)';
+                        } else {
+                            badge.textContent = 'disabled';
+                            badge.className = 'defacing-disabled';
+                        }
+                        titleRow.appendChild(badge);
+                    }
+
+                    sectionEl.appendChild(titleRow);
+
+                    if (isDefacing && !data.defacing_enabled) {
+                        const msg = document.createElement('p');
+                        msg.className = 'defacing-disabled';
+                        msg.textContent = 'Defacing is not enabled in the current configuration.';
+                        sectionEl.appendChild(msg);
+                        container.appendChild(sectionEl);
+                        return;
+                    }
 
                     const grid = document.createElement('div');
                     grid.className = 'grid';
@@ -130,7 +168,10 @@
                         article.appendChild(label);
 
                         const valueSpan = document.createElement('span');
-                        valueSpan.textContent = metric.value;
+                        valueSpan.textContent = formatValue(metric.value);
+                        if (isDefacing && metric.label === 'Errors' && metric.value > 0) {
+                            valueSpan.classList.add('error-value');
+                        }
                         article.appendChild(valueSpan);
 
                         if (metric.suffix) {
@@ -153,26 +194,23 @@
 
             function toggleAutoRefresh() {
                 const btn = document.getElementById('auto-refresh-btn');
-                
                 if (isAutoRefreshEnabled) {
-                    // Disable auto refresh
                     clearInterval(autoRefreshInterval);
                     autoRefreshInterval = null;
                     isAutoRefreshEnabled = false;
                     btn.textContent = 'Enable Auto Refresh';
                     btn.classList.remove('secondary');
                 } else {
-                    // Enable auto refresh
-                    autoRefreshInterval = setInterval(fetchStats, 5000); // Refresh every 5 seconds
+                    autoRefreshInterval = setInterval(fetchStats, 5000);
                     isAutoRefreshEnabled = true;
                     btn.textContent = 'Disable Auto Refresh';
                     btn.classList.add('secondary');
                 }
             }
 
-            // Initial load
             document.addEventListener('DOMContentLoaded', function() {
                 fetchStats();
+                autoRefreshInterval = setInterval(fetchStats, 5000);
             });
         </script>
     </body>
