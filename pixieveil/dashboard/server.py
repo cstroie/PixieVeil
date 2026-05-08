@@ -211,39 +211,41 @@ class Dashboard:
             {
                 "title": "Processed",
                 "metrics": [
-                    {"label": "Images Processed", "value": storage_manager.get_counter('processing', 'images')},
-                    {"label": "Images Filtered", "value": storage_manager.get_counter('processing', 'filtered_images')},
-                    {"label": "Studies Completed", "value": completed_studies},
-                    {"label": "Studies in Progress", "value": studies_in_progress},
-                    {"label": "Total Studies", "value": total_studies},
+                    {"label": "Studies", "value": total_studies, "suffix": "total",
+                     "sub_value": studies_in_progress, "sub_suffix": "in progress"},
+                    {"label": "Completed", "value": completed_studies, "suffix": "studies"},
+                    {"label": "Images", "value": storage_manager.get_counter('processing', 'images'), "suffix": "processed",
+                     "sub_value": storage_manager.get_counter('processing', 'filtered_images'), "sub_suffix": "filtered"},
+                    {"label": "Anonymized", "value": storage_manager.get_counter('processing', 'anonymized_images'), "suffix": "images"},
                 ]
             },
             {
                 "title": "Reception",
                 "metrics": [
-                    {"label": "Studies Received", "value": storage_manager.get_counter('reception', 'studies')},
-                    {"label": "Images Received", "value": storage_manager.get_counter('reception', 'images')},
-                    {"label": "Data Received", "value": bytes_to_mb(storage_manager.get_counter('reception', 'bytes')), "suffix": "MB"},
+                    {"label": "Received", "value": storage_manager.get_counter('reception', 'studies'), "suffix": "studies",
+                     "sub_value": storage_manager.get_counter('reception', 'images'), "sub_suffix": "images"},
+                    {"label": "Data", "value": bytes_to_mb(storage_manager.get_counter('reception', 'bytes')), "suffix": "MB"},
                 ]
             },
             {
                 "title": "Storage",
                 "metrics": [
-                    {"label": "Studies Stored", "value": storage_manager.get_counter('storage', 'studies')},
-                    {"label": "Series Stored", "value": storage_manager.get_counter('storage', 'series')},
-                    {"label": "Images Stored", "value": storage_manager.get_counter('storage', 'images')},
+                    {"label": "Stored", "value": storage_manager.get_counter('storage', 'studies'), "suffix": "studies",
+                     "sub_value": storage_manager.get_counter('storage', 'images'), "sub_suffix": "images"},
+                    {"label": "Series", "value": storage_manager.get_counter('storage', 'series')},
                 ]
             },
             {
                 "title": "Export",
                 "metrics": [
-                    {"label": "Studies Archived", "value": storage_manager.get_counter('archive', 'studies')},
-                    {"label": "Images Archived", "value": storage_manager.get_counter('archive', 'images')},
-                    {"label": "DICOM Studies", "value": storage_manager.get_counter('export', 'dicom_studies')},
-                    {"label": "DICOM Images", "value": storage_manager.get_counter('export', 'dicom_images')},
-                    {"label": "HTTP Studies", "value": storage_manager.get_counter('export', 'http_studies')},
-                    {"label": "HTTP Data", "value": bytes_to_mb(storage_manager.get_counter('export', 'http_bytes')), "suffix": "MB"},
-                    {"label": "Cleaned Up", "value": storage_manager.get_counter('cleanup', 'studies')},
+                    {"label": "Archived", "value": storage_manager.get_counter('archive', 'studies'), "suffix": "studies",
+                     "sub_value": storage_manager.get_counter('archive', 'images'), "sub_suffix": "images"},
+                    {"label": "DICOM", "value": storage_manager.get_counter('export', 'dicom_studies'), "suffix": "studies",
+                     "sub_value": storage_manager.get_counter('export', 'dicom_images'), "sub_suffix": "images"},
+                    {"label": "HTTP", "value": storage_manager.get_counter('export', 'http_studies'), "suffix": "studies",
+                     "sub_value": bytes_to_mb(storage_manager.get_counter('export', 'http_bytes')), "sub_suffix": "MB"},
+                    {"label": "Cleaned Up", "value": storage_manager.get_counter('cleanup', 'studies'), "suffix": "studies",
+                     "sub_value": storage_manager.get_counter('cleanup', 'images'), "sub_suffix": "images"},
                 ]
             },
             {

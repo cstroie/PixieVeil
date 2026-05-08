@@ -203,16 +203,21 @@
                         article.appendChild(label);
 
                         const valueSpan = document.createElement('span');
-                        valueSpan.textContent = formatValue(metric.value);
+                        let valueText = formatValue(metric.value);
+                        if (metric.suffix) valueText += ' ' + metric.suffix;
+                        valueSpan.textContent = valueText;
                         if (isDefacing && metric.label === 'Errors' && metric.value > 0) {
                             valueSpan.classList.add('error-value');
                         }
                         article.appendChild(valueSpan);
 
-                        if (metric.suffix) {
-                            const suffixSmall = document.createElement('small');
-                            suffixSmall.textContent = ' ' + metric.suffix;
-                            article.appendChild(suffixSmall);
+                        if (metric.sub_value !== undefined) {
+                            const subLine = document.createElement('small');
+                            subLine.style.display = 'block';
+                            let subText = formatValue(metric.sub_value);
+                            if (metric.sub_suffix) subText += ' ' + metric.sub_suffix;
+                            subLine.textContent = subText;
+                            article.appendChild(subLine);
                         }
 
                         grid.appendChild(article);
