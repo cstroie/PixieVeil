@@ -235,12 +235,15 @@ class Dashboard:
                 ]
             },
             {
-                "title": "Archive",
+                "title": "Export",
                 "metrics": [
                     {"label": "Studies Archived", "value": storage_manager.get_counter('archive', 'studies')},
                     {"label": "Images Archived", "value": storage_manager.get_counter('archive', 'images')},
-                    {"label": "Uploads", "value": storage_manager.get_counter('remote_storage', 'studies')},
-                    {"label": "Upload Data", "value": bytes_to_mb(storage_manager.get_counter('remote_storage', 'bytes')), "suffix": "MB"},
+                    {"label": "DICOM Studies", "value": storage_manager.get_counter('export', 'dicom_studies')},
+                    {"label": "DICOM Images", "value": storage_manager.get_counter('export', 'dicom_images')},
+                    {"label": "HTTP Studies", "value": storage_manager.get_counter('export', 'http_studies')},
+                    {"label": "HTTP Data", "value": bytes_to_mb(storage_manager.get_counter('export', 'http_bytes')), "suffix": "MB"},
+                    {"label": "Cleaned Up", "value": storage_manager.get_counter('cleanup', 'studies')},
                 ]
             },
             {
@@ -268,8 +271,7 @@ class Dashboard:
                     {"label": "Validation", "value": processing_errors.get('validation', 0)},
                     {"label": "Anonymization", "value": processing_errors.get('anonymization', 0)},
                     {"label": "Processing", "value": processing_errors.get('processing', 0)},
-                    {"label": "Archive", "value": storage_manager.get_counter('archive', 'errors')},
-                    {"label": "Upload", "value": storage_manager.get_counter('remote_storage', 'errors')},
+                    {"label": "Export", "value": storage_manager.get_counter('export', 'errors')},
                 ]
             }
         ]

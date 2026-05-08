@@ -133,15 +133,12 @@ class StorageManager:
                 'errors': 0
             },
             'export': {
-                'studies': 0,
-                'images': 0,
+                'dicom_studies': 0,
+                'dicom_images': 0,
+                'http_studies': 0,
+                'http_images': 0,
+                'http_bytes': 0,
                 'errors': 0
-            },
-            'remote_storage': {
-                'studies': 0,
-                'images': 0,
-                'errors': 0,
-                'bytes': 0
             },
             'performance': {
                 'total_time': 0,
@@ -555,7 +552,6 @@ class StorageManager:
             if study_number is None:
                 with self.lock:
                     self.inc_counter('reception', 'studies')
-                    self.inc_counter('processing', 'studies')
                     self.study_size_bytes[study_uid] = 0
                 logger.debug(f"New study detected: {study_uid}")
 
@@ -786,8 +782,8 @@ class StorageManager:
         success = await self.dicom_storage.send_study(study_dir)
         if success:
             with self.lock:
-                self.inc_counter('remote_storage', 'studies')
-                self.inc_counter('remote_storage', 'images', image_count)
+                self.inc_counter('export', 'dicom_studies')
+                self.inc_counter('export', 'dicom_images', image_count)
                 self.inc_counter('cleanup', 'studies')
                 self.inc_counter('cleanup', 'images', image_count)
             await asyncio.to_thread(shutil.rmtree, study_dir)
@@ -795,7 +791,7 @@ class StorageManager:
         else:
             logger.error("DICOM push failed for study %s", study_uid)
             with self.lock:
-                self.inc_counter('remote_storage', 'errors')
+                self.inc_counter('export', 'errors')
                 self.inc_counter('errors', 'total')
 
     async def _export_via_http_zip(self, study_uid: str, study_number: int,
@@ -812,10 +808,6 @@ class StorageManager:
 
         logger.info("Created ZIP archive: %s", zip_path)
 
-        with self.lock:
-            self.inc_counter('export', 'studies')
-            self.inc_counter('export', 'images', image_count)
-
         success = await self.remote_storage.upload_file(zip_path, zip_path.name)
 
         if success is None:
@@ -827,9 +819,9 @@ class StorageManager:
         elif success:
             logger.info("Successfully uploaded study %04d", study_number)
             with self.lock:
-                self.inc_counter('remote_storage', 'studies')
-                self.inc_counter('remote_storage', 'images', image_count)
-                self.inc_counter('remote_storage', 'bytes', zip_path.stat().st_size)
+                self.inc_counter('export', 'http_studies')
+                self.inc_counter('export', 'http_images', image_count)
+                self.inc_counter('export', 'http_bytes', zip_path.stat().st_size)
                 self.inc_counter('cleanup', 'studies')
                 self.inc_counter('cleanup', 'images', image_count)
             await asyncio.to_thread(shutil.rmtree, study_dir)
@@ -838,8 +830,7 @@ class StorageManager:
         else:
             logger.error("Failed to upload study %s", study_uid)
             with self.lock:
-                self.inc_counter('remote_storage', 'errors')
-                self.inc_counter('archive', 'errors')
+                self.inc_counter('export', 'errors')
                 self.inc_counter('errors', 'total')
 
     def _deface_study(self, study_uid: str, study_number: int, study_dir: Path) -> None:
