@@ -6,22 +6,23 @@
         <title>PixieVeil Dashboard</title>
         <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
         <style>
+            article {
+                margin-bottom: var(--pico-spacing);
+            }
+            .metrics {
+                margin-bottom: calc(var(--pico-spacing) * 1.5);
+            }
+            .metrics h3 {
+                margin-bottom: calc(var(--pico-spacing) * 0.5);
+            }
             .metrics article {
                 text-align: center;
                 padding: 1.25rem 1rem;
+                margin-bottom: 0;
+                transition: border-color 0.2s;
             }
-            .metrics article span {
-                font-size: 2rem;
-                font-weight: bold;
-                color: var(--pico-primary);
-            }
-            .metrics.errors article span,
-            .metrics article span.error-value {
-                color: var(--pico-form-element-invalid-focus-color);
-            }
-            .defacing-disabled {
-                color: var(--pico-muted-color);
-                font-style: italic;
+            .metrics article:hover {
+                border-color: var(--pico-primary);
             }
             .metrics article strong {
                 display: block;
@@ -29,14 +30,56 @@
                 margin-bottom: 0.5rem;
                 color: var(--pico-muted-color);
             }
+            .metrics article span {
+                font-size: 2rem;
+                font-weight: bold;
+                color: var(--pico-primary);
+                font-variant-numeric: tabular-nums;
+            }
+            .metrics.errors article span,
+            .metrics article span.error-value {
+                color: var(--pico-form-element-invalid-focus-color);
+            }
             .metrics article small {
                 color: var(--pico-muted-color);
                 font-size: 0.875rem;
             }
+            .sub-value {
+                display: block;
+            }
+            .defacing-disabled {
+                color: var(--pico-muted-color);
+                font-style: italic;
+            }
+            .section-title {
+                display: flex;
+                align-items: baseline;
+                gap: 0.75rem;
+                margin-bottom: calc(var(--pico-spacing) * 0.5);
+            }
+            .section-title h3 {
+                margin: 0;
+            }
+            .badge {
+                font-size: 0.75rem;
+                font-weight: var(--pico-font-weight);
+                text-transform: uppercase;
+                letter-spacing: 0.02em;
+                padding: 0.15rem 0.55rem;
+                border-radius: var(--pico-border-radius);
+            }
+            .badge-enabled {
+                color: var(--pico-form-element-valid-focus-color);
+                border: 1px solid var(--pico-form-element-valid-focus-color);
+            }
+            .badge-disabled {
+                color: var(--pico-muted-color);
+                border: 1px solid var(--pico-muted-border-color);
+            }
             .status-bar {
                 display: flex;
                 flex-wrap: wrap;
-                gap: 0.75rem;
+                gap: 0.75rem 1.25rem;
                 align-items: center;
             }
             .led {
@@ -52,7 +95,7 @@
                 border-radius: 50%;
                 background-color: var(--pico-muted-border-color);
                 flex-shrink: 0;
-                transition: background-color 0.3s;
+                transition: background-color 0.3s, box-shadow 0.3s;
             }
             .led-dot.active {
                 background-color: var(--pico-form-element-valid-focus-color);
@@ -66,6 +109,7 @@
                 font-size: 0.75rem;
                 color: var(--pico-muted-color);
                 text-align: right;
+                margin: calc(var(--pico-spacing) * 0.5) 0 0;
             }
         </style>
     </head>
@@ -160,24 +204,16 @@
                     }
 
                     const titleRow = document.createElement('div');
-                    titleRow.style.display = 'flex';
-                    titleRow.style.alignItems = 'baseline';
-                    titleRow.style.gap = '0.75rem';
+                    titleRow.className = 'section-title';
 
                     const title = document.createElement('h3');
-                    title.style.margin = '0';
                     title.textContent = section.title;
                     titleRow.appendChild(title);
 
                     if (isDefacing) {
-                        const badge = document.createElement('small');
-                        if (data.defacing_enabled) {
-                            badge.textContent = 'enabled';
-                            badge.style.color = 'var(--pico-form-element-valid-focus-color)';
-                        } else {
-                            badge.textContent = 'disabled';
-                            badge.className = 'defacing-disabled';
-                        }
+                        const badge = document.createElement('span');
+                        badge.className = data.defacing_enabled ? 'badge badge-enabled' : 'badge badge-disabled';
+                        badge.textContent = data.defacing_enabled ? 'enabled' : 'disabled';
                         titleRow.appendChild(badge);
                     }
 
@@ -213,7 +249,7 @@
 
                         if (metric.sub_value !== undefined) {
                             const subLine = document.createElement('small');
-                            subLine.style.display = 'block';
+                            subLine.className = 'sub-value';
                             let subText = formatValue(metric.sub_value);
                             if (metric.sub_suffix) subText += ' ' + metric.sub_suffix;
                             subLine.textContent = subText;
