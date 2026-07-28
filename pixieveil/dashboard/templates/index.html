@@ -20,32 +20,46 @@
                 padding: 1.25rem 1rem;
                 margin-bottom: 0;
                 transition: border-color 0.2s;
+                display: flex;
+                flex-direction: column;
+                gap: 0.35rem;
             }
             .metrics article:hover {
                 border-color: var(--pico-primary);
             }
             .metrics article strong {
                 display: block;
-                font-size: 0.9rem;
-                margin-bottom: 0.5rem;
+                font-size: 0.8rem;
+                font-weight: var(--pico-font-weight);
+                text-transform: uppercase;
+                letter-spacing: 0.03em;
                 color: var(--pico-muted-color);
+            }
+            .metrics article .value-row {
+                display: flex;
+                align-items: baseline;
+                justify-content: center;
+                gap: 0.35rem;
             }
             .metrics article span {
                 font-size: 2rem;
+                line-height: 1;
                 font-weight: bold;
                 color: var(--pico-primary);
                 font-variant-numeric: tabular-nums;
+            }
+            .metrics article .unit {
+                font-size: 0.8rem;
+                font-weight: normal;
+                color: var(--pico-muted-color);
             }
             .metrics.errors article span,
             .metrics article span.error-value {
                 color: var(--pico-form-element-invalid-focus-color);
             }
-            .metrics article small {
-                color: var(--pico-muted-color);
-                font-size: 0.875rem;
-            }
             .sub-value {
-                display: block;
+                color: var(--pico-muted-color);
+                font-size: 0.8rem;
             }
             .defacing-disabled {
                 color: var(--pico-muted-color);
@@ -238,14 +252,24 @@
                         label.textContent = metric.label;
                         article.appendChild(label);
 
+                        const valueRow = document.createElement('div');
+                        valueRow.className = 'value-row';
+
                         const valueSpan = document.createElement('span');
-                        let valueText = formatValue(metric.value);
-                        if (metric.suffix) valueText += ' ' + metric.suffix;
-                        valueSpan.textContent = valueText;
+                        valueSpan.textContent = formatValue(metric.value);
                         if (isDefacing && metric.label === 'Errors' && metric.value > 0) {
                             valueSpan.classList.add('error-value');
                         }
-                        article.appendChild(valueSpan);
+                        valueRow.appendChild(valueSpan);
+
+                        if (metric.suffix) {
+                            const unit = document.createElement('span');
+                            unit.className = 'unit';
+                            unit.textContent = metric.suffix;
+                            valueRow.appendChild(unit);
+                        }
+
+                        article.appendChild(valueRow);
 
                         if (metric.sub_value !== undefined) {
                             const subLine = document.createElement('small');

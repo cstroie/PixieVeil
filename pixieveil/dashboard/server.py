@@ -240,9 +240,9 @@ class Dashboard:
                 "metrics": [
                     {"label": "Archived", "value": storage_manager.get_counter('archive', 'studies'), "suffix": "studies",
                      "sub_value": storage_manager.get_counter('archive', 'images'), "sub_suffix": "images"},
-                    {"label": "DICOM", "value": storage_manager.get_counter('export', 'dicom_studies'), "suffix": "studies",
+                    {"label": "DICOM Export", "value": storage_manager.get_counter('export', 'dicom_studies'), "suffix": "studies",
                      "sub_value": storage_manager.get_counter('export', 'dicom_images'), "sub_suffix": "images"},
-                    {"label": "HTTP", "value": storage_manager.get_counter('export', 'http_studies'), "suffix": "studies",
+                    {"label": "HTTP Export", "value": storage_manager.get_counter('export', 'http_studies'), "suffix": "studies",
                      "sub_value": bytes_to_mb(storage_manager.get_counter('export', 'http_bytes')), "sub_suffix": "MB"},
                     {"label": "Cleaned Up", "value": storage_manager.get_counter('cleanup', 'studies'), "suffix": "studies",
                      "sub_value": storage_manager.get_counter('cleanup', 'images'), "sub_suffix": "images"},
@@ -251,8 +251,8 @@ class Dashboard:
             {
                 "title": "Performance",
                 "metrics": [
-                    {"label": "Avg Processing Time", "value": int(round(storage_manager.get_counter('performance', 'average_time', 0) * 1000)), "suffix": "ms"},
-                    {"label": "Total Processing Time", "value": int(round(storage_manager.get_counter('performance', 'total_time', 0) * 1000)), "suffix": "ms"},
+                    {"label": "Average Time", "value": int(round(storage_manager.get_counter('performance', 'average_time', 0) * 1000)), "suffix": "ms"},
+                    {"label": "Total Time", "value": int(round(storage_manager.get_counter('performance', 'total_time', 0) * 1000)), "suffix": "ms"},
                     {"label": "Images Anonymized", "value": storage_manager.get_counter('processing', 'anonymized_images')},
                 ]
             },
