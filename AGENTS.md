@@ -16,15 +16,24 @@ PixieVeil is a DICOM anonymization server. It receives medical imaging data from
 ## Commands
 
 ```bash
-# Run the server
+# Bootstrap: .python venv (python3.12) + pip install -e . + install.py
+./install
+
+# Run the server directly
 python pixieveil.py
 
-# Interactive setup (installs torch/nnunetv2, downloads nnUNet model)
+# Or via the control script (foreground; writes/checks a pidfile)
+./pixieveil.sh start    # also: stop, restart, status
+
+# Interactive setup (installs torch/nnunetv2, downloads nnUNet model) —
+# normally run automatically by ./install, but can be re-run standalone
 python install.py
 
 # Download defacing model only
 python install.py --download-model
 ```
+
+See [INSTALL.md](INSTALL.md) for the full bootstrap/systemd/OpenRC flow.
 
 No automated test suite exists. Lint manually if needed:
 
@@ -142,9 +151,10 @@ series_filter:
 
 defacing:
   enabled: false
-  device: "cuda"        # falls back to cpu automatically if unavailable
-  keep_backup: false
-  rotation_mode: "auto90"
+  device: "cuda"             # falls back to cpu automatically if unavailable
+  keep_backup: true          # keep anonymized-but-not-defaced series as <series>_pre_deface/; set false in production
+  rotation_mode: "iop"       # "none" to skip; anything else applies IOP-based transpose (recommended)
+  mask_dilation_mm: 2.0      # grow the face mask by this many mm before applying; eliminates skin-edge residue
   model_dir: ./data/nnUNet
   body_parts: [HEAD, BRAIN, NECK, SKULL]
   series_description_pattern: "(?i)(head|brain|skull|cranial|cerebr)"

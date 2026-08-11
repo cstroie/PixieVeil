@@ -214,7 +214,7 @@ run_venv_as_service_user() {
     if [[ "${ASSUME_YES:-}" == "1" ]]; then
         install_args+=(--non-interactive)
     fi
-    su -s /bin/sh -c "PYTHON='$PYTHON' '$INSTALL_DIR/install' --venv-only ${install_args[*]}" "$SERVICE_USER"
+    su -s /bin/sh -c "PYTHON='$PYTHON' '$INSTALL_DIR/install' --venv-only ${install_args[*]:-}" "$SERVICE_USER"
 }
 
 # --- Resolve the service account and print the plan up front ---------------

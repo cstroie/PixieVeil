@@ -22,20 +22,21 @@ Modality ──C-STORE──► DicomServer
                            │
                       CStoreSCPHandler
                            │
-                      StorageManager ──► save_temp_image()
+                      StorageManager.save_temp_image()
                            │
-                      process_image()
+                      StorageManager.process_image()
                         ├─ validate
                         ├─ SeriesFilter.should_filter()
                         ├─ Anonymizer.anonymize()
                         ├─ StudyManager.add_image_to_study()
                         └─ move to base_path/<study>/<series>/<image>.dcm
                            │
-                  (background loop)
-                  check_study_completions()
-                        ├─ ZipManager.create_zip()
-                        ├─ RemoteStorage.upload_file()
-                        └─ cleanup local files
+                  (background loop — asyncio.create_task per completed study)
+                  StorageManager._process_study()
+                        ├─ Defacer.deface_series()        [optional, in thread]
+                        ├─ DicomStorage.send_study()      [DICOM export, in thread]
+                        └─ ZipManager.create_zip()        [HTTP export, in thread]
+                             └─ RemoteStorage.upload_file()
 ```
 
 All services run concurrently in a single asyncio event loop. Blocking I/O (ZIP creation, file reads) is offloaded to a thread pool via `asyncio.to_thread`.
@@ -74,7 +75,7 @@ dicom_server:
 storage:
   base_path: "./data/dicom"     # Organized study tree
   temp_path: "./data/tmp"       # Incoming image staging area
-  max_storage_gb: 1000
+  max_storage_gb: 100
   # Optional remote export — omit entire block to keep archives local.
   # DICOM C-STORE takes priority over HTTP ZIP upload if both are configured.
   # remote_storage:
@@ -94,7 +95,7 @@ http_server:
 
 # Study completion
 study:
-  completion_timeout: 300          # seconds of inactivity before a study is considered done
+  completion_timeout: 120          # seconds of inactivity before a study is considered done
   completion_check_interval: 30    # how often (seconds) to check for completed studies
   max_study_size_mb: 4000
 
@@ -111,10 +112,11 @@ series_filter:
 # Defacing (optional — requires PyTorch + nnUNetv2, set up via install.py)
 defacing:
   enabled: false
-  device: "cuda"        # "cuda", "mps" (Apple Silicon), or "cpu"
-                        # falls back to cpu automatically if the device is unavailable
-  keep_backup: false    # set true to keep a <series>_pre_deface/ copy
-  rotation_mode: "auto90"
+  device: "cuda"             # "cuda", "mps" (Apple Silicon), or "cpu"
+                             # falls back to cpu automatically if the device is unavailable
+  keep_backup: true          # keep anonymized-but-not-defaced series as <series>_pre_deface/; set false in production
+  rotation_mode: "iop"       # "none" to skip; anything else applies IOP-based transpose (recommended)
+  mask_dilation_mm: 2.0      # grow the face mask by this many mm before applying; eliminates skin-edge residue
   model_dir: ./data/nnUNet
   body_parts: [HEAD, BRAIN, NECK, SKULL]
   series_description_pattern: "(?i)(head|brain|skull|cranial|cerebr)"
@@ -308,15 +310,16 @@ Maximum anonymization for strict EU GDPR data protection:
 
 #### Always-Handled Fields
 
-The following fields are always anonymized regardless of profile:
+The following are handled the same way regardless of profile:
 - **SOPInstanceUID** → unique new UID per image
-- **PatientAge** → cleared
-- **OtherPatientIDs, PatientAddress, PatientSize, PatientWeight** → cleared
+- **PatientName** → after the profile strategy runs, a non-empty result is prefixed with `ANON-` (e.g. a `PSEUDO` pseudonym becomes `ANON-<pseudonym>`)
+- **OtherPatientIDs, PatientAddress** → cleared
 - **InstitutionAddress** → cleared
 - **Sensitive tags** (ClinicalTrial*, MilitaryRank, etc.) → removed
 - **Overlay data** (60xx groups) → removed
 - **BurnedInAnnotation** → set to "NO"
-- **StudyDescription, SeriesDescription** → anonymized to generic names
+
+`PatientAge`, `PatientSize`, and `PatientWeight` are deliberately **not** cleared unconditionally — `PatientAge` still follows the active profile's strategy (`KEEP` in research, `CLEAR` in gdpr), while `PatientSize`/`PatientWeight` are left untouched by the anonymizer in both profiles, since they're not directly identifying and are often needed for research. Likewise `StudyDescription`/`SeriesDescription` follow the profile strategy (`KEEP` in research, `CLEAR` in gdpr) rather than always being replaced with a generic value.
 
 ## Storage layout
 
@@ -409,7 +412,7 @@ The web dashboard is available at `http://<http_server.ip>:<http_server.port>/` 
 | `GET /stats` | JSON metrics snapshot |
 | `GET /health` | `{"status": "ok"}` health check |
 
-The `/stats` response contains counters grouped into sections: **Processed**, **Reception**, **Storage**, **Archive**, **Performance**, and **Errors**.
+The `/stats` response contains counters grouped into sections: **Processed**, **Reception**, **Storage**, **Export**, **Performance**, **Defacing**, and **Errors**.
 
 ## Running
 

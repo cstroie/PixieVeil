@@ -1,14 +1,25 @@
 PixieVeil/
-├── run.py                          # Entry point; wires up and starts all services
+├── pixieveil.py                    # Entry point; thin shim into pixieveil/cli.py
+├── pixieveil.sh                    # start/stop/restart/status control script (foreground, pidfile-based)
+├── install                         # Bootstrap: .python venv (python3.12) + pip install -e . + install.py;
+│                                   # also does systemd/openrc system-service setup
 ├── install.py                      # Interactive setup: torch/nnunetv2 install + model download
+├── pixieveil.service               # systemd unit
+├── pixieveil.openrc                # OpenRC init script (Alpine and others)
 ├── pyproject.toml
 ├── requirements.txt
+├── README.md                       # Features, config reference, storage layout, audit trail, dashboard
+├── INSTALL.md                      # Install/run/systemd/OpenRC walkthrough
+├── QUICKSTART.md                   # Shorter install + first-run walkthrough
+├── CLAUDE.md / AGENTS.md           # Agent-facing project guidance
 │
 ├── config/
 │   ├── settings.yaml               # Active configuration (not committed)
 │   └── settings.example.yaml       # Reference configuration with all options documented
 │
 └── pixieveil/
+    ├── cli.py                      # main()/run(): wires up and starts all services, signal handling, pidfile
+    │
     ├── config/
     │   └── settings.py             # Loads and validates settings.yaml
     │

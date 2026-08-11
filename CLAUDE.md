@@ -9,21 +9,31 @@ PixieVeil is a DICOM anonymization server: it receives medical images via DICOM 
 ## Commands
 
 ```bash
-# Run the server
+# Bootstrap: .python venv (python3.12) + pip install -e . + install.py
+./install
+
+# Run the server directly
 python pixieveil.py
 
-# Interactive setup (installs torch/nnunetv2, downloads nnUNet model)
+# Or via the control script (foreground; writes/checks a pidfile)
+./pixieveil.sh start    # also: stop, restart, status
+
+# Interactive setup (installs torch/nnunetv2, downloads nnUNet model) —
+# normally run automatically by ./install, but can be re-run standalone
 python install.py
 
 # Download defacing model only
 python install.py --download-model
 
-# Install core dependencies
+# Install core dependencies without the ./install wrapper
 pip install -e .
 
-# Install with defacing support
+# Install the deface extra (simpleitk/nibabel/numpy/gdown/nnunetv2) — still
+# needs install.py afterwards for a CUDA-matched torch build
 pip install -e ".[deface]"
 ```
+
+See [INSTALL.md](INSTALL.md) for the full bootstrap/systemd/OpenRC flow.
 
 No automated test suite exists. Manual linting:
 
@@ -84,7 +94,7 @@ Single asyncio event loop. All blocking I/O (nnUNet inference, ZIP, file I/O) us
 
 ## Configuration
 
-Copy `config/settings.yaml.example` → `config/settings.yaml`. Key sections: `dicom_server`, `storage` (with optional `remote_storage.dicom` or `remote_storage.http`), `http_server`, `study`, `series_filter`, `defacing`, `anonymization` (profile: `research` or `gdpr`), `logging`.
+Copy `config/settings.example.yaml` → `config/settings.yaml`. Key sections: `dicom_server`, `storage` (with optional `remote_storage.dicom` or `remote_storage.http`), `http_server`, `study`, `series_filter`, `defacing`, `anonymization` (profile: `research` or `gdpr`), `logging`.
 
 ## Code style
 

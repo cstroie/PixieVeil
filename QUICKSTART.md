@@ -141,10 +141,11 @@ Defacing removes facial features from CT/MR head scans using nnU-Net segmentatio
 ```yaml
 defacing:
   enabled: true
-  device: "cuda"        # "cuda", "mps" (Apple Silicon), or "cpu"
-                        # falls back to cpu automatically if the configured device is unavailable
-  keep_backup: false    # set true to keep a <series>_pre_deface/ backup
-  rotation_mode: "auto90"
+  device: "cuda"             # "cuda", "mps" (Apple Silicon), or "cpu"
+                             # falls back to cpu automatically if the configured device is unavailable
+  keep_backup: true          # keep anonymized-but-not-defaced series as <series>_pre_deface/; set false in production
+  rotation_mode: "iop"       # "none" to skip; anything else applies IOP-based transpose (recommended)
+  mask_dilation_mm: 2.0      # grow the face mask by this many mm before applying; eliminates skin-edge residue
   model_dir: ./data/nnUNet
   body_parts:
     - HEAD
