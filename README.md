@@ -415,7 +415,7 @@ The `/stats` response contains counters grouped into sections: **Processed**, **
 ## Running
 
 ```bash
-python run.py
+python pixieveil.py
 ```
 
 Stop with `Ctrl-C`. All services shut down gracefully with a 10-second timeout.

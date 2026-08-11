@@ -10,7 +10,7 @@ PixieVeil is a DICOM anonymization server: it receives medical images via DICOM 
 
 ```bash
 # Run the server
-python run.py
+python pixieveil.py
 
 # Interactive setup (installs torch/nnunetv2, downloads nnUNet model)
 python install.py
@@ -57,7 +57,7 @@ Single asyncio event loop. All blocking I/O (nnUNet inference, ZIP, file I/O) us
 
 | Path | Purpose |
 |------|---------|
-| `run.py` | Entry point |
+| `pixieveil.py` | Entry point |
 | `pixieveil/config/settings.py` | Loads/validates `config/settings.yaml` via pydantic |
 | `pixieveil/dicom_server/server.py` | DICOM SCP (C-ECHO + C-STORE) |
 | `pixieveil/dicom_server/handlers.py` | C-STORE event handler |

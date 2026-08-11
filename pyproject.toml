@@ -30,7 +30,7 @@ deface = [
 ]
 
 [project.scripts]
-pixieveil = "run:run"
+pixieveil = "pixieveil.cli:run"
 pixieveil-install = "install:main"
 
 [project.urls]

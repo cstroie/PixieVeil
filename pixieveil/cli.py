@@ -1,5 +1,3 @@
-#!/usr/bin/env python3.12
-
 """
 PixieVeil Application Entry Point
 =================================
@@ -16,11 +14,13 @@ processing service. It is responsible for:
   cancellation, keyboard interrupt, or unexpected errors.
 """
 
+import argparse
 import asyncio
 import logging
+import os
+import signal
 import sys
 from pathlib import Path
-from typing import Any
 from logging.handlers import RotatingFileHandler
 from pixieveil.config import Settings
 from pixieveil.dicom_server.server import DicomServer
@@ -33,7 +33,7 @@ def setup_logging(settings: Settings) -> None:
     Configure the root logger according to the ``logging`` section of the
     :class:`~pixieveil.config.settings.Settings` instance.
 
-    The function creates a rotating file handler (default 5 MiB per file,
+    The function creates a rotating file handler (default 5 MiB per file,
     keeping three backups) and a stream handler that writes to ``stderr``.
     Log level, format and the log file path are all driven by the user‑
     supplied configuration, allowing the application to be customised
@@ -90,30 +90,38 @@ def check_defacing_requirements() -> None:
 async def main() -> None:
     """
     Main application entry point.
-    
+
     This function initializes all application services, starts them,
     and manages their lifecycle. The services started include:
     - DICOM server for receiving DICOM images
     - Dashboard web interface
     - Storage manager for processing and archiving images
-    
+
     The function runs all services concurrently and handles graceful
-    shutdown when interrupted.
+    shutdown when interrupted (SIGINT/SIGTERM) or cancelled.
     """
     # Load settings
     settings = Settings.load()
-    
+
     # Setup logging with settings
     setup_logging(settings)
-    
+
     # Get module logger after logging is configured
     logger = logging.getLogger(__name__)
     logger.info("Starting PixieVeil application")
-    
+
     # Create service instances
     storage_manager = StorageManager(settings)
     dicom_server = DicomServer(settings, storage_manager)
     dashboard = Dashboard(settings, storage_manager)
+
+    # SIGTERM has no default asyncio handling (it kills the process
+    # immediately), so route it through the same graceful-shutdown path as
+    # Ctrl-C/KeyboardInterrupt.
+    stop_event = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        loop.add_signal_handler(sig, stop_event.set)
 
     try:
         # Start the background study‑completion checker first
@@ -124,14 +132,14 @@ async def main() -> None:
         await dashboard.start()
         await dicom_server.start()
 
-        # Wait indefinitely until cancelled (e.g., Ctrl‑C)
-        await asyncio.Event().wait()
+        # Wait indefinitely until stopped (SIGINT/SIGTERM) or cancelled
+        await stop_event.wait()
     except (asyncio.CancelledError, KeyboardInterrupt):
         logger.info("Shutdown requested by user / cancellation")
     except OSError:
         logger.error("Cannot start: a required address/port is already in use — exiting")
         sys.exit(1)
-    except Exception as exc:
+    except Exception:
         logger.exception("Unexpected error – shutting down")
     finally:
         logger.info("Stopping services...")
@@ -156,23 +164,32 @@ async def main() -> None:
 
 def run() -> None:
     """Sync entry point for the ``pixieveil`` console script."""
+    parser = argparse.ArgumentParser(description="PixieVeil - DICOM anonymization server")
+    parser.add_argument(
+        "--pidfile",
+        metavar="PATH",
+        help="Write the process PID to this file on startup and remove it on "
+             "clean shutdown; enables the pixieveil control script to find "
+             "and signal this process",
+    )
+    args = parser.parse_args()
+
     _settings = Settings.load()
     if _settings.defacing.get("enabled", False):
         check_defacing_requirements()
+
+    if args.pidfile:
+        with open(args.pidfile, "w") as f:
+            f.write(str(os.getpid()))
+
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
         logging.basicConfig(level=logging.INFO)
         logging.getLogger(__name__).info("Application shutdown by user")
-
-
-if __name__ == "__main__":
-    """
-    Entry‑point used when executing ``run.py`` directly.
-
-    It wraps :func:`asyncio.run` around :func:`main` and provides a minimal
-    fallback logger if the configuration cannot be loaded before the
-    ``KeyboardInterrupt`` is caught.  This ensures a clean shutdown message
-    is always emitted, even in error scenarios.
-    """
-    run()
+    finally:
+        if args.pidfile:
+            try:
+                os.remove(args.pidfile)
+            except FileNotFoundError:
+                pass

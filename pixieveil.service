@@ -1,0 +1,59 @@
+[Unit]
+Description=PixieVeil DICOM anonymization server
+Documentation=file:/opt/pixieveil/CLAUDE.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Runs as a dedicated, unprivileged system account rather than a personal
+# user. One-time setup:
+#   useradd --system --home-dir /opt/pixieveil --shell /usr/sbin/nologin pixieveil
+#   git clone https://github.com/cstroie/PixieVeil.git /opt/pixieveil   # or rsync/symlink an existing checkout there
+#   chown -R pixieveil:pixieveil /opt/pixieveil
+#   sudo -u pixieveil python3 -m pip install --user -e /opt/pixieveil
+User=pixieveil
+Group=pixieveil
+WorkingDirectory=/opt/pixieveil
+
+# Secrets (remote DICOM/HTTP export credentials) belong in
+# config/settings.yaml (chmod 600, owned by pixieveil:pixieveil, NOT in
+# git) — never inline here.
+
+# RuntimeDirectory creates /run/pixieveil (mode 0755, owned by the User=/
+# Group= above) for the duration of the service, so the pidfile lives with
+# other pidfiles under /run instead of inside the checkout.
+RuntimeDirectory=pixieveil
+ExecStart=/usr/bin/python3 /opt/pixieveil/pixieveil.py --pidfile /run/pixieveil/pixieveil.pid
+# SIGTERM triggers pixieveil.py's own graceful-shutdown handler (the
+# SIGINT/SIGTERM asyncio signal handlers in pixieveil.cli.main()) — no need
+# for KillSignal overrides. Give in-flight exports / sidecar writes a bit
+# of time before systemd escalates to SIGKILL.
+TimeoutStopSec=20
+Restart=on-failure
+RestartSec=5
+
+# systemd captures stdout/stderr itself — no need for a separate .out file.
+# Application logs still go to the path configured under logging.file in
+# config/settings.yaml.
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=pixieveil
+
+# Hardening. ReadWritePaths covers the checkout (config/, data/, logs) since
+# study storage and logging both live under the working directory by
+# default; RuntimeDirectory above handles the pidfile and PrivateTmp
+# isolates /tmp from other services.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/pixieveil
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target

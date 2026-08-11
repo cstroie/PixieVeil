@@ -51,7 +51,7 @@ Everything else has sensible defaults.
 ## Start the server
 
 ```bash
-python run.py
+python pixieveil.py
 ```
 
 Stop with `Ctrl-C`. Services shut down gracefully.
