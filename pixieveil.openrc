@@ -5,16 +5,19 @@
 #   adduser -S -D -H -h /opt/pixieveil -s /sbin/nologin pixieveil
 #   git clone https://github.com/cstroie/PixieVeil.git /opt/pixieveil   # or rsync/symlink an existing checkout there
 #   chown -R pixieveil:pixieveil /opt/pixieveil
-#   su -s /bin/sh pixieveil -c 'python3 -m pip install --user -e /opt/pixieveil'
+#   su -s /bin/sh pixieveil -c '/opt/pixieveil/install'
 #   cp pixieveil.openrc /etc/init.d/pixieveil
 #   chmod +x /etc/init.d/pixieveil
 #   rc-update add pixieveil default
 #   rc-service pixieveil start
 #
+# Or run `sudo ./install openrc` from the checkout, which automates all of
+# the above (see INSTALL.md).
+#
 # Optional overrides go in /etc/conf.d/pixieveil (auto-sourced by
 # openrc-run), e.g. to point at a different checkout or Python:
 #   pixieveil_home="/opt/pixieveil"
-#   pixieveil_python="/opt/pixieveil/.venv/bin/python3"
+#   pixieveil_python="/opt/pixieveil/.python/bin/python3"
 
 name="pixieveil"
 description="PixieVeil DICOM anonymization server"
@@ -22,7 +25,7 @@ description="PixieVeil DICOM anonymization server"
 : "${pixieveil_user:=pixieveil}"
 : "${pixieveil_group:=pixieveil}"
 : "${pixieveil_home:=/opt/pixieveil}"
-: "${pixieveil_python:=${pixieveil_home}/.venv/bin/python3}"
+: "${pixieveil_python:=${pixieveil_home}/.python/bin/python3}"
 
 # Fall back to system python3 if no dedicated venv was set up.
 if [ ! -x "${pixieveil_python}" ]; then

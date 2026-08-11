@@ -20,10 +20,10 @@ cd "$(dirname "${BASH_SOURCE[0]}")"
 PIDFILE="${PIDFILE:-pixieveil.pid}"
 STOP_TIMEOUT="${STOP_TIMEOUT:-15}"
 
-# Use the .venv (if one exists) otherwise fall back to whatever python3 is
-# on PATH.
-if [[ -x .venv/bin/python3 ]]; then
-    PYTHON_BIN=.venv/bin/python3
+# Use the .python venv (if one exists) otherwise fall back to whatever
+# python3 is on PATH.
+if [[ -x .python/bin/python3 ]]; then
+    PYTHON_BIN=.python/bin/python3
 else
     PYTHON_BIN=python3
 fi

@@ -2,8 +2,12 @@
 .aider*
 .vscode*
 .venv*
+.python*
 data*
 examples*
 *.log
+*.pid
+*.egg-info
 __pycache__
 settings.yaml
+UNINSTALL.md

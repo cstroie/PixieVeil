@@ -1,0 +1,338 @@
+#!/usr/bin/env bash
+# Bootstrap PixieVeil's virtualenv (.python) and dependencies, run install.py
+# for the interactive defacing/model setup, and optionally set up a system
+# service (systemd or OpenRC).
+#
+# Usage:
+#   ./install                        # venv + deps + install.py, no root needed
+#   ./install --non-interactive      # ...with install.py's prompts skipped
+#   ./install --download-model       # ...just (re)download the defacing model
+#   ./install systemd [user]         # + install pixieveil.service under a system account
+#   ./install openrc  [user]         # + install pixieveil.openrc under a system account (Alpine and others)
+#   ./install service [user]         # + auto-detect systemd vs OpenRC and install that
+#
+#   [user] defaults to "pixieveil"; e.g. `./install systemd daemon` reuses
+#   the existing "daemon" account instead of creating a new one.
+#   ASSUME_YES=1 ./install systemd   # skip the confirmation prompt AND pass
+#                                     # --non-interactive to install.py (for automation)
+#
+# PixieVeil requires Python >= 3.12 (install.py hard-gates on it too), so the
+# venv is always built with python3.12 specifically — not just whatever
+# python3 happens to be on PATH. Override with PYTHON=/path/to/python3.12 if
+# it's not called "python3.12" on this system.
+#
+# The systemd/openrc modes require root (creating/reusing a system account,
+# chowning the checkout, and writing into /etc all need it). They print a
+# plan and ask for confirmation before touching anything, back up any /etc
+# file they'd overwrite, and (re)write UNINSTALL.md (gitignored) with the
+# exact commands to reverse this run — including removing the account only
+# if this run actually created it. Neither mode auto-enables/starts the
+# service; that's a separate, explicit step printed at the end.
+#
+# The venv itself is always (re)built by the service account via `su`, never
+# by root directly — root only chowns the checkout to that account first, so
+# a stale or tampered .python/ from an earlier unprivileged run never gets
+# executed with root privileges.
+set -euo pipefail
+cd "$(dirname "${BASH_SOURCE[0]}")"
+INSTALL_DIR="$(pwd -P)"
+
+VENV_DIR=".python"
+PYTHON="${PYTHON:-python3.12}"
+
+check_python_version() {
+    if ! command -v "$PYTHON" >/dev/null; then
+        echo "error: '$PYTHON' not found — PixieVeil requires Python 3.12+." >&2
+        echo "       Install python3.12, or set PYTHON=/path/to/python3.12" >&2
+        exit 1
+    fi
+    local ver
+    ver="$("$PYTHON" -c 'import sys; print("%d.%d" % sys.version_info[:2])')"
+    local major="${ver%%.*}" minor="${ver##*.}"
+    if (( major < 3 || (major == 3 && minor < 12) )); then
+        echo "error: '$PYTHON' is $ver — PixieVeil requires Python >= 3.12." >&2
+        exit 1
+    fi
+}
+
+# Builds/refreshes the venv and installs PixieVeil into it, then runs
+# install.py (forwarding "$@") for the interactive defacing/CUDA/model setup.
+build_venv() {
+    check_python_version
+
+    if [[ -d "$VENV_DIR" ]]; then
+        echo "Virtualenv already exists at $VENV_DIR, reusing it"
+    else
+        echo "Creating virtualenv at $VENV_DIR (using $PYTHON)..."
+        "$PYTHON" -m venv "$VENV_DIR"
+    fi
+
+    echo "Installing PixieVeil (editable) into $VENV_DIR..."
+    "$VENV_DIR/bin/pip" install --upgrade pip
+    "$VENV_DIR/bin/pip" install -e .
+
+    echo "Running install.py for defacing/model setup..."
+    "$VENV_DIR/bin/python" install.py "$@"
+}
+
+# Internal: re-invoked via `su` by install_systemd/install_openrc so the venv
+# is built by (and owned by) the service account, not by root.
+if [[ "${1:-}" == "--venv-only" ]]; then
+    shift
+    build_venv "$@"
+    exit 0
+fi
+
+MODE=""
+case "${1:-}" in
+    systemd|openrc|service)
+        MODE="$1"
+        shift
+        ;;
+esac
+
+if [[ "$MODE" == "service" ]]; then
+    if command -v systemctl >/dev/null; then
+        MODE=systemd
+    elif command -v rc-update >/dev/null; then
+        MODE=openrc
+    else
+        echo "error: couldn't detect systemd or OpenRC on this system — pass 'systemd' or 'openrc' explicitly" >&2
+        exit 1
+    fi
+    echo "Detected init system: $MODE"
+fi
+
+if [[ -z "$MODE" ]]; then
+    build_venv "$@"
+    echo "Done. Start the server with ./pixieveil.sh start"
+    exit 0
+fi
+
+SERVICE_USER="${1:-pixieveil}"
+if [[ ! "$SERVICE_USER" =~ ^[a-z_][a-z0-9_-]*$ ]]; then
+    echo "error: '$SERVICE_USER' doesn't look like a valid unix username" >&2
+    exit 1
+fi
+case "$SERVICE_USER" in
+    daemon|nobody|www-data|bin|sys|root)
+        echo "warning: '$SERVICE_USER' is a shared system account — a dedicated account isolates PixieVeil from whatever else runs as it" >&2
+        ;;
+esac
+
+backup_if_exists() {
+    if [[ -e "$1" ]]; then
+        local bak
+        bak="$1.bak.$(date +%Y%m%dT%H%M%S)"
+        cp -a "$1" "$bak"
+        echo "Backed up existing $1 -> $bak"
+    fi
+}
+
+# Only set once install_systemd/install_openrc determine whether the account
+# was created by this run (1) or already existed (0) — write_uninstall uses
+# it to decide whether removal instructions are safe to print at all.
+CREATED_USER=0
+USERDEL_CMD=""
+
+write_uninstall() {
+    {
+        echo "# Uninstalling PixieVeil"
+        echo
+        echo "Generated by \`./install $MODE $SERVICE_USER\` on $(date -Iseconds) for the checkout at \`$INSTALL_DIR\`."
+        echo
+        if [[ "$MODE" == "systemd" ]]; then
+            cat <<EOF
+## Stop and remove the service
+
+\`\`\`bash
+sudo systemctl disable --now pixieveil
+sudo rm /etc/systemd/system/pixieveil.service
+sudo systemctl daemon-reload
+\`\`\`
+
+EOF
+        else
+            cat <<EOF
+## Stop and remove the service
+
+\`\`\`bash
+sudo rc-service pixieveil stop
+sudo rc-update del pixieveil default
+sudo rm /etc/init.d/pixieveil
+sudo rm -f /etc/conf.d/pixieveil
+\`\`\`
+
+EOF
+        fi
+        if [[ "$CREATED_USER" == "1" ]]; then
+            cat <<EOF
+## Remove the system user this run created
+
+\`\`\`bash
+sudo $USERDEL_CMD $SERVICE_USER
+\`\`\`
+
+EOF
+        else
+            echo "This run reused the pre-existing '$SERVICE_USER' account — leaving it alone."
+            echo
+        fi
+        cat <<EOF
+## Remove the virtualenv
+
+\`\`\`bash
+rm -rf "$INSTALL_DIR/$VENV_DIR"
+\`\`\`
+
+## Remove the checkout entirely
+
+Careful — this also deletes \`config/settings.yaml\`, \`data/\` (studies,
+sidecars, logs, the nnUNet model), and any local export queue.
+
+\`\`\`bash
+rm -rf "$INSTALL_DIR"
+\`\`\`
+EOF
+    } > "$INSTALL_DIR/UNINSTALL.md"
+    echo "Wrote $INSTALL_DIR/UNINSTALL.md"
+}
+
+# Restrict config/settings.yaml to the owner (it can hold a remote export
+# bearer token), if present.
+fix_config_perms() {
+    if [[ -f config/settings.yaml ]]; then
+        chmod 600 config/settings.yaml
+    fi
+}
+
+# Build/refresh the venv and run install.py as the service account (not
+# root) — see header note. install.py's prompts (defacing backend, model
+# download) still need an interactive terminal unless ASSUME_YES=1.
+run_venv_as_service_user() {
+    local install_args=()
+    if [[ "${ASSUME_YES:-}" == "1" ]]; then
+        install_args+=(--non-interactive)
+    fi
+    su -s /bin/sh -c "PYTHON='$PYTHON' '$INSTALL_DIR/install' --venv-only ${install_args[*]}" "$SERVICE_USER"
+}
+
+# --- Resolve the service account and print the plan up front ---------------
+
+if id "$SERVICE_USER" &>/dev/null; then
+    USER_STATUS="reusing existing account ($(id "$SERVICE_USER"))"
+else
+    USER_STATUS="will be created"
+fi
+CURRENT_OWNER="$(stat -c '%U' "$INSTALL_DIR" 2>/dev/null || echo unknown)"
+
+echo "Plan for './install $MODE $SERVICE_USER':"
+echo "  - service account '$SERVICE_USER': $USER_STATUS"
+echo "  - $INSTALL_DIR (currently owned by $CURRENT_OWNER) will be chown -R'd to $SERVICE_USER:$SERVICE_USER — this affects git operations there too"
+echo "  - $VENV_DIR/ will be (re)built as $SERVICE_USER, not root, then install.py will run inside it"
+echo "  - config/settings.yaml (if present) will be chmod 600"
+if [[ "$MODE" == "systemd" ]]; then
+    echo "  - /etc/systemd/system/pixieveil.service will be written (any existing file backed up first)"
+else
+    echo "  - /etc/init.d/pixieveil will be written (any existing file backed up first)"
+    echo "  - /etc/conf.d/pixieveil will be written if the install dir or user differ from the shipped defaults"
+fi
+echo "  - the service is NOT enabled or started automatically"
+echo "  - $INSTALL_DIR/UNINSTALL.md will be (re)written"
+echo
+
+if [[ "${ASSUME_YES:-}" != "1" ]]; then
+    read -r -p "Proceed? [y/N] " reply
+    case "$reply" in
+        y|Y|yes|YES) ;;
+        *) echo "Aborted."; exit 1 ;;
+    esac
+fi
+
+if [[ $EUID -ne 0 ]]; then
+    echo "error: './install $MODE' needs root (creates/reuses a system account, chowns the checkout, writes to /etc) — re-run with sudo" >&2
+    exit 1
+fi
+
+install_systemd() {
+    command -v systemctl >/dev/null || { echo "error: systemctl not found" >&2; exit 1; }
+
+    if id "$SERVICE_USER" &>/dev/null; then
+        echo "System user $SERVICE_USER already exists, reusing it"
+    else
+        echo "Creating system user $SERVICE_USER..."
+        useradd --system --home-dir "$INSTALL_DIR" --shell /usr/sbin/nologin "$SERVICE_USER"
+        CREATED_USER=1
+    fi
+    USERDEL_CMD="userdel"
+
+    mkdir -p "$INSTALL_DIR/data/log"
+    echo "Fixing ownership of $INSTALL_DIR..."
+    chown -R "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR"
+
+    run_venv_as_service_user
+    fix_config_perms
+
+    echo "Installing pixieveil.service (WorkingDirectory -> $INSTALL_DIR, User/Group -> $SERVICE_USER)..."
+    backup_if_exists /etc/systemd/system/pixieveil.service
+    sed -e "s#/opt/pixieveil#$INSTALL_DIR#g" \
+        -e "s/^User=pixieveil$/User=$SERVICE_USER/" \
+        -e "s/^Group=pixieveil$/Group=$SERVICE_USER/" \
+        pixieveil.service > /etc/systemd/system/pixieveil.service
+    chmod 644 /etc/systemd/system/pixieveil.service
+    systemctl daemon-reload
+
+    write_uninstall
+    echo "Done. Next steps:"
+    echo "  sudo systemctl enable --now pixieveil   # register at boot and start now"
+    echo "  sudo systemctl status pixieveil         # verify it's running"
+    echo "  journalctl -u pixieveil -f              # follow logs"
+}
+
+install_openrc() {
+    command -v rc-update >/dev/null || { echo "error: rc-update (OpenRC) not found" >&2; exit 1; }
+
+    if id "$SERVICE_USER" &>/dev/null; then
+        echo "System user $SERVICE_USER already exists, reusing it"
+    else
+        echo "Creating system user $SERVICE_USER..."
+        adduser -S -D -H -h "$INSTALL_DIR" -s /sbin/nologin "$SERVICE_USER"
+        CREATED_USER=1
+    fi
+    USERDEL_CMD="deluser"
+
+    mkdir -p "$INSTALL_DIR/data/log"
+    echo "Fixing ownership of $INSTALL_DIR..."
+    chown -R "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR"
+
+    run_venv_as_service_user
+    fix_config_perms
+
+    echo "Installing pixieveil.openrc as /etc/init.d/pixieveil..."
+    backup_if_exists /etc/init.d/pixieveil
+    install -m 755 pixieveil.openrc /etc/init.d/pixieveil
+
+    if [[ "$INSTALL_DIR" != "/opt/pixieveil" || "$SERVICE_USER" != "pixieveil" ]]; then
+        backup_if_exists /etc/conf.d/pixieveil
+        {
+            if [[ "$INSTALL_DIR" != "/opt/pixieveil" ]]; then
+                printf 'pixieveil_home="%s"\n' "$INSTALL_DIR"
+            fi
+            if [[ "$SERVICE_USER" != "pixieveil" ]]; then
+                printf 'pixieveil_user="%s"\n' "$SERVICE_USER"
+                printf 'pixieveil_group="%s"\n' "$SERVICE_USER"
+            fi
+        } > /etc/conf.d/pixieveil
+    fi
+
+    write_uninstall
+    echo "Done. Next steps:"
+    echo "  sudo rc-update add pixieveil default   # register to start at boot"
+    echo "  sudo rc-service pixieveil start        # start now"
+    echo "  sudo rc-service pixieveil status       # verify it's running"
+}
+
+case "$MODE" in
+    systemd) install_systemd ;;
+    openrc)  install_openrc ;;
+esac

@@ -11,7 +11,10 @@ Type=simple
 #   useradd --system --home-dir /opt/pixieveil --shell /usr/sbin/nologin pixieveil
 #   git clone https://github.com/cstroie/PixieVeil.git /opt/pixieveil   # or rsync/symlink an existing checkout there
 #   chown -R pixieveil:pixieveil /opt/pixieveil
-#   sudo -u pixieveil python3 -m pip install --user -e /opt/pixieveil
+#   sudo -u pixieveil /opt/pixieveil/install
+#
+# Or run `sudo ./install systemd` from the checkout, which automates all of
+# the above (see INSTALL.md).
 User=pixieveil
 Group=pixieveil
 WorkingDirectory=/opt/pixieveil
@@ -24,7 +27,9 @@ WorkingDirectory=/opt/pixieveil
 # Group= above) for the duration of the service, so the pidfile lives with
 # other pidfiles under /run instead of inside the checkout.
 RuntimeDirectory=pixieveil
-ExecStart=/usr/bin/python3 /opt/pixieveil/pixieveil.py --pidfile /run/pixieveil/pixieveil.pid
+# Uses the .python venv, not system Python — that's where install.py puts
+# torch/nnUNetv2 for defacing.
+ExecStart=/opt/pixieveil/.python/bin/python3 /opt/pixieveil/pixieveil.py --pidfile /run/pixieveil/pixieveil.pid
 # SIGTERM triggers pixieveil.py's own graceful-shutdown handler (the
 # SIGINT/SIGTERM asyncio signal handlers in pixieveil.cli.main()) — no need
 # for KillSignal overrides. Give in-flight exports / sidecar writes a bit

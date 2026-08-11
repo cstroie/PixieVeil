@@ -54,11 +54,10 @@ All services run concurrently in a single asyncio event loop. Blocking I/O (ZIP 
 ```bash
 git clone https://github.com/cstroie/PixieVeil
 cd PixieVeil
-pip install -e .
-python install.py
+./install
 ```
 
-`install.py` interactively configures defacing (disabled / CPU / CUDA), installs the required packages, downloads the nnUNet model, and verifies the environment. See [QUICKSTART.md](QUICKSTART.md) for full details.
+`./install` builds a `.python` virtualenv (Python 3.12), installs PixieVeil into it, and runs `install.py`, which interactively configures defacing (disabled / CPU / CUDA), installs the required packages, downloads the nnUNet model, and verifies the environment. See [INSTALL.md](INSTALL.md) for prerequisites, systemd/OpenRC service setup, and CLI flags, or [QUICKSTART.md](QUICKSTART.md) for a shorter walkthrough.
 
 ## Configuration
 

@@ -10,11 +10,10 @@
 ```bash
 git clone https://github.com/cstroie/PixieVeil
 cd PixieVeil
-pip install -e .
-python install.py
+./install
 ```
 
-`install.py` is an interactive setup script that:
+`./install` builds a `.python` virtualenv (Python 3.12), installs PixieVeil into it (`pip install -e .`), then runs `install.py` inside it. See [INSTALL.md](INSTALL.md) for full details, including systemd/OpenRC setup. `install.py` is an interactive setup script that:
 - Asks whether to enable defacing and which compute backend (CPU / CUDA)
 - Installs PyTorch and nnUNetv2 for the chosen backend
 - Creates required runtime directories
