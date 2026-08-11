@@ -86,7 +86,7 @@ python3 pixieveil.py --pidfile pixieveil.pid   # write PID for pixieveil.sh, rem
 nohup ./pixieveil.sh start &
 ```
 
-The pidfile at `pixieveil.pid` (override with `PIDFILE=...`) distinguishes a running instance from a stale one. `stop`/`restart` wait up to `STOP_TIMEOUT` (default 15s) before escalating to `SIGKILL`. Extra args after the subcommand pass straight through to `pixieveil.py`.
+The pidfile defaults to `<data>/pixieveil.pid`, where `<data>` is derived from `storage.base_path` in `config/settings.yaml` (e.g. `./data/dicom` → `./data`) — same directory as the rest of PixieVeil's runtime state. Falls back to `data/pixieveil.pid` if settings can't be loaded. Override with `PIDFILE=...`. It distinguishes a running instance from a stale one; `stop`/`restart` wait up to `STOP_TIMEOUT` (default 15s) before escalating to `SIGKILL`. Extra args after the subcommand pass straight through to `pixieveil.py`.
 
 ## System-wide install (systemd or OpenRC)
 

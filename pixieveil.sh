@@ -17,7 +17,6 @@
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
-PIDFILE="${PIDFILE:-pixieveil.pid}"
 STOP_TIMEOUT="${STOP_TIMEOUT:-15}"
 
 # Use the .python venv (if one exists) otherwise fall back to whatever
@@ -27,6 +26,29 @@ if [[ -x .python/bin/python3 ]]; then
 else
     PYTHON_BIN=python3
 fi
+
+# Default pidfile lives alongside PixieVeil's other runtime state (the
+# "data" directory that also holds data/dicom, data/log, ...) rather than
+# the checkout root. Derived from storage.base_path in config/settings.yaml
+# (e.g. "./data/dicom" -> "./data"); falls back to "data" if settings can't
+# be loaded (missing venv deps, no config yet, ...).
+default_pid_dir() {
+    local base_path
+    base_path="$("$PYTHON_BIN" -c '
+from pixieveil.config import Settings
+try:
+    print(Settings.load().storage.get("base_path", "./data/dicom"))
+except Exception:
+    pass
+' 2>/dev/null)"
+    if [[ -n "$base_path" ]]; then
+        dirname -- "$base_path"
+    else
+        echo "data"
+    fi
+}
+
+PIDFILE="${PIDFILE:-$(default_pid_dir)/pixieveil.pid}"
 
 # Sets RUNNING_PID on a running process, STALE_PID on a dead one referenced
 # by the pidfile. Returns 0 if running, 1 if stopped (stale or absent).
@@ -89,6 +111,7 @@ do_start() {
         echo "Stale pidfile (pid $STALE_PID not running), removing"
         rm -f "$PIDFILE"
     fi
+    mkdir -p -- "$(dirname -- "$PIDFILE")"
     echo "Starting PixieVeil..."
     exec "$PYTHON_BIN" pixieveil.py --pidfile "$PIDFILE" "$@"
 }
