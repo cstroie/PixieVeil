@@ -57,6 +57,7 @@ Modality ──C-STORE──► DicomServer (pynetdicom)
                   (asyncio.create_task per study)
                   StorageManager._process_study()
                         ├─ Defacer.deface_series()        [asyncio.to_thread]
+                        ├─ ExamExtractor.extract()        [asyncio.to_thread] → <NNNN>_exam.json
                         ├─ DicomStorage.send_study()      [asyncio.to_thread]
                         └─ ZipManager → RemoteStorage     [asyncio.to_thread]
 ```
@@ -75,8 +76,10 @@ Single asyncio event loop. All blocking I/O (nnUNet inference, ZIP, file I/O) us
 | `pixieveil/processing/series_filter.py` | Modality, image-type, and regex include/exclude filtering |
 | `pixieveil/processing/study_manager.py` | Study/series numbering, completion detection, sidecar I/O |
 | `pixieveil/processing/defacer.py` | nnU-Net head-scan defacing (DICOM↔NIfTI + mask application) |
+| `pixieveil/processing/exam_extractor.py` | Derives RHYTHM exam-entry fields (indication, protocol type/group, scanner, dose, patient age/weight) from a completed study's DICOM headers |
 | `pixieveil/storage/storage_manager.py` | Central pipeline and export orchestration |
 | `pixieveil/storage/study_sidecar.py` | Atomic per-study JSON sidecar (crash recovery) |
+| `pixieveil/storage/exam_sidecar.py` | Atomic `<study_number>_exam.json` sidecar holding ExamExtractor's output |
 | `pixieveil/storage/dicom_storage.py` | DICOM C-STORE export to remote node |
 | `pixieveil/storage/remote_storage.py` | HTTP multipart ZIP upload |
 | `pixieveil/storage/zip_manager.py` | ZIP archive creation |
@@ -87,6 +90,10 @@ Single asyncio event loop. All blocking I/O (nnUNet inference, ZIP, file I/O) us
 **Sidecar files** — Each study has `<study_number>.json` written atomically (write-to-tmp + rename). Tracks `status` (`receiving → complete → defacing → archived`), `archived_via` (`"dicom"` / `"http"` / `null`), and per-series defacing progress. On restart, `StudyManager.initialize_from_sidecars()` re-queues any study that did not finish.
 
 **Export priority** — DICOM C-STORE takes priority over HTTP ZIP upload when both are configured. If neither is configured, archives are kept locally.
+
+**RHYTHM exam extraction** — On every completed study, `ExamExtractor.extract()` reads the anonymized DICOM headers under `study_dir` and writes `<study_number>_exam.json` (JSON, not YAML — machine-written/machine-read, mirrors `StudySidecar`'s format) with whatever RHYTHM Manual-Exam-Entry fields are derivable (contrast, patient age, CTDIvol, scanner make/model, indication/protocol-type/exam-group when `integrations/rhythm/indication_lookup.yaml` and `scanner_lookup.yaml` have a matching curated rule). Fields it cannot determine (DLP without an RDSR, image quality, unmatched indications/scanners) are left `null` with an explanation in `notes`. Runs before export/retention so the files are guaranteed to still be on disk.
+
+**Post-export retention** — `storage.retain_after_export_days` (optional) keeps a copy of each already-anonymized study under `storage.retain_path` for N days after a successful export instead of deleting it immediately; `StorageManager.enforce_retention_purge()` runs alongside quota enforcement in the completion loop and removes retained studies once the window elapses. Off by default (immediate delete, prior behavior). Retained studies live outside `base_path` and are not counted toward `max_storage_gb`.
 
 **Device fallback** — `Defacer._resolve_device()` validates `cuda`/`mps`/`cpu` at startup with a test tensor and falls back to CPU automatically.
 

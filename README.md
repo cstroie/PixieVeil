@@ -12,6 +12,8 @@ PixieVeil is a DICOM anonymization server. It receives DICOM images from medical
 - **Defacing** — Optional nnU-Net-based facial-feature removal for CT/MR head scans. Runs asynchronously after anonymization; uses CUDA/MPS/CPU with automatic fallback. Per-series progress is persisted in the sidecar so a crash mid-defacing resumes from where it left off.
 - **Remote export** — Two configurable transports: DICOM C-STORE (sends individual `.dcm` files to a PACS or DICOM node) or HTTP multipart ZIP upload with Bearer-token authentication. DICOM takes priority if both are configured; omit both to keep archives local.
 - **Storage quota enforcement** — Automatically removes the oldest completed studies when disk usage exceeds the configured `max_storage_gb` limit, targeting 75 % utilisation.
+- **Post-export retention** — Optional: keep already-anonymized studies locally for a configurable number of days after export instead of deleting them immediately, then purge automatically once the window elapses.
+- **RHYTHM exam-data extraction** — On every completed study, writes a `<study_number>_exam.json` sidecar with whatever RHYTHM CT-protocol-registry exam-entry fields can be derived from the DICOM headers (contrast, patient age, dose, scanner, and — via curated lookup tables under `integrations/rhythm/` — clinical indication and protocol type/group). Fields it can't determine are left `null` with an explanatory note.
 - **Web dashboard** — `aiohttp`-based HTTP server with a `/stats` JSON API and a live dashboard page that polls metrics periodically.
 - **Structured logging** — Rotating file + console logging with a configurable level and path.
 
@@ -76,6 +78,13 @@ storage:
   base_path: "./data/dicom"     # Organized study tree
   temp_path: "./data/tmp"       # Incoming image staging area
   max_storage_gb: 100
+  # Optional: keep a local copy of each already-anonymized study for N days
+  # after a successful export instead of deleting it immediately (e.g. for
+  # auditing or harvesting real acquisition parameters). Stored under
+  # retain_path (default: a "retained" dir next to base_path) and outside
+  # max_storage_gb accounting.
+  # retain_after_export_days: 14
+  # retain_path: "./data/retained"
   # Optional remote export — omit entire block to keep archives local.
   # DICOM C-STORE takes priority over HTTP ZIP upload if both are configured.
   # remote_storage:

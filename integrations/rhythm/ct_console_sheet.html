@@ -1,0 +1,558 @@
+<title>CT Console Sheet</title>
+<style>
+  :root {
+    --paper: #faf9f6;
+    --paper-well: #f0efe9;
+    --ink: #171a1f;
+    --ink-soft: #4b515c;
+    --rule: #c7cbd1;
+    --rule-strong: #9099a6;
+    --accent: #2e5f76;
+    --accent-soft: #e2ebee;
+    --flag: #8b4227;
+    --flag-soft: #f3e6df;
+    --mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    --serif: Charter, "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+    --grotesk: "Roboto Condensed", "Arial Narrow", "Helvetica Neue Condensed", Arial, sans-serif;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #1b1d20;
+      --paper-well: #232629;
+      --ink: #ececea;
+      --ink-soft: #b7bcc4;
+      --rule: #464a50;
+      --rule-strong: #6b7078;
+      --accent: #7fb3c9;
+      --accent-soft: #263238;
+      --flag: #d69073;
+      --flag-soft: #3a2a22;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #1b1d20;
+    --paper-well: #232629;
+    --ink: #ececea;
+    --ink-soft: #b7bcc4;
+    --rule: #464a50;
+    --rule-strong: #6b7078;
+    --accent: #7fb3c9;
+    --accent-soft: #263238;
+    --flag: #d69073;
+    --flag-soft: #3a2a22;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    background: var(--paper-well);
+    color: var(--ink);
+    font-family: var(--serif);
+    font-size: 14px;
+    line-height: 1.45;
+    padding: 28px 16px 60px;
+  }
+
+  .screen-note {
+    max-width: 760px;
+    margin: 0 auto 18px;
+    font-family: var(--grotesk);
+    font-size: 12px;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    color: var(--ink-soft);
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 12px;
+  }
+
+  .screen-note button {
+    font-family: var(--grotesk);
+    font-size: 12px;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    background: var(--accent);
+    color: var(--paper);
+    border: none;
+    padding: 7px 14px;
+    cursor: pointer;
+  }
+  .screen-note button:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+
+  .sheet {
+    max-width: 760px;
+    margin: 0 auto;
+    background: var(--paper);
+    border: 1px solid var(--rule-strong);
+    padding: 26px 30px 22px;
+  }
+
+  /* ---------- Masthead ---------- */
+  .masthead {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 18px;
+    align-items: start;
+    border-bottom: 2px solid var(--ink);
+    padding-bottom: 14px;
+    margin-bottom: 16px;
+  }
+
+  .masthead h1 {
+    font-family: var(--grotesk);
+    font-weight: 700;
+    font-size: 22px;
+    letter-spacing: 0.01em;
+    text-transform: uppercase;
+    text-wrap: balance;
+  }
+
+  .masthead .sub {
+    font-family: var(--serif);
+    font-style: italic;
+    color: var(--ink-soft);
+    font-size: 12.5px;
+    margin-top: 4px;
+    max-width: 46ch;
+  }
+
+  .study-stamp {
+    border: 2px solid var(--ink);
+    padding: 8px 14px;
+    text-align: center;
+    min-width: 190px;
+  }
+
+  .study-stamp .label {
+    font-family: var(--grotesk);
+    font-size: 10px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--ink-soft);
+  }
+
+  .study-stamp .value {
+    font-family: var(--mono);
+    font-size: 28px;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.08em;
+    border-bottom: 1px dotted var(--rule-strong);
+    padding: 2px 0 3px;
+    margin-top: 2px;
+    min-height: 34px;
+  }
+
+  .masthead-meta {
+    grid-column: 1 / -1;
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 14px;
+    margin-top: 12px;
+  }
+
+  /* ---------- Section scaffolding ---------- */
+  section.block {
+    margin-top: 18px;
+    padding-top: 4px;
+  }
+
+  .block-title {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    font-family: var(--grotesk);
+    font-weight: 700;
+    font-size: 12.5px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--accent);
+    border-bottom: 1px solid var(--rule);
+    padding-bottom: 5px;
+    margin-bottom: 10px;
+  }
+
+  .block-title .n {
+    font-family: var(--mono);
+    color: var(--ink-soft);
+    font-size: 11px;
+  }
+
+  .block-note {
+    font-family: var(--serif);
+    font-style: italic;
+    font-size: 11.5px;
+    color: var(--ink-soft);
+    margin: -4px 0 10px;
+  }
+
+  .flag-note {
+    font-family: var(--grotesk);
+    font-size: 10.5px;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    color: var(--flag);
+    background: var(--flag-soft);
+    display: inline-block;
+    padding: 1px 6px;
+    margin-left: 6px;
+    font-weight: 700;
+  }
+
+  /* ---------- Field primitives ---------- */
+  .field-label {
+    display: block;
+    font-family: var(--grotesk);
+    font-size: 10.5px;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--ink-soft);
+    margin-bottom: 3px;
+  }
+
+  .fill {
+    border-bottom: 1px dotted var(--rule-strong);
+    min-height: 20px;
+    font-family: var(--mono);
+  }
+
+  .row {
+    display: grid;
+    gap: 16px;
+    margin-bottom: 12px;
+  }
+  .row.c2 { grid-template-columns: 1fr 1fr; }
+  .row.c3 { grid-template-columns: 1fr 1fr 1fr; }
+  .row.c4 { grid-template-columns: 1fr 1fr 1fr 1fr; }
+
+  .check-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 18px;
+  }
+
+  .check-item {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    font-family: var(--serif);
+    font-size: 13px;
+    white-space: nowrap;
+  }
+
+  .box {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    border: 1.4px solid var(--ink);
+    flex-shrink: 0;
+    transform: translateY(1px);
+  }
+
+  .check-item.wide {
+    flex: 1 1 100%;
+    white-space: normal;
+  }
+  .check-item.wide .fill { flex: 1; margin-left: 4px; }
+  .check-item.wide { display: flex; }
+
+  /* ---------- Indication grid ---------- */
+  .indication-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px 22px;
+    margin-bottom: 10px;
+  }
+
+  /* ---------- Dose table ---------- */
+  table.dose {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: var(--mono);
+    font-size: 12.5px;
+    font-variant-numeric: tabular-nums;
+  }
+  table.dose th {
+    font-family: var(--grotesk);
+    font-size: 10px;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    text-align: left;
+    color: var(--ink-soft);
+    border-bottom: 1px solid var(--rule-strong);
+    padding: 4px 8px 6px 0;
+  }
+  table.dose td {
+    border-bottom: 1px dotted var(--rule);
+    padding: 8px 8px 8px 0;
+    min-width: 60px;
+  }
+  table.dose td.phase-lbl { font-family: var(--serif); font-size: 13px; color: var(--ink); }
+
+  /* ---------- Notes ---------- */
+  .ruled-notes {
+    background-image: repeating-linear-gradient(
+      to bottom, transparent, transparent 22px, var(--rule) 22px, var(--rule) 23px
+    );
+    min-height: 70px;
+  }
+
+  /* ---------- Footer / post-submission box ---------- */
+  .postbox {
+    margin-top: 22px;
+    border: 2px dashed var(--rule-strong);
+    padding: 14px 18px;
+  }
+  .postbox .block-title { color: var(--ink-soft); border-color: var(--rule); }
+
+  .colophon {
+    margin-top: 20px;
+    padding-top: 10px;
+    border-top: 1px solid var(--rule);
+    font-family: var(--grotesk);
+    font-size: 10px;
+    letter-spacing: 0.03em;
+    color: var(--ink-soft);
+    display: flex;
+    justify-content: space-between;
+  }
+
+  @media print {
+    body { background: #fff; padding: 0; }
+    .screen-note { display: none; }
+    .sheet { border: none; max-width: none; padding: 0.4in 0.5in; }
+    @page { size: A4; margin: 10mm; }
+  }
+</style>
+
+<div class="screen-note">
+  <span>Print at 100% scale, one per exam — attach to the printed sheet, not the chart</span>
+  <button onclick="window.print()">Print sheet</button>
+</div>
+
+<div class="sheet">
+
+  <div class="masthead">
+    <div>
+      <h1>CT Console Sheet</h1>
+      <p class="sub">Recorded at the scanner console — values PixieVeil cannot read from the DICOM header. Transcribed into the study's exam sidecar afterward.</p>
+    </div>
+    <div class="study-stamp">
+      <div class="label">PixieVeil Study #</div>
+      <div class="value">&nbsp;</div>
+    </div>
+    <div class="masthead-meta">
+      <div>
+        <span class="field-label">Exam date</span>
+        <div class="fill">&nbsp;</div>
+      </div>
+      <div>
+        <span class="field-label">Scanner</span>
+        <div class="fill">&nbsp;</div>
+      </div>
+      <div>
+        <span class="field-label">Operator initials</span>
+        <div class="fill">&nbsp;</div>
+      </div>
+    </div>
+  </div>
+
+  <section class="block">
+    <div class="block-title"><span class="n">1</span> Indication &amp; classification</div>
+    <div class="indication-grid">
+      <span class="check-item"><span class="box"></span> Head / Trauma</span>
+      <span class="check-item"><span class="box"></span> Mastoid / Inner Ear</span>
+      <span class="check-item"><span class="box"></span> Chest / Fungal infection</span>
+      <span class="check-item"><span class="box"></span> Chest / Complicated infection</span>
+      <span class="check-item"><span class="box"></span> Chest HRCT / interstitial disease</span>
+      <span class="check-item"><span class="box"></span> Abdomen / Acute abdomen</span>
+      <span class="check-item"><span class="box"></span> Neck-Chest-Abdomen / Lymphoma</span>
+      <span class="check-item"><span class="box"></span> Chest-Abdomen / Tumor staging</span>
+    </div>
+    <div class="check-item wide"><span class="box"></span> Other / not yet listed —<span class="fill"></span><span class="flag-note">flag for RHYTHM lookup</span></div>
+
+    <div class="row c2" style="margin-top:14px;">
+      <div>
+        <span class="field-label">IV contrast</span>
+        <div class="check-list">
+          <span class="check-item"><span class="box"></span> Non-contrast</span>
+          <span class="check-item"><span class="box"></span> Contrast-enhanced</span>
+        </div>
+      </div>
+      <div>
+        <span class="field-label">Contrast route (if given)</span>
+        <div class="check-list">
+          <span class="check-item"><span class="box"></span> IV</span>
+          <span class="check-item"><span class="box"></span> Oral</span>
+          <span class="check-item"><span class="box"></span> Rectal</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="row c2">
+      <div>
+        <span class="field-label">Protocol type <span class="flag-note">confirm, don't trust the guess</span></span>
+        <div class="check-list">
+          <span class="check-item"><span class="box"></span> Pediatric Head</span>
+          <span class="check-item"><span class="box"></span> Pediatric Body</span>
+          <span class="check-item"><span class="box"></span> Young Adult</span>
+        </div>
+      </div>
+      <div>
+        <span class="field-label">Examination / age-weight group</span>
+        <div class="fill">&nbsp;</div>
+      </div>
+    </div>
+
+    <span class="field-label">Protocol used (saved RHYTHM protocol, if known)</span>
+    <div class="fill">&nbsp;</div>
+  </section>
+
+  <section class="block">
+    <div class="block-title"><span class="n">2</span> Patient</div>
+    <div class="row c2">
+      <div>
+        <span class="field-label">Weight (kg) <span class="flag-note">often missing from header</span></span>
+        <div class="fill">&nbsp;</div>
+      </div>
+      <div>
+        <span class="field-label">Age (years) — cross-check only</span>
+        <div class="fill">&nbsp;</div>
+      </div>
+    </div>
+  </section>
+
+  <section class="block">
+    <div class="block-title"><span class="n">3</span> Console technique</div>
+    <p class="block-note">None of this section is written to the DICOM header on this scanner — it exists only on the console screen at scan time.</p>
+
+    <div class="row c2">
+      <div>
+        <span class="field-label">Scan type</span>
+        <div class="check-list">
+          <span class="check-item"><span class="box"></span> Sequential / axial</span>
+          <span class="check-item"><span class="box"></span> Helical / spiral</span>
+        </div>
+      </div>
+      <div>
+        <span class="field-label">Pitch</span>
+        <div class="fill">&nbsp;</div>
+      </div>
+    </div>
+
+    <div class="row c2">
+      <div>
+        <span class="field-label">Auto kVp selection mode</span>
+        <div class="check-list">
+          <span class="check-item"><span class="box"></span> Off</span>
+          <span class="check-item"><span class="box"></span> CareKV</span>
+          <span class="check-item"><span class="box"></span> CareKV Semi</span>
+          <span class="check-item wide"><span class="box"></span> Other —<span class="fill"></span></span>
+        </div>
+      </div>
+      <div>
+        <span class="field-label">kVp</span>
+        <div class="fill">&nbsp;</div>
+      </div>
+    </div>
+
+    <div class="row c2">
+      <div>
+        <span class="field-label">Auto mA modulation mode</span>
+        <div class="check-list">
+          <span class="check-item"><span class="box"></span> Off</span>
+          <span class="check-item"><span class="box"></span> CareDose</span>
+          <span class="check-item"><span class="box"></span> CareDose4D</span>
+          <span class="check-item wide"><span class="box"></span> Other —<span class="fill"></span></span>
+        </div>
+      </div>
+      <div>
+        <span class="field-label">mAs value (Effective / QR mAs / mA — per mode above)</span>
+        <div class="fill">&nbsp;</div>
+      </div>
+    </div>
+
+    <div class="row c4">
+      <div>
+        <span class="field-label">Rotation time (s) <span class="flag-note">key gap</span></span>
+        <div class="fill">&nbsp;</div>
+      </div>
+      <div>
+        <span class="field-label">Slice thickness (mm)</span>
+        <div class="fill">&nbsp;</div>
+      </div>
+      <div>
+        <span class="field-label">Recon kernel</span>
+        <div class="fill">&nbsp;</div>
+      </div>
+      <div>
+        <span class="field-label">Recon algorithm</span>
+        <div class="fill">&nbsp;</div>
+      </div>
+    </div>
+  </section>
+
+  <section class="block">
+    <div class="block-title"><span class="n">4</span> Dose per phase</div>
+    <p class="block-note">Read CTDI<sub>vol</sub> and DLP off the console dose summary screen — DLP is not recoverable from PACS afterward.</p>
+    <table class="dose">
+      <thead>
+        <tr><th>Phase</th><th>Series&nbsp;#</th><th>CTDI<sub>vol</sub> (mGy)</th><th>DLP (mGy·cm)</th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="phase-lbl">1</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td></tr>
+        <tr><td class="phase-lbl">2</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td></tr>
+        <tr><td class="phase-lbl">3</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section class="block">
+    <div class="block-title"><span class="n">5</span> Quality &amp; deviations</div>
+    <div class="row c2">
+      <div>
+        <span class="field-label">Image quality</span>
+        <div class="check-list">
+          <span class="check-item"><span class="box"></span> Excellent</span>
+          <span class="check-item"><span class="box"></span> Good</span>
+          <span class="check-item"><span class="box"></span> Moderate</span>
+          <span class="check-item"><span class="box"></span> Poor</span>
+        </div>
+      </div>
+      <div>
+        <span class="field-label">Repeat / redo acquisition?</span>
+        <div class="check-list">
+          <span class="check-item"><span class="box"></span> No</span>
+          <span class="check-item wide"><span class="box"></span> Yes — series that counts:<span class="fill"></span></span>
+        </div>
+      </div>
+    </div>
+    <span class="field-label">Deviation notes (what changed from the standard protocol, and why)</span>
+    <div class="ruled-notes"></div>
+  </section>
+
+  <div class="postbox">
+    <div class="block-title">After RHYTHM submission</div>
+    <div class="row c3">
+      <div>
+        <span class="field-label">Repository Study ID</span>
+        <div class="fill">&nbsp;</div>
+      </div>
+      <div>
+        <span class="field-label">Date submitted</span>
+        <div class="fill">&nbsp;</div>
+      </div>
+      <div>
+        <span class="field-label">Entered by (initials)</span>
+        <div class="fill">&nbsp;</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="colophon">
+    <span>PixieVeil / RHYTHM console sheet</span>
+    <span>One sheet per exam — do not batch</span>
+  </div>
+
+</div>

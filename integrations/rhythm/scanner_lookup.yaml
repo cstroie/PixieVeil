@@ -1,0 +1,17 @@
+# Maps DICOM (Manufacturer, ManufacturerModelName) to the scanner_id RHYTHM
+# assigned when the scanner was registered. Loaded by
+# pixieveil.processing.exam_extractor.
+#
+# Key format: "<Manufacturer>|<ManufacturerModelName>" exactly as they
+# appear in the DICOM header (case-sensitive) -> RHYTHM scanner UUID.
+#
+# Deliberately empty for now: the earlier RHYTHM protocol-GUI sample data
+# listed our scanner as "Siemens Healthineers – Siemens SOMATOM Perspective",
+# but real headers pulled from our own studies report Manufacturer=SIEMENS,
+# ManufacturerModelName="Emotion 16". Confirm which scanner is actually
+# registered in RHYTHM (and its UUID from the scanner dropdown/API) before
+# filling this in — until then, exam sidecars leave rhythm_scanner_id null
+# with a note.
+#
+# Example once confirmed:
+# "SIEMENS|Emotion 16": "7076d1dc-100a-4bcd-a8d7-2ef3672b1e3f"

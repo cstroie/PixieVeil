@@ -1,0 +1,176 @@
+# RHYTHM CT Protocol Repository — Abdomen / Acute abdomen protocol mapping
+#
+# Reference config for manually filling in the RHYTHM "Protocol GUI"
+# (https://.../protocols/gui/) for our scanner. This file is NOT read by
+# PixieVeil at runtime — it exists so the values we enter into the RHYTHM
+# form are decided once, reviewed, and reproducible, instead of being
+# re-derived from memory each time someone opens the form.
+#
+# Workflow: fill in every `null` below with the value used on our scanner,
+# then transcribe Step 1 + Step 2 + one `protocols[]` entry per form
+# submission (the RHYTHM GUI saves one record per tab x age/weight group).
+#
+# Fields marked "select:" list every option the RHYTHM GUI actually offers
+# for that field (see protocol_clinical_gui.js) — pick one of those exact
+# strings, or use "Other: Please Specify" and put the free-text value in
+# the matching `*_other` key.
+
+clinical_indication:
+  anatomical_region: Abdomen
+  clinical_indication: Acute abdomen
+  iv_contrast: Contrast-enhanced          # locked by RHYTHM to this value (1 available option)
+  comments: null                      # select: Indication-specific protocol | Anatomical based protocol — form does NOT auto-pick when >1 option exists; choose manually
+
+scanner:
+  # Must already exist in RHYTHM's scanner registry (admin-added).
+  manufacturer: Siemens Healthineers
+  model: Siemens SOMATOM Perspective
+  detector_rows: 16 rows
+  year_of_installation: "2014"
+
+# Tabs shown by RHYTHM for this indication: Pediatric Body (5 weight groups) + Young Adult
+#
+# Siemens-specific menu constraints (from MANUFACTURER_OPTIONS in the GUI):
+#   auto_kvp_selection : Off | CarekV | CarekV Semi | Other: Please Specify
+#   auto_ma_modulation : Off | CareDose | CareDose4D | Other: Please Specify
+#
+# mAs input(s) required per auto_ma_modulation choice (MA_INPUT_SPECS):
+#   Off        -> mA
+#   CareDose   -> Effective mAs
+#   CareDose4D -> Quality Reference mAs (QR mAs)
+#   Other      -> mA
+# Combo override: if auto_kvp_selection=CarekV AND auto_ma_modulation=CareDose4D,
+# RHYTHM instead asks for: Quality Reference mAs (QR mAs), Dose Optimization setting.
+
+protocols:
+  - tab: PEDIATRIC_BODY
+    examination_group: Group 1 – Neonate
+    age_group: < 5 kg
+    scan_type: null            # select: "Sequential / axial" | "Helical / spiral"
+    contrast: Contrast-Enhanced       # locked (mapped from iv_contrast=Contrast-enhanced)
+    auto_kvp_selection: null    # select: Off | CarekV | CarekV Semi | Other: Please Specify
+    auto_kvp_selection_other: null
+    kvp: null                   # select: 70|80|90|100|110|120|130|135|140|150|Sn100|Sn110|Sn140|Sn150|Dual energy / spectral|Other: Please Specify
+    kvp_other: null
+    auto_ma_modulation: null    # select: Off | CareDose | CareDose4D | Other: Please Specify
+    auto_ma_modulation_other: null
+    mas_inputs: {}              # keys depend on auto_ma_modulation, e.g. {"Effective mAs": null}
+    pitch: null                 # number, 0-3
+    rotation_time: null         # select: 0.25|0.28|0.33|0.35|0.4|0.5|0.6|0.75|1|1.5|Other: Please Specify
+    rotation_time_other: null
+    slice_thickness: null       # select: 0.5|0.625|0.75|1|1.25|2|2.5|3|5|Other: Please Specify
+    slice_thickness_other: null
+    kernel_class: null          # free text
+    reconstruction_algorithm: null # free text
+    strength: null               # free text, optional
+    notes: null                  # free text, optional
+
+  - tab: PEDIATRIC_BODY
+    examination_group: Group 2 – Infant, Toddler and Early Childhood
+    age_group: 5 kg – 15 kg
+    scan_type: null            # select: "Sequential / axial" | "Helical / spiral"
+    contrast: Contrast-Enhanced       # locked (mapped from iv_contrast=Contrast-enhanced)
+    auto_kvp_selection: null    # select: Off | CarekV | CarekV Semi | Other: Please Specify
+    auto_kvp_selection_other: null
+    kvp: null                   # select: 70|80|90|100|110|120|130|135|140|150|Sn100|Sn110|Sn140|Sn150|Dual energy / spectral|Other: Please Specify
+    kvp_other: null
+    auto_ma_modulation: null    # select: Off | CareDose | CareDose4D | Other: Please Specify
+    auto_ma_modulation_other: null
+    mas_inputs: {}              # keys depend on auto_ma_modulation, e.g. {"Effective mAs": null}
+    pitch: null                 # number, 0-3
+    rotation_time: null         # select: 0.25|0.28|0.33|0.35|0.4|0.5|0.6|0.75|1|1.5|Other: Please Specify
+    rotation_time_other: null
+    slice_thickness: null       # select: 0.5|0.625|0.75|1|1.25|2|2.5|3|5|Other: Please Specify
+    slice_thickness_other: null
+    kernel_class: null          # free text
+    reconstruction_algorithm: null # free text
+    strength: null               # free text, optional
+    notes: null                  # free text, optional
+
+  - tab: PEDIATRIC_BODY
+    examination_group: Group 3 – Childhood
+    age_group: 15 kg – 30 kg
+    scan_type: null            # select: "Sequential / axial" | "Helical / spiral"
+    contrast: Contrast-Enhanced       # locked (mapped from iv_contrast=Contrast-enhanced)
+    auto_kvp_selection: null    # select: Off | CarekV | CarekV Semi | Other: Please Specify
+    auto_kvp_selection_other: null
+    kvp: null                   # select: 70|80|90|100|110|120|130|135|140|150|Sn100|Sn110|Sn140|Sn150|Dual energy / spectral|Other: Please Specify
+    kvp_other: null
+    auto_ma_modulation: null    # select: Off | CareDose | CareDose4D | Other: Please Specify
+    auto_ma_modulation_other: null
+    mas_inputs: {}              # keys depend on auto_ma_modulation, e.g. {"Effective mAs": null}
+    pitch: null                 # number, 0-3
+    rotation_time: null         # select: 0.25|0.28|0.33|0.35|0.4|0.5|0.6|0.75|1|1.5|Other: Please Specify
+    rotation_time_other: null
+    slice_thickness: null       # select: 0.5|0.625|0.75|1|1.25|2|2.5|3|5|Other: Please Specify
+    slice_thickness_other: null
+    kernel_class: null          # free text
+    reconstruction_algorithm: null # free text
+    strength: null               # free text, optional
+    notes: null                  # free text, optional
+
+  - tab: PEDIATRIC_BODY
+    examination_group: Group 4 – Early Adolescence
+    age_group: 30 kg – 50 kg
+    scan_type: null            # select: "Sequential / axial" | "Helical / spiral"
+    contrast: Contrast-Enhanced       # locked (mapped from iv_contrast=Contrast-enhanced)
+    auto_kvp_selection: null    # select: Off | CarekV | CarekV Semi | Other: Please Specify
+    auto_kvp_selection_other: null
+    kvp: null                   # select: 70|80|90|100|110|120|130|135|140|150|Sn100|Sn110|Sn140|Sn150|Dual energy / spectral|Other: Please Specify
+    kvp_other: null
+    auto_ma_modulation: null    # select: Off | CareDose | CareDose4D | Other: Please Specify
+    auto_ma_modulation_other: null
+    mas_inputs: {}              # keys depend on auto_ma_modulation, e.g. {"Effective mAs": null}
+    pitch: null                 # number, 0-3
+    rotation_time: null         # select: 0.25|0.28|0.33|0.35|0.4|0.5|0.6|0.75|1|1.5|Other: Please Specify
+    rotation_time_other: null
+    slice_thickness: null       # select: 0.5|0.625|0.75|1|1.25|2|2.5|3|5|Other: Please Specify
+    slice_thickness_other: null
+    kernel_class: null          # free text
+    reconstruction_algorithm: null # free text
+    strength: null               # free text, optional
+    notes: null                  # free text, optional
+
+  - tab: PEDIATRIC_BODY
+    examination_group: Group 5 – Adolescence
+    age_group: 50 kg – 80 kg
+    scan_type: null            # select: "Sequential / axial" | "Helical / spiral"
+    contrast: Contrast-Enhanced       # locked (mapped from iv_contrast=Contrast-enhanced)
+    auto_kvp_selection: null    # select: Off | CarekV | CarekV Semi | Other: Please Specify
+    auto_kvp_selection_other: null
+    kvp: null                   # select: 70|80|90|100|110|120|130|135|140|150|Sn100|Sn110|Sn140|Sn150|Dual energy / spectral|Other: Please Specify
+    kvp_other: null
+    auto_ma_modulation: null    # select: Off | CareDose | CareDose4D | Other: Please Specify
+    auto_ma_modulation_other: null
+    mas_inputs: {}              # keys depend on auto_ma_modulation, e.g. {"Effective mAs": null}
+    pitch: null                 # number, 0-3
+    rotation_time: null         # select: 0.25|0.28|0.33|0.35|0.4|0.5|0.6|0.75|1|1.5|Other: Please Specify
+    rotation_time_other: null
+    slice_thickness: null       # select: 0.5|0.625|0.75|1|1.25|2|2.5|3|5|Other: Please Specify
+    slice_thickness_other: null
+    kernel_class: null          # free text
+    reconstruction_algorithm: null # free text
+    strength: null               # free text, optional
+    notes: null                  # free text, optional
+
+  - tab: YOUNG_ADULT
+    examination_group: Group 6 – Adolescence & Young Adulthood
+    age_group: "> 80 kg"
+    scan_type: null            # select: "Sequential / axial" | "Helical / spiral"
+    contrast: Contrast-Enhanced       # locked (mapped from iv_contrast=Contrast-enhanced)
+    auto_kvp_selection: null    # select: Off | CarekV | CarekV Semi | Other: Please Specify
+    auto_kvp_selection_other: null
+    kvp: null                   # select: 70|80|90|100|110|120|130|135|140|150|Sn100|Sn110|Sn140|Sn150|Dual energy / spectral|Other: Please Specify
+    kvp_other: null
+    auto_ma_modulation: null    # select: Off | CareDose | CareDose4D | Other: Please Specify
+    auto_ma_modulation_other: null
+    mas_inputs: {}              # keys depend on auto_ma_modulation, e.g. {"Effective mAs": null}
+    pitch: null                 # number, 0-3
+    rotation_time: null         # select: 0.25|0.28|0.33|0.35|0.4|0.5|0.6|0.75|1|1.5|Other: Please Specify
+    rotation_time_other: null
+    slice_thickness: null       # select: 0.5|0.625|0.75|1|1.25|2|2.5|3|5|Other: Please Specify
+    slice_thickness_other: null
+    kernel_class: null          # free text
+    reconstruction_algorithm: null # free text
+    strength: null               # free text, optional
+    notes: null                  # free text, optional

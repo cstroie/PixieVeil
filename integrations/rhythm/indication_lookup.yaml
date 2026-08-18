@@ -1,0 +1,36 @@
+# Curated mapping from real DICOM header text to RHYTHM's fixed clinical
+# indication vocabulary. Loaded by pixieveil.processing.exam_extractor.
+#
+# Rules are tried in order; the first fully-matching rule wins. A rule
+# matches when every *_contains key you give it is found (case-insensitive,
+# substring) in the corresponding DICOM field. Omit a key to not test it.
+#
+# Available match keys:
+#   protocol_name_contains          -> DICOM ProtocolName
+#   study_description_contains      -> DICOM StudyDescription
+#   body_part_examined_contains     -> DICOM BodyPartExamined
+#
+# region / clinical_indication / iv_contrast must be one of the 8 combos
+# defined by RHYTHM's clinical_rows (see integrations/rhythm/*_protocol.yaml
+# for the full list — anatomical_region / clinical_indication / iv_contrast).
+#
+# This file starts with one example rule seen in our own sample data
+# (ProtocolName "HeadRoutine" on a head study, admitting diagnosis
+# "Politrauma") — everything else needs to be curated against how your
+# techs actually name protocols before extraction will resolve indications
+# reliably. Until a study matches a rule here, its exam sidecar leaves
+# indication/protocol_type/examination_group null with a note explaining why.
+
+rules:
+  - protocol_name_contains: "HeadRoutine"
+    body_part_examined_contains: "HEAD"
+    region: "Head"
+    clinical_indication: "Trauma"
+    iv_contrast: "Non-contrast"
+
+  # Add more rules here as you observe real ProtocolName / StudyDescription
+  # values coming through, e.g.:
+  # - protocol_name_contains: "MASTOID"
+  #   region: "Mastoid bone/Inner Ear"
+  #   clinical_indication: "Hearing loss; congenital malformations, infection, cholesteatoma, cochlear implants"
+  #   iv_contrast: "Non-contrast"

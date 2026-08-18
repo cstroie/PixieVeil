@@ -32,6 +32,8 @@ from pixieveil.storage.zip_manager import ZipManager
 from pixieveil.processing.anonymizer import Anonymizer
 from pixieveil.processing.series_filter import SeriesFilter
 from pixieveil.processing.defacer import Defacer
+from pixieveil.processing.exam_extractor import ExamExtractor
+from pixieveil.storage.exam_sidecar import ExamSidecar
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +84,9 @@ class StorageManager:
         self.temp_path = Path(settings.storage["temp_path"])
         self.temp_path.mkdir(parents=True, exist_ok=True)
         logger.debug(f"Created temp directory: {self.temp_path}")
+        self.retained_path = Path(
+            settings.storage.get("retain_path", str(self.base_path.parent / "retained"))
+        )
         self.anontrail_path = Path(settings.logging.get("anontrail", "anontrail.jsonl"))
         self.anontrail_path.parent.mkdir(parents=True, exist_ok=True)
         logger.debug(f"Anonymization mapping trail will be written to: {self.anontrail_path}")
@@ -96,6 +101,7 @@ class StorageManager:
         self.zip_manager = ZipManager(settings)
         self.remote_storage = RemoteStorage(settings)
         self.dicom_storage = DicomStorage(settings)
+        self.exam_extractor = ExamExtractor()
         
         # Thread safety
         self.lock = threading.Lock()
@@ -241,6 +247,11 @@ class StorageManager:
                 await self.enforce_storage_quota()
             except Exception as exc:
                 logger.error("Unexpected error in storage quota enforcement: %s", exc)
+
+            try:
+                await self.enforce_retention_purge()
+            except Exception as exc:
+                logger.error("Unexpected error in retention purge: %s", exc)
 
             try:
                 await asyncio.wait_for(self._stop_event.wait(), timeout=interval)
@@ -750,6 +761,11 @@ class StorageManager:
             )
             logger.debug("Study %04d contains %d images", study_number, image_count)
 
+            try:
+                await asyncio.to_thread(self._write_exam_sidecar, study_uid, study_number, study_dir)
+            except Exception:
+                logger.exception("Failed to extract RHYTHM exam data for study %04d", study_number)
+
             with self.lock:
                 self.inc_counter('archive', 'studies')
                 self.inc_counter('archive', 'images', image_count)
@@ -786,7 +802,7 @@ class StorageManager:
                 self.inc_counter('export', 'dicom_images', image_count)
                 self.inc_counter('cleanup', 'studies')
                 self.inc_counter('cleanup', 'images', image_count)
-            await asyncio.to_thread(shutil.rmtree, study_dir)
+            await asyncio.to_thread(self._retain_or_delete_sync, study_dir)
             self.study_manager.mark_study_archived(study_uid, via="dicom")
         else:
             logger.error("DICOM push failed for study %s", study_uid)
@@ -824,7 +840,7 @@ class StorageManager:
                 self.inc_counter('export', 'http_bytes', zip_path.stat().st_size)
                 self.inc_counter('cleanup', 'studies')
                 self.inc_counter('cleanup', 'images', image_count)
-            await asyncio.to_thread(shutil.rmtree, study_dir)
+            await asyncio.to_thread(self._retain_or_delete_sync, study_dir)
             await asyncio.to_thread(zip_path.unlink)
             self.study_manager.mark_study_archived(study_uid, via="http")
         else:
@@ -832,6 +848,17 @@ class StorageManager:
             with self.lock:
                 self.inc_counter('export', 'errors')
                 self.inc_counter('errors', 'total')
+
+    def _write_exam_sidecar(self, study_uid: str, study_number: int, study_dir: Path) -> None:
+        """
+        Blocking: derive RHYTHM exam-entry fields from study_dir's DICOM
+        headers and write them to <study_number>_exam.json. Must run before
+        export/retention can move or delete study_dir.
+        """
+        sc = self.study_manager._sidecars.get(study_uid)
+        anonymized_study_uid = sc.anonymized_study_uid if sc is not None else ""
+        data = self.exam_extractor.extract(study_dir, study_number, anonymized_study_uid)
+        ExamSidecar(study_number, data).save(self.base_path)
 
     def _deface_study(self, study_uid: str, study_number: int, study_dir: Path) -> None:
         """
@@ -884,6 +911,58 @@ class StorageManager:
                         study_uid, orig_series_uid, is_head=False, is_topogram=False
                     )
     
+    def _retain_or_delete_sync(self, study_dir: Path) -> None:
+        """
+        Called after a successful export in place of an unconditional delete.
+
+        If storage.retain_after_export_days is configured, moves the
+        (already anonymized) study directory into retained_path with a
+        timestamp marker instead of deleting it, so enforce_retention_purge
+        can remove it once the window elapses. Otherwise deletes it right
+        away, matching the original always-delete behavior.
+        """
+        retain_days = self.settings.storage.get("retain_after_export_days")
+        if not retain_days:
+            shutil.rmtree(study_dir)
+            return
+
+        self.retained_path.mkdir(parents=True, exist_ok=True)
+        dest = self.retained_path / study_dir.name
+        if dest.exists():
+            dest = self.retained_path / f"{study_dir.name}_{int(time.time())}"
+        shutil.move(str(study_dir), str(dest))
+        (dest / ".retained_at").write_text(str(time.time()))
+        logger.debug("Retention: kept %s under %s", study_dir.name, self.retained_path)
+
+    def enforce_retention_purge_sync(self) -> None:
+        """
+        Synchronous purge of retained studies whose retention window has
+        elapsed. No-op if storage.retain_after_export_days is not configured.
+        """
+        retain_days = self.settings.storage.get("retain_after_export_days")
+        if not retain_days or not self.retained_path.exists():
+            return
+
+        cutoff = time.time() - (retain_days * 86400)
+        for study_dir in self.retained_path.iterdir():
+            if not study_dir.is_dir():
+                continue
+            marker = study_dir / ".retained_at"
+            try:
+                retained_at = float(marker.read_text()) if marker.exists() else study_dir.stat().st_mtime
+            except (OSError, ValueError):
+                retained_at = study_dir.stat().st_mtime
+            if retained_at < cutoff:
+                shutil.rmtree(study_dir, ignore_errors=True)
+                logger.info(
+                    "Retention: purged %s (older than retain_after_export_days=%s)",
+                    study_dir.name, retain_days,
+                )
+
+    async def enforce_retention_purge(self) -> None:
+        """Offload retention purge to a thread so the event loop stays responsive."""
+        await asyncio.to_thread(self.enforce_retention_purge_sync)
+
     def enforce_storage_quota_sync(self) -> None:
         """
         Synchronous quota enforcement. Removes the oldest completed studies from

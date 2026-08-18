@@ -11,6 +11,14 @@ storage:
   base_path: "./data/dicom"
   temp_path: "./data/tmp"
   max_storage_gb: 100
+  # Optional: keep a local copy of each already-anonymized study for N days
+  # after a successful export, instead of deleting it immediately. Useful
+  # for auditing or harvesting real acquisition parameters. Omit or set to
+  # 0/null to keep the default behavior (delete right after export).
+  # Stored under retain_path (defaults to a "retained" dir next to base_path)
+  # and outside max_storage_gb accounting — watch disk usage separately.
+  #retain_after_export_days: 14
+  #retain_path: "./data/retained"
 
 # Optional remote storage — remove entire block to keep archives local.
 # DICOM C-STORE takes priority over HTTP ZIP upload if both are configured.
