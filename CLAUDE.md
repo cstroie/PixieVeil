@@ -63,13 +63,21 @@ substituted with `monkeypatch` — never a real network call), and `Defacer`
 (config, head/topogram detection, model-path resolution, `_prepare_for_write`,
 `_load_series_groups`, device resolution via monkeypatched `torch`, and
 `deface_series`'s directory bookkeeping/atomic-swap safety with the three
-heavy conversion steps stubbed at the instance level).
+heavy conversion steps stubbed at the instance level), and `dicom_server`
+(`CStoreSCPHandler.validate_dicom`/`handle_c_store` against a small fake
+StorageManager that records calls and can be told to raise, plus one
+integration test wiring up the real `StorageManager` to catch signature
+drift; `DicomServer`'s config, the C-ECHO/C-STORE event adapters, the
+port-already-bound guard in `start()` via a real socket bind, and `stop()`'s
+shutdown bookkeeping via a fake `AE`).
 
 Deliberately still out of scope: `dicom_to_nifti`, the pixel-array half of
 `nifti_to_dicom`, `run_nnunet_inference`, `_run_nnunet_and_apply_mask`, and
 `_dilate_mask` — real volumetric conversion math that needs actual scanner
-image data to test meaningfully, not synthetic 2x2 arrays; same for the
-live DICOM C-STORE server/handler path in `dicom_server/`. Extend the
+image data to test meaningfully, not synthetic 2x2 arrays; same for
+`DicomServer.start_blocking_server`'s live pynetdicom association loop,
+which needs a real socket server thread and a real C-STORE client — that
+belongs in an end-to-end test, not a unit test. Extend the
 suite when touching logic in scope for it instead of leaving it untested;
 treat adding coverage for the still-excluded paths as a separate,
 deliberate task (real fixture volumes, a fake association) rather than

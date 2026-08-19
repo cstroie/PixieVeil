@@ -88,8 +88,11 @@ class CStoreSCPHandler:
                 return 0xC000  # Processing failure
 
             # Attach file meta directly to the existing dataset to preserve
-            # all encoding attributes (is_implicit_VR, is_little_endian, etc.)
-            if file_meta:
+            # all encoding attributes (is_implicit_VR, is_little_endian, etc.).
+            # `is not None`, not truthiness: FileMetaDataset.__bool__ follows
+            # its element count, so an empty-but-present file_meta (len 0)
+            # would silently never get attached under a bare `if file_meta:`.
+            if file_meta is not None:
                 dataset.file_meta = file_meta
 
             # Save the DICOM image temporarily

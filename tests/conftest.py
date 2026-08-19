@@ -44,10 +44,12 @@ def write_minimal_dicom(path: Path, **attrs) -> None:
     file_meta.TransferSyntaxUID = ExplicitVRLittleEndian
 
     ds = FileDataset(str(path), {}, file_meta=file_meta, preamble=b"\0" * 128)
-    # A real DICOM file always carries SOPInstanceUID at the dataset level
-    # too (normally identical to file_meta's MediaStorageSOPInstanceUID) —
-    # code that reads ds.SOPInstanceUID directly (e.g. DicomStorage's
-    # C-STORE loop) needs it present, not just the file_meta copy.
+    # A real DICOM file always carries SOPClassUID/SOPInstanceUID at the
+    # dataset level too (normally identical to file_meta's Media Storage
+    # copies) — code that reads them directly off the dataset (e.g.
+    # DicomStorage's C-STORE loop, CStoreSCPHandler.validate_dicom) needs
+    # them present, not just the file_meta copies.
+    ds.SOPClassUID = file_meta.MediaStorageSOPClassUID
     ds.SOPInstanceUID = file_meta.MediaStorageSOPInstanceUID
     ds.Modality = attrs.pop("Modality", "CT")
     for key, value in attrs.items():
