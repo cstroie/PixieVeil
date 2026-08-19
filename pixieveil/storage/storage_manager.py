@@ -1169,7 +1169,45 @@ class StorageManager:
         exam_merge.apply_manual(data, manual)
         exam_merge.recompute_buckets(data)
         ExamSidecar(study_number, data).save(self.base_path)
+
+        # Weight/age corrections are worth pushing into the DICOM headers
+        # themselves, not just the exam sidecar — otherwise the correction
+        # never reaches whatever the study eventually gets exported as.
+        # Only safe while the files are still sitting in base_path awaiting
+        # manual export; once archived, exported copies are already gone.
+        if "patient.weight_kg" in manual_fields or "patient.age_years" in manual_fields:
+            sc = self.find_sidecar_by_number(study_number)
+            if sc is not None and sc.status != "archived":
+                study_dir, location = self.resolve_study_dir(study_number)
+                if study_dir is not None and location == "base":
+                    self._writeback_patient_fields_sync(
+                        study_dir,
+                        manual_fields.get("patient.weight_kg"),
+                        manual_fields.get("patient.age_years"),
+                    )
+
         return data
+
+    def _writeback_patient_fields_sync(self, study_dir: Path,
+                                        weight_kg: Optional[float],
+                                        age_years: Optional[float]) -> None:
+        """Patch a manually-corrected PatientWeight/PatientAge into every
+        anonymized DICOM file under study_dir, so the correction reaches
+        the objects that eventually get exported."""
+        age_str = f"{int(round(age_years)):03d}Y" if age_years is not None else None
+
+        for dcm_path in study_dir.rglob("*.dcm"):
+            if any(part.endswith("_pre_deface") for part in dcm_path.parts):
+                continue
+            try:
+                ds = pydicom.dcmread(dcm_path)
+                if weight_kg is not None:
+                    ds.PatientWeight = weight_kg
+                if age_str is not None:
+                    ds.PatientAge = age_str
+                ds.save_as(dcm_path)
+            except Exception:
+                logger.exception("Failed to write back patient fields into %s", dcm_path)
 
     async def save_exam(self, study_number: int, manual_fields: dict) -> dict:
         """Apply manually-entered fields to a study's exam sidecar and save it."""
