@@ -48,7 +48,7 @@ class CStoreSCPHandler:
         self.storage = storage_manager
 
     def handle_c_store(self, assoc: "pynetdicom.association.Association",
-                      context: "pynetdicom.presentation.PresentationContext",
+                      context: "pynetdicom.presentation.PresentationContextTuple",
                       info: Dict[str, Any]) -> int:
         """
         Handle C-STORE requests from DICOM modalities.

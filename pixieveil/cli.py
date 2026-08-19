@@ -22,6 +22,7 @@ import signal
 import sys
 from pathlib import Path
 from logging.handlers import RotatingFileHandler
+from typing import List
 from pixieveil.config import Settings
 from pixieveil.dicom_server.server import DicomServer
 from pixieveil.dashboard.server import Dashboard
@@ -44,7 +45,11 @@ def setup_logging(settings: Settings) -> None:
     # Ensure the directory for the log file exists to avoid FileNotFoundError
     log_path.parent.mkdir(parents=True, exist_ok=True)
 
-    handlers = [
+    # Explicit annotation: without it mypy joins the two concrete Handler
+    # subclasses in this list literal to `object` instead of their real
+    # common base `logging.Handler`, and rejects the basicConfig() call
+    # below.
+    handlers: List[logging.Handler] = [
         logging.StreamHandler(),
         RotatingFileHandler(
             filename=log_path,

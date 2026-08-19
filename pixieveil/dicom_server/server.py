@@ -16,7 +16,11 @@ from typing import Dict, Any, Optional
 
 import pynetdicom
 from pynetdicom import AE, evt
-from pynetdicom.sop_class import (
+# pynetdicom.sop_class builds these names at import time via
+# globals()[name] = sop_class (see _generate_sop_classes in its source) —
+# real attributes at runtime (confirmed), but invisible to mypy's static
+# analysis since there's no way for it to see through that metaprogramming.
+from pynetdicom.sop_class import (  # type: ignore[attr-defined]
     Verification,
     CTImageStorage,
     MRImageStorage,
