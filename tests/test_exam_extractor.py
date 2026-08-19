@@ -11,6 +11,8 @@ import pydicom
 from pixieveil.processing.exam_extractor import (
     _determine_bucket,
     _estimate_series_dlp,
+    _first_float,
+    _first_str,
     _is_ct_image,
     _is_topogram,
     _parse_dicom_age,
@@ -151,6 +153,70 @@ class TestIsCtImage:
         ds = pydicom.Dataset()
         ds.Modality = "SC"
         assert _is_ct_image(ds) is False
+
+
+class TestFirstFloat:
+    def test_sets_value_when_unset(self):
+        rec = {"x": None}
+        _first_float(rec, "x", "5.5")
+        assert rec["x"] == 5.5
+
+    def test_does_not_overwrite_existing_value(self):
+        # This is the "first value wins" guarantee _scan_dicom_files relies
+        # on: a series' technique params are constant per-series, so later
+        # images in the same series must not clobber the first reading.
+        rec = {"x": 1.0}
+        _first_float(rec, "x", 99.0)
+        assert rec["x"] == 1.0
+
+    def test_none_raw_leaves_unset(self):
+        rec = {"x": None}
+        _first_float(rec, "x", None)
+        assert rec["x"] is None
+
+    def test_empty_string_raw_leaves_unset(self):
+        rec = {"x": None}
+        _first_float(rec, "x", "")
+        assert rec["x"] is None
+
+    def test_unparseable_raw_leaves_unset_without_raising(self):
+        # Guards _scan_dicom_files against a malformed/non-conformant value
+        # a real scanner or a force=True read could hand back.
+        rec = {"x": None}
+        _first_float(rec, "x", "not-a-number")
+        assert rec["x"] is None
+
+    def test_missing_key_defaults_to_none(self):
+        rec = {}
+        _first_float(rec, "x", "3.0")
+        assert rec["x"] == 3.0
+
+
+class TestFirstStr:
+    def test_sets_value_when_unset(self):
+        rec = {"x": None}
+        _first_str(rec, "x", "HFS")
+        assert rec["x"] == "HFS"
+
+    def test_does_not_overwrite_existing_value(self):
+        rec = {"x": "HFS"}
+        _first_str(rec, "x", "FFS")
+        assert rec["x"] == "HFS"
+
+    def test_multivalue_joined_with_slash(self):
+        rec = {"x": None}
+        _first_str(rec, "x", ["B", "70f"])
+        assert rec["x"] == "B/70f"
+
+    def test_none_raw_leaves_unset(self):
+        rec = {"x": None}
+        _first_str(rec, "x", None)
+        assert rec["x"] is None
+
+    def test_non_string_scalar_is_stringified(self):
+        rec = {"x": None}
+        _first_str(rec, "x", 42)
+        assert rec["x"] == "42"
 
 
 class TestIsTopogram:
