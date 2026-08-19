@@ -1,4 +1,4 @@
-<title>CT Console Sheet</title>
+<title>RHYTHM CT Console Sheet</title>
 <style>
   :root {
     --paper: #faf9f6;
@@ -123,6 +123,7 @@
     padding: 8px 14px;
     text-align: center;
     min-width: 190px;
+    margin-top: 14px;
   }
 
   .study-stamp .label {
@@ -275,31 +276,6 @@
     margin-bottom: 10px;
   }
 
-  /* ---------- Dose table ---------- */
-  table.dose {
-    width: 100%;
-    border-collapse: collapse;
-    font-family: var(--mono);
-    font-size: 12.5px;
-    font-variant-numeric: tabular-nums;
-  }
-  table.dose th {
-    font-family: var(--grotesk);
-    font-size: 10px;
-    letter-spacing: 0.05em;
-    text-transform: uppercase;
-    text-align: left;
-    color: var(--ink-soft);
-    border-bottom: 1px solid var(--rule-strong);
-    padding: 4px 8px 6px 0;
-  }
-  table.dose td {
-    border-bottom: 1px dotted var(--rule);
-    padding: 8px 8px 8px 0;
-    min-width: 60px;
-  }
-  table.dose td.phase-lbl { font-family: var(--serif); font-size: 13px; color: var(--ink); }
-
   /* ---------- Notes ---------- */
   .ruled-notes {
     background-image: repeating-linear-gradient(
@@ -345,8 +321,8 @@
 
   <div class="masthead">
     <div>
-      <h1>CT Console Sheet</h1>
-      <p class="sub">Check the exam sidecar first — most technique &amp; dose values now come from the scanner's own dose report automatically. This sheet is only for what's genuinely console-only: mode labels, mAs, quality, and anything the sidecar left blank.</p>
+      <h1>RHYTHM CT Console Sheet</h1>
+      <p class="sub">Check the exam sidecar first — most technique &amp; dose values are automatic. This sheet covers what isn't.</p>
     </div>
     <div class="study-stamp">
       <div class="label">PixieVeil Study #</div>
@@ -369,7 +345,25 @@
   </div>
 
   <section class="block">
-    <div class="block-title"><span class="n">1</span> Indication &amp; classification</div>
+    <div class="block-title"><span class="n">1</span> Patient</div>
+    <div class="row" style="grid-template-columns: 2fr 1fr 1fr;">
+      <div>
+        <span class="field-label">Name</span>
+        <div class="fill">&nbsp;</div>
+      </div>
+      <div>
+        <span class="field-label">Age</span>
+        <div class="fill">&nbsp;</div>
+      </div>
+      <div>
+        <span class="field-label">Weight (kg)</span>
+        <div class="fill">&nbsp;</div>
+      </div>
+    </div>
+  </section>
+
+  <section class="block">
+    <div class="block-title"><span class="n">2</span> Indication &amp; classification</div>
     <div class="indication-grid">
       <span class="check-item"><span class="box"></span> Head / Trauma</span>
       <span class="check-item"><span class="box"></span> Mastoid / Inner Ear</span>
@@ -380,150 +374,22 @@
       <span class="check-item"><span class="box"></span> Neck-Chest-Abdomen / Lymphoma</span>
       <span class="check-item"><span class="box"></span> Chest-Abdomen / Tumor staging</span>
     </div>
-    <div class="check-item wide"><span class="box"></span> Other / not yet listed —<span class="fill"></span><span class="flag-note">flag for RHYTHM lookup</span></div>
+    <div class="check-item wide"><span class="box"></span> Other / not yet listed —<span class="fill"></span></div>
 
-    <div class="row c2" style="margin-top:14px;">
-      <div>
-        <span class="field-label">IV contrast</span>
-        <div class="check-list">
-          <span class="check-item"><span class="box"></span> Non-contrast</span>
-          <span class="check-item"><span class="box"></span> Contrast-enhanced</span>
-        </div>
-      </div>
-      <div>
-        <span class="field-label">Contrast route (if given)</span>
-        <div class="check-list">
-          <span class="check-item"><span class="box"></span> IV</span>
-          <span class="check-item"><span class="box"></span> Oral</span>
-          <span class="check-item"><span class="box"></span> Rectal</span>
-        </div>
-      </div>
-    </div>
-
-    <div class="row c2">
-      <div>
-        <span class="field-label">Protocol type <span class="flag-note">confirm, don't trust the guess</span></span>
-        <div class="check-list">
-          <span class="check-item"><span class="box"></span> Pediatric Head</span>
-          <span class="check-item"><span class="box"></span> Pediatric Body</span>
-          <span class="check-item"><span class="box"></span> Young Adult</span>
-        </div>
-      </div>
-      <div>
-        <span class="field-label">Examination / age-weight group</span>
-        <div class="fill">&nbsp;</div>
-      </div>
-    </div>
-
-    <span class="field-label">Protocol used (saved RHYTHM protocol, if known)</span>
-    <div class="fill">&nbsp;</div>
-  </section>
-
-  <section class="block">
-    <div class="block-title"><span class="n">2</span> Patient</div>
-    <div class="row c2">
-      <div>
-        <span class="field-label">Weight (kg) <span class="flag-note">often missing from header</span></span>
-        <div class="fill">&nbsp;</div>
-      </div>
-      <div>
-        <span class="field-label">Age (years) — cross-check only</span>
-        <div class="fill">&nbsp;</div>
+    <div style="margin-top:14px;">
+      <span class="field-label">Contrast route (if given)</span>
+      <div class="check-list">
+        <span class="check-item"><span class="box"></span> IV</span>
+        <span class="check-item"><span class="box"></span> Oral</span>
+        <span class="check-item"><span class="box"></span> Rectal</span>
+        <span class="check-item"><span class="box"></span> Fistula</span>
+        <span class="check-item"><span class="box"></span> Colostoma</span>
       </div>
     </div>
   </section>
 
   <section class="block">
-    <div class="block-title"><span class="n">3</span> Console technique</div>
-    <p class="block-note">Check the exam sidecar's <code>rdsr</code> field first — scan type, pitch, kVp and rotation time are usually already there. Only fill in what's actually blank.</p>
-
-    <div class="row c2">
-      <div>
-        <span class="field-label">Scan type <span class="flag-note">check rdsr first</span></span>
-        <div class="check-list">
-          <span class="check-item"><span class="box"></span> Sequential / axial</span>
-          <span class="check-item"><span class="box"></span> Helical / spiral</span>
-        </div>
-      </div>
-      <div>
-        <span class="field-label">Pitch <span class="flag-note">check rdsr first</span></span>
-        <div class="fill">&nbsp;</div>
-      </div>
-    </div>
-
-    <div class="row c2">
-      <div>
-        <span class="field-label">Auto kVp selection mode</span>
-        <div class="check-list">
-          <span class="check-item"><span class="box"></span> Off</span>
-          <span class="check-item"><span class="box"></span> CareKV</span>
-          <span class="check-item"><span class="box"></span> CareKV Semi</span>
-          <span class="check-item wide"><span class="box"></span> Other —<span class="fill"></span></span>
-        </div>
-      </div>
-      <div>
-        <span class="field-label">kVp <span class="flag-note">check rdsr first</span></span>
-        <div class="fill">&nbsp;</div>
-      </div>
-    </div>
-
-    <div class="row c2">
-      <div>
-        <span class="field-label">Auto mA modulation mode</span>
-        <div class="check-list">
-          <span class="check-item"><span class="box"></span> Off</span>
-          <span class="check-item"><span class="box"></span> CareDose</span>
-          <span class="check-item"><span class="box"></span> CareDose4D</span>
-          <span class="check-item wide"><span class="box"></span> Other —<span class="fill"></span></span>
-        </div>
-      </div>
-      <div>
-        <span class="field-label">mAs value (Effective / QR mAs / mA — per mode above) <span class="flag-note">not rdsr mean/max mA</span></span>
-        <div class="fill">&nbsp;</div>
-      </div>
-    </div>
-
-    <div class="row c4">
-      <div>
-        <span class="field-label">Rotation time (s) <span class="flag-note">check rdsr first</span></span>
-        <div class="fill">&nbsp;</div>
-      </div>
-      <div>
-        <span class="field-label">Slice thickness (mm)</span>
-        <div class="fill">&nbsp;</div>
-      </div>
-      <div>
-        <span class="field-label">Recon kernel</span>
-        <div class="fill">&nbsp;</div>
-      </div>
-      <div>
-        <span class="field-label">Recon algorithm</span>
-        <div class="fill">&nbsp;</div>
-      </div>
-    </div>
-  </section>
-
-  <section class="block">
-    <div class="block-title"><span class="n">4</span> Dose per phase</div>
-    <p class="block-note">Check the exam sidecar's <code>rdsr.acquisitions</code> first — CTDI<sub>vol</sub> and DLP are usually already there per acquisition. Fill this table in only if <code>rdsr</code> is null for this exam.</p>
-    <div class="check-list" style="margin-bottom:10px;">
-      <span class="check-item"><span class="box"></span> Sidecar's rdsr had this data — table below not needed</span>
-      <span class="check-item"><span class="box"></span> rdsr was null — filled in from console dose screen below</span>
-    </div>
-    <table class="dose">
-      <thead>
-        <tr><th>Phase</th><th>Series&nbsp;#</th><th>CTDI<sub>vol</sub> (mGy)</th><th>DLP (mGy·cm)</th></tr>
-      </thead>
-      <tbody>
-        <tr><td class="phase-lbl">1</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td></tr>
-        <tr><td class="phase-lbl">2</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td></tr>
-        <tr><td class="phase-lbl">3</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td></tr>
-      </tbody>
-    </table>
-  </section>
-
-  <section class="block">
-    <div class="block-title"><span class="n">5</span> Quality &amp; deviations</div>
+    <div class="block-title"><span class="n">3</span> Quality &amp; deviations</div>
     <div class="row c2">
       <div>
         <span class="field-label">Image quality</span>
