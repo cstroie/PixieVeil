@@ -30,6 +30,7 @@ class RemoteStorage:
         settings (Settings): Application configuration settings
         base_url (str): Base URL for the remote storage service
         auth_token (str): Authentication token for remote storage access
+        enabled (bool): True when a base_url is configured
     """
     
     def __init__(self, settings: Settings):
@@ -44,6 +45,9 @@ class RemoteStorage:
         http_cfg = settings.storage.get("remote_storage", {}).get("http", {})
         self.base_url = http_cfg.get("base_url")
         self.auth_token = http_cfg.get("auth_token")
+        # Mirrors DicomStorage.enabled so callers can check configuration up
+        # front instead of relying on upload_file's tri-state None return.
+        self.enabled: bool = bool(self.base_url)
 
     async def upload_file(self, file_path: Path, remote_path: str) -> Optional[bool]:
         """

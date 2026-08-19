@@ -43,9 +43,10 @@ class ZipManager:
         """
         self.settings = settings
 
-    def create_zip_sync(self, study_uid: str, output_path: Path) -> Optional[Path]:
+    def create_zip_sync(self, study_uid: str, output_path: Path,
+                        source_dir: Optional[Path] = None) -> Optional[Path]:
         """Synchronous ZIP creation — runs in a thread pool via create_zip."""
-        study_dir = Path(self.settings.storage["base_path"]) / study_uid
+        study_dir = source_dir or Path(self.settings.storage["base_path"]) / study_uid
         zip_path = output_path / f"{study_uid}.zip"
         with zipfile.ZipFile(zip_path, "w") as zipf:
             for file_path in study_dir.rglob("*"):
@@ -59,7 +60,8 @@ class ZipManager:
         logger.info(f"Created zip file for study {study_uid}: {zip_path}")
         return zip_path
 
-    async def create_zip(self, study_uid: str, output_path: Path) -> Optional[Path]:
+    async def create_zip(self, study_uid: str, output_path: Path,
+                         source_dir: Optional[Path] = None) -> Optional[Path]:
         """
         Create a zip file for a study.
 
@@ -70,6 +72,9 @@ class ZipManager:
         Args:
             study_uid (str): The study identifier (typically numeric) to archive
             output_path (Path): Path where the ZIP archive should be created
+            source_dir (Optional[Path]): Directory to archive. Defaults to
+                          ``base_path / study_uid``; pass explicitly to zip a
+                          study that has been moved under the retention path.
 
         Returns:
             Optional[Path]: Path to the created ZIP archive if successful,
@@ -81,7 +86,7 @@ class ZipManager:
             exist or cannot be accessed, the method will return None.
         """
         try:
-            return await asyncio.to_thread(self.create_zip_sync, study_uid, output_path)
+            return await asyncio.to_thread(self.create_zip_sync, study_uid, output_path, source_dir)
         except Exception as e:
             logger.error(f"Failed to create zip for study {study_uid}: {e}")
             return None

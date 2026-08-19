@@ -18,9 +18,22 @@ from typing import Dict, Any, Optional
 from aiohttp import web
 
 from pixieveil.config import Settings
+from pixieveil.processing import exam_merge
+from pixieveil.storage.exam_sidecar import ExamSidecar
 from pixieveil.storage.storage_manager import StorageManager
+from pixieveil.storage.study_sidecar import StudySidecar
 
 logger = logging.getLogger(__name__)
+
+# Fields exposed to the browser for each study in list/detail responses.
+# StudySidecar also carries original_study_uid / original_patient_id (PHI) —
+# never serialize to_dict() directly, always go through this whitelist.
+_STUDY_SIDECAR_FIELDS = (
+    "study_number", "status", "archived_via",
+    "received_at", "last_received_at", "anonymized_study_uid",
+)
+
+_VALID_ACTIONS = {"send_dicom", "reextract", "upload_http"}
 
 
 class Dashboard:
@@ -53,10 +66,36 @@ class Dashboard:
             storage_manager: Storage manager instance for accessing system metrics
         """
         self.settings = settings
-        self.app = web.Application()
+        # Registered here (not in start()) because aiohttp freezes the
+        # application's middleware list once runner.setup() runs — adding it
+        # later would silently leave every route unauthenticated.
+        self.app = web.Application(middlewares=[self._auth_middleware])
         self.runner: Optional[web.AppRunner] = None
         self.site: Optional[web.TCPSite] = None
         self.app['storage_manager'] = storage_manager
+
+    @web.middleware
+    async def _auth_middleware(self, request: web.Request, handler):
+        """
+        Guard non-GET requests with an optional shared token.
+
+        When ``http_server.auth_token`` is unset (default), this is a no-op
+        and behavior is unchanged from before this middleware existed. When
+        set, any non-GET request (the mutating /api/studies/* endpoints)
+        must present it as either ``Authorization: Bearer <token>`` or
+        ``X-Auth-Token: <token>``.
+        """
+        token = self.settings.http_server.get("auth_token")
+        if token and request.method != "GET":
+            header_auth = request.headers.get("Authorization", "")
+            presented = None
+            if header_auth.startswith("Bearer "):
+                presented = header_auth[len("Bearer "):]
+            if presented is None:
+                presented = request.headers.get("X-Auth-Token")
+            if presented != token:
+                return web.json_response({"error": "unauthorized"}, status=401)
+        return await handler(request)
 
     async def start(self) -> None:
         """
@@ -82,6 +121,11 @@ class Dashboard:
             web.get("/", self.handle_index),
             web.get("/stats", self.handle_stats),
             web.get("/health", self.handle_health),
+            web.get("/studies", self.handle_studies_page),
+            web.get("/api/studies", self.handle_list_studies),
+            web.get("/api/studies/{n}", self.handle_get_study),
+            web.put("/api/studies/{n}/exam", self.handle_save_exam),
+            web.post("/api/studies/{n}/actions/{action}", self.handle_study_action),
         ])
 
         # Create runner and site
@@ -295,3 +339,150 @@ class Dashboard:
         Returns a JSON payload indicating that the service is alive.
         """
         return web.json_response({"status": "ok"})
+
+    # -----------------------------------------------------------------
+    # /studies page + API
+    # -----------------------------------------------------------------
+
+    async def handle_studies_page(self, request: web.Request) -> web.Response:
+        """Serve the /studies dashboard page (same pattern as handle_index)."""
+        template_path = Path(__file__).parent / "templates" / "studies.html"
+        try:
+            html_content = await asyncio.to_thread(template_path.read_text, encoding='utf-8')
+            return web.Response(text=html_content, content_type="text/html")
+        except FileNotFoundError:
+            logger.error(f"Template file not found: {template_path}")
+            return web.Response(text="Studies template not found", status=500)
+
+    @staticmethod
+    def _whitelist_sidecar(sc: StudySidecar, location: str) -> Dict[str, Any]:
+        out = {field: getattr(sc, field) for field in _STUDY_SIDECAR_FIELDS}
+        out["series_count"] = len(sc.series)
+        out["location"] = location
+        return out
+
+    @staticmethod
+    def _exam_summary(exam_data: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        if exam_data is None:
+            return None
+        scanner = exam_data.get("scanner") or {}
+        rdsr = exam_data.get("rdsr") or {}
+        manual = exam_data.get("manual") or {}
+        return {
+            "protocol_type": exam_data.get("protocol_type"),
+            "examination_group": exam_data.get("examination_group"),
+            "indication": exam_data.get("indication"),
+            "scanner": {
+                "manufacturer": scanner.get("manufacturer"),
+                "model": scanner.get("model"),
+            },
+            "total_dlp_mgy_cm": rdsr.get("total_dlp_mgy_cm"),
+            "has_manual_edits": bool(manual.get("fields")),
+        }
+
+    @staticmethod
+    def _coerce_study_number(request: web.Request) -> int:
+        raw = request.match_info.get("n", "")
+        try:
+            return int(raw)
+        except ValueError:
+            raise web.HTTPBadRequest(text=f"invalid study number: {raw!r}")
+
+    def _load_studies_sync(self, storage_manager: StorageManager) -> list:
+        """Blocking: enumerate every study sidecar plus its exam sidecar, if any."""
+        sidecars = StudySidecar.load_all(storage_manager.base_path)
+        results = []
+        for sc in sorted(sidecars.values(), key=lambda s: s.study_number):
+            _dir, location = storage_manager.resolve_study_dir(sc.study_number)
+            entry = self._whitelist_sidecar(sc, location)
+
+            exam_path = ExamSidecar.path_for(storage_manager.base_path, sc.study_number)
+            exam_data = None
+            if exam_path.exists():
+                try:
+                    exam_data = ExamSidecar.load(exam_path).data
+                except Exception:
+                    logger.warning("Corrupt exam sidecar %s — skipping", exam_path, exc_info=True)
+            entry["exam_summary"] = self._exam_summary(exam_data)
+            results.append(entry)
+        return results
+
+    async def handle_list_studies(self, request: web.Request) -> web.Response:
+        storage_manager: StorageManager = request.app['storage_manager']
+        studies = await asyncio.to_thread(self._load_studies_sync, storage_manager)
+        return web.json_response({
+            "studies": studies,
+            "capabilities": {
+                "dicom": storage_manager.dicom_storage.enabled,
+                "http": storage_manager.remote_storage.enabled,
+            },
+            "auth_required": bool(self.settings.http_server.get("auth_token")),
+        })
+
+    def _load_one_study_sync(
+        self, storage_manager: StorageManager, n: int
+    ) -> Optional[Dict[str, Any]]:
+        sc = storage_manager.find_sidecar_by_number(n)
+        if sc is None:
+            return None
+        _dir, location = storage_manager.resolve_study_dir(n)
+        study_info = self._whitelist_sidecar(sc, location)
+
+        exam_path = ExamSidecar.path_for(storage_manager.base_path, n)
+        if not exam_path.exists():
+            return {"study": study_info, "exam": None}
+        exam_data = ExamSidecar.load(exam_path).data
+        return {"study": study_info, "exam": exam_data}
+
+    async def handle_get_study(self, request: web.Request) -> web.Response:
+        n = self._coerce_study_number(request)
+        storage_manager: StorageManager = request.app['storage_manager']
+        result = await asyncio.to_thread(self._load_one_study_sync, storage_manager, n)
+        if result is None:
+            return web.json_response({"error": "study not found"}, status=404)
+        return web.json_response(result)
+
+    async def handle_save_exam(self, request: web.Request) -> web.Response:
+        n = self._coerce_study_number(request)
+        storage_manager: StorageManager = request.app['storage_manager']
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response({"error": "invalid JSON body"}, status=400)
+
+        fields = body.get("fields")
+        if not isinstance(fields, dict):
+            return web.json_response({"error": "body must be {\"fields\": {...}}"}, status=400)
+
+        bad_keys = [k for k in fields if not exam_merge.is_editable_path(k)]
+        if bad_keys:
+            return web.json_response(
+                {"error": "unknown/unwritable field(s)", "keys": bad_keys}, status=400
+            )
+
+        result = await storage_manager.save_exam(n, fields)
+        if result.get("ok"):
+            return web.json_response(result)
+        message = result.get("message", "")
+        status = 409 if "in progress" in message else 404
+        return web.json_response(result, status=status)
+
+    async def handle_study_action(self, request: web.Request) -> web.Response:
+        n = self._coerce_study_number(request)
+        action = request.match_info.get("action", "")
+        if action not in _VALID_ACTIONS:
+            return web.json_response({"error": f"unknown action {action!r}"}, status=400)
+
+        storage_manager: StorageManager = request.app['storage_manager']
+        method = {
+            "send_dicom": storage_manager.manual_send_dicom,
+            "reextract": storage_manager.manual_reextract,
+            "upload_http": storage_manager.manual_upload_http,
+        }[action]
+
+        result = await method(n)
+        if result.get("ok"):
+            return web.json_response(result)
+        message = result.get("message", "")
+        status = 409 if "in progress" in message else 400
+        return web.json_response(result, status=status)

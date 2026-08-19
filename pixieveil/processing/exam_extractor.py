@@ -207,6 +207,43 @@ def _parse_acquisition(acq_item: "pydicom.Dataset") -> Dict[str, Any]:
     }
 
 
+def _determine_bucket(
+    region: Optional[str], indication: Optional[str],
+    age_years: Optional[float], weight_kg: Optional[float],
+) -> Tuple[Optional[str], Optional[str], List[str]]:
+    notes: List[str] = []
+    if not region or not indication:
+        return None, None, ["protocol_type/examination_group left null: indication unresolved"]
+
+    is_head_tab = (region, indication) in HEAD_INDICATIONS
+
+    # Heuristic: PixieVeil has no reliable signal for "young adult" beyond
+    # size/age thresholds, since RHYTHM's own GUI never auto-selects that
+    # tab either — a technologist always picks it manually. Treat it as a
+    # suggestion, not a decision.
+    if weight_kg is not None and weight_kg > 80:
+        notes.append("protocol_type=YOUNG_ADULT is a heuristic (weight > 80 kg) — verify")
+        return "YOUNG_ADULT", YOUNG_ADULT_GROUP, notes
+    if age_years is not None and age_years >= 18:
+        notes.append("protocol_type=YOUNG_ADULT is a heuristic (age >= 18) — verify")
+        return "YOUNG_ADULT", YOUNG_ADULT_GROUP, notes
+
+    if is_head_tab:
+        if age_years is None:
+            return "PEDIATRIC_HEAD", None, notes + ["examination_group left null: age unknown"]
+        for upper, group in HEAD_AGE_GROUPS:
+            if age_years < upper:
+                return "PEDIATRIC_HEAD", group, notes
+    else:
+        if weight_kg is None:
+            return "PEDIATRIC_BODY", None, notes + ["examination_group left null: weight unknown"]
+        for upper, group in BODY_WEIGHT_GROUPS:
+            if weight_kg < upper:
+                return "PEDIATRIC_BODY", group, notes
+
+    return None, None, notes  # unreachable, satisfies type checkers
+
+
 def _is_acquisition_image(ds: "pydicom.Dataset") -> bool:
     """
     True for an actual CT acquisition image, false for a topogram/localizer
@@ -366,7 +403,7 @@ class ExamExtractor:
                     f"model={model!r} — add one or select the scanner manually"
                 )
 
-        protocol_type, examination_group, bucket_notes = self._determine_bucket(
+        protocol_type, examination_group, bucket_notes = _determine_bucket(
             region, indication, age_years, weight_kg
         )
         notes.extend(bucket_notes)
@@ -444,39 +481,3 @@ class ExamExtractor:
                     True,
                 )
         return None, None, None, False
-
-    def _determine_bucket(
-        self, region: Optional[str], indication: Optional[str],
-        age_years: Optional[float], weight_kg: Optional[float],
-    ) -> Tuple[Optional[str], Optional[str], List[str]]:
-        notes: List[str] = []
-        if not region or not indication:
-            return None, None, ["protocol_type/examination_group left null: indication unresolved"]
-
-        is_head_tab = (region, indication) in HEAD_INDICATIONS
-
-        # Heuristic: PixieVeil has no reliable signal for "young adult" beyond
-        # size/age thresholds, since RHYTHM's own GUI never auto-selects that
-        # tab either — a technologist always picks it manually. Treat it as a
-        # suggestion, not a decision.
-        if weight_kg is not None and weight_kg > 80:
-            notes.append("protocol_type=YOUNG_ADULT is a heuristic (weight > 80 kg) — verify")
-            return "YOUNG_ADULT", YOUNG_ADULT_GROUP, notes
-        if age_years is not None and age_years >= 18:
-            notes.append("protocol_type=YOUNG_ADULT is a heuristic (age >= 18) — verify")
-            return "YOUNG_ADULT", YOUNG_ADULT_GROUP, notes
-
-        if is_head_tab:
-            if age_years is None:
-                return "PEDIATRIC_HEAD", None, notes + ["examination_group left null: age unknown"]
-            for upper, group in HEAD_AGE_GROUPS:
-                if age_years < upper:
-                    return "PEDIATRIC_HEAD", group, notes
-        else:
-            if weight_kg is None:
-                return "PEDIATRIC_BODY", None, notes + ["examination_group left null: weight unknown"]
-            for upper, group in BODY_WEIGHT_GROUPS:
-                if weight_kg < upper:
-                    return "PEDIATRIC_BODY", group, notes
-
-        return None, None, notes  # unreachable, satisfies type checkers

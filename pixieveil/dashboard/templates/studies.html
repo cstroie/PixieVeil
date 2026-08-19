@@ -1,0 +1,582 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>PixieVeil Studies</title>
+        <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+        <style>
+            article {
+                margin-bottom: var(--pico-spacing);
+            }
+            table {
+                display: block;
+                overflow-x: auto;
+                white-space: nowrap;
+            }
+            tr.study-row {
+                cursor: pointer;
+            }
+            tr.study-row:hover {
+                background-color: var(--pico-table-row-stripe-background-color);
+            }
+            .badge {
+                font-size: 0.75rem;
+                font-weight: var(--pico-font-weight);
+                text-transform: uppercase;
+                letter-spacing: 0.02em;
+                padding: 0.15rem 0.55rem;
+                border-radius: var(--pico-border-radius);
+                white-space: nowrap;
+            }
+            .badge-ok {
+                color: var(--pico-form-element-valid-focus-color);
+                border: 1px solid var(--pico-form-element-valid-focus-color);
+            }
+            .badge-warn {
+                color: var(--pico-del-color, #c00);
+                border: 1px solid var(--pico-del-color, #c00);
+            }
+            .badge-muted {
+                color: var(--pico-muted-color);
+                border: 1px solid var(--pico-muted-border-color);
+            }
+            .edited-flag {
+                color: var(--pico-primary);
+                font-weight: bold;
+            }
+            /* The row/table-cell holding the detail panel would otherwise
+               share column-width negotiation with the (nowrap, narrow)
+               summary rows above it via the table's shared column-layout
+               algorithm, forcing the whole table — and the page — wider
+               than the viewport. Taking the row/cell out of table display
+               lets the panel just wrap to the container's actual width. */
+            tr.detail-row {
+                display: block;
+            }
+            tr.detail-row > td {
+                display: block;
+                width: 100%;
+                box-sizing: border-box;
+            }
+            .detail-panel {
+                margin-top: -1px;
+                white-space: normal;
+                max-width: 100%;
+            }
+            .manual-set {
+                border-color: var(--pico-primary);
+            }
+            .phase-group {
+                margin-bottom: var(--pico-spacing);
+            }
+            .field-hint {
+                font-size: 0.75rem;
+                color: var(--pico-muted-color);
+            }
+            .hint-box {
+                font-size: 0.85rem;
+                color: var(--pico-muted-color);
+                border-left: 3px solid var(--pico-muted-border-color);
+                padding-left: 0.75rem;
+                margin: 0.5rem 0 1rem;
+            }
+            .notes-list {
+                font-size: 0.85rem;
+            }
+            .action-row {
+                display: flex;
+                gap: 0.75rem;
+                flex-wrap: wrap;
+                align-items: center;
+            }
+            .status-line {
+                font-size: 0.85rem;
+            }
+            .token-bar {
+                display: flex;
+                gap: 0.5rem;
+                align-items: center;
+                margin-bottom: var(--pico-spacing);
+            }
+            .token-bar input {
+                max-width: 320px;
+                margin: 0;
+            }
+        </style>
+    </head>
+    <body class="container">
+        <nav>
+            <ul>
+                <li><strong>PixieVeil</strong></li>
+            </ul>
+            <ul>
+                <li><a href="/">Dashboard</a></li>
+                <li><a href="/studies" aria-current="page">Studies</a></li>
+            </ul>
+        </nav>
+
+        <hgroup>
+            <h1>PixieVeil Studies</h1>
+            <p>Extracted exam data, manual review and per-study actions</p>
+        </hgroup>
+
+        <div class="token-bar" id="token-bar" style="display:none;">
+            <label for="auth-token" style="margin:0;">Auth token</label>
+            <input type="password" id="auth-token" placeholder="X-Auth-Token">
+            <button type="button" class="secondary" onclick="saveToken()">Save</button>
+        </div>
+
+        <main>
+            <div id="studies-container"><p aria-busy="true">Loading studies…</p></div>
+        </main>
+
+        <footer>
+            <button onclick="loadStudies()" role="button">Refresh</button>
+        </footer>
+
+        <script>
+            const AUTH_KEY = 'pixieveil_auth_token';
+            let CAPABILITIES = { dicom: false, http: false };
+            let AUTH_REQUIRED = false;
+            let STUDIES = [];
+            let EXPANDED = null;
+
+            const REGION_INDICATION_OPTIONS = [
+                { region: "Head", indication: "Trauma", contrast: "Non-contrast" },
+                { region: "Mastoid bone/Inner Ear",
+                  indication: "Hearing loss; congenital malformations, infection, cholesteatoma, cochlear implants",
+                  contrast: "Non-contrast" },
+                { region: "Chest", indication: "Fungal infections", contrast: "Non-contrast" },
+                { region: "Chest", indication: "Complicated infections", contrast: "Contrast-enhanced" },
+                { region: "Chest/HRCT (Inspiration/Expiration)",
+                  indication: "Interstitial lung diseases, small airways disease, cystic fibrosis, asthma, primary ciliary dyskinesia, chronic lung disease of prematurity",
+                  contrast: "Non-contrast" },
+                { region: "Chest-Abdomen",
+                  indication: "Tumor staging & follow-up (Wilms tumor, neuroblastoma, other)",
+                  contrast: "Contrast-enhanced" },
+                { region: "Abdomen", indication: "Acute abdomen", contrast: "Contrast-enhanced" },
+                { region: "Neck-Chest-Abdomen", indication: "Lymphoma", contrast: "Contrast-enhanced" },
+            ];
+            const IMAGE_QUALITY_OPTIONS = ["Diagnostic", "Suboptimal", "Non-diagnostic"];
+
+            function authToken() {
+                return localStorage.getItem(AUTH_KEY) || '';
+            }
+
+            function saveToken() {
+                const val = document.getElementById('auth-token').value;
+                localStorage.setItem(AUTH_KEY, val);
+            }
+
+            function authHeaders(extra) {
+                const headers = Object.assign({}, extra || {});
+                const token = authToken();
+                if (token) headers['X-Auth-Token'] = token;
+                return headers;
+            }
+
+            async function loadStudies() {
+                const container = document.getElementById('studies-container');
+                try {
+                    const resp = await fetch('/api/studies');
+                    if (!resp.ok) throw new Error('failed to load studies');
+                    const data = await resp.json();
+                    STUDIES = data.studies || [];
+                    CAPABILITIES = data.capabilities || { dicom: false, http: false };
+                    AUTH_REQUIRED = !!data.auth_required;
+                    document.getElementById('token-bar').style.display = AUTH_REQUIRED ? 'flex' : 'none';
+                    if (AUTH_REQUIRED) {
+                        document.getElementById('auth-token').value = authToken();
+                    }
+                    renderTable();
+                } catch (err) {
+                    console.error(err);
+                    container.innerHTML = '<p>Could not load studies.</p>';
+                }
+            }
+
+            function locationBadge(loc) {
+                const cls = loc === 'base' ? 'badge-ok' : (loc === 'retained' ? 'badge-muted' : 'badge-warn');
+                return `<span class="badge ${cls}">${loc}</span>`;
+            }
+
+            function statusBadge(status) {
+                const cls = status === 'archived' ? 'badge-ok' : 'badge-muted';
+                return `<span class="badge ${cls}">${status}</span>`;
+            }
+
+            function esc(s) {
+                if (s === null || s === undefined) return '';
+                const div = document.createElement('div');
+                div.textContent = String(s);
+                // Also escape quotes: this is used inside HTML attribute
+                // values (e.g. value="${esc(...)}"), not just text content.
+                return div.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+            }
+
+            function renderTable() {
+                const container = document.getElementById('studies-container');
+                if (!STUDIES.length) {
+                    container.innerHTML = '<p>No studies found.</p>';
+                    return;
+                }
+                let html = '<table role="grid"><thead><tr>' +
+                    '<th>#</th><th>Status</th><th>Location</th><th>Indication</th>' +
+                    '<th>Protocol type</th><th>Exam group</th><th>Scanner</th>' +
+                    '<th>Total DLP</th><th>Edited</th>' +
+                    '</tr></thead><tbody>';
+                STUDIES.forEach(s => {
+                    const ex = s.exam_summary;
+                    const ind = ex && ex.indication ? `${esc(ex.indication.region || '—')} / ${esc(ex.indication.clinical_indication || '—')}` : '—';
+                    const scanner = ex && ex.scanner ? `${esc(ex.scanner.manufacturer || '')} ${esc(ex.scanner.model || '')}`.trim() || '—' : '—';
+                    const dlp = ex && ex.total_dlp_mgy_cm != null ? ex.total_dlp_mgy_cm.toFixed(1) + ' mGy·cm' : '—';
+                    const edited = ex && ex.has_manual_edits ? '<span class="edited-flag" title="has manual edits">&#9998;</span>' : '';
+                    html += `<tr class="study-row" data-n="${s.study_number}">` +
+                        `<td>${String(s.study_number).padStart(4, '0')}</td>` +
+                        `<td>${statusBadge(s.status)}</td>` +
+                        `<td>${locationBadge(s.location)}</td>` +
+                        `<td>${ind}</td>` +
+                        `<td>${esc(ex ? ex.protocol_type : null) || '—'}</td>` +
+                        `<td>${esc(ex ? ex.examination_group : null) || '—'}</td>` +
+                        `<td>${scanner}</td>` +
+                        `<td>${dlp}</td>` +
+                        `<td>${edited}</td>` +
+                        `</tr><tr class="detail-row" data-n="${s.study_number}" style="display:none;">` +
+                        `<td colspan="9"><div class="detail-panel" id="detail-${s.study_number}"></div></td></tr>`;
+                });
+                html += '</tbody></table>';
+                container.innerHTML = html;
+
+                container.querySelectorAll('tr.study-row').forEach(row => {
+                    row.addEventListener('click', () => toggleDetail(parseInt(row.dataset.n, 10)));
+                });
+            }
+
+            async function toggleDetail(n) {
+                const detailRow = document.querySelector(`tr.detail-row[data-n="${n}"]`);
+                if (!detailRow) return;
+                if (EXPANDED === n) {
+                    detailRow.style.display = 'none';
+                    EXPANDED = null;
+                    return;
+                }
+                document.querySelectorAll('tr.detail-row').forEach(r => r.style.display = 'none');
+                EXPANDED = n;
+                detailRow.style.display = '';
+                await loadDetail(n);
+            }
+
+            async function loadDetail(n) {
+                const el = document.getElementById(`detail-${n}`);
+                el.innerHTML = '<p aria-busy="true">Loading…</p>';
+                try {
+                    const resp = await fetch(`/api/studies/${n}`);
+                    if (!resp.ok) throw new Error('failed to load study');
+                    const data = await resp.json();
+                    renderDetail(n, data);
+                } catch (err) {
+                    console.error(err);
+                    el.innerHTML = '<p>Could not load study detail.</p>';
+                }
+            }
+
+            function isManual(exam, path) {
+                const manual = exam && exam.manual && exam.manual.fields ? exam.manual.fields : {};
+                return Object.prototype.hasOwnProperty.call(manual, path);
+            }
+
+            function get(obj, path) {
+                return path.split('.').reduce((o, k) => (o == null ? undefined : o[k]), obj);
+            }
+
+            function renderDetail(n, payload) {
+                const el = document.getElementById(`detail-${n}`);
+                const study = payload.study || {};
+                const exam = payload.exam;
+
+                if (!exam) {
+                    el.innerHTML = `<p>No exam data extracted for this study yet.</p>` + actionsHtml(n, study);
+                    wireActions(n, study);
+                    return;
+                }
+
+                const regionOptions = REGION_INDICATION_OPTIONS.map((o, i) => {
+                    const selected = (exam.indication && exam.indication.region === o.region &&
+                        exam.indication.clinical_indication === o.indication) ? 'selected' : '';
+                    return `<option value="${i}" ${selected}>${esc(o.region)} / ${esc(o.indication)}</option>`;
+                }).join('');
+
+                const contrastOptions = ["Non-contrast", "Contrast-enhanced"].map(c => {
+                    const selected = exam.indication && exam.indication.iv_contrast === c ? 'selected' : '';
+                    return `<option value="${c}" ${selected}>${c}</option>`;
+                }).join('');
+
+                const qualityOptions = ['<option value="">—</option>'].concat(
+                    IMAGE_QUALITY_OPTIONS.map(q => {
+                        const selected = exam.image_quality === q ? 'selected' : '';
+                        return `<option value="${q}" ${selected}>${q}</option>`;
+                    })
+                ).join('');
+
+                const phases = exam.phases || [];
+                // Phases with no SeriesNumber (key "?" in the extractor) have no
+                // stable dotted path to overlay a manual value onto — keep them
+                // in the read-only table only.
+                const phasesFields = phases.filter(p => p.series_number != null).map(p => {
+                    const dlpPath = `phases.series_${p.series_number}.dlp_mgy_cm`;
+                    const ctdiPath = `phases.series_${p.series_number}.ctdi_vol_mgy`;
+                    return `
+                        <div class="grid phase-group">
+                            <label>Series ${esc(p.series_number)} — ${esc(p.series_description || '')} — DLP (mGy·cm)
+                                <input type="number" step="any" data-path="${dlpPath}"
+                                    class="${isManual(exam, dlpPath) ? 'manual-set' : ''}"
+                                    value="${p.dlp_mgy_cm != null ? p.dlp_mgy_cm : ''}">
+                            </label>
+                            <label>CTDIvol (mGy)
+                                <input type="number" step="any" data-path="${ctdiPath}"
+                                    class="${isManual(exam, ctdiPath) ? 'manual-set' : ''}"
+                                    value="${p.ctdi_vol_mgy != null ? p.ctdi_vol_mgy : ''}">
+                            </label>
+                        </div>`;
+                }).join('');
+
+                const phasesTable = phases.length ? `
+                    <table role="grid"><thead><tr><th>Series</th><th>Description</th><th>CTDIvol (mGy)</th><th>DLP (mGy·cm)</th></tr></thead>
+                    <tbody>${phases.map(p => `<tr><td>${esc(p.series_number)}</td><td>${esc(p.series_description)}</td>` +
+                        `<td>${p.ctdi_vol_mgy != null ? p.ctdi_vol_mgy.toFixed(2) : '—'}</td>` +
+                        `<td>${p.dlp_mgy_cm != null ? p.dlp_mgy_cm.toFixed(2) : '—'}</td></tr>`).join('')}</tbody></table>`
+                    : '<p><small>No phases.</small></p>';
+
+                const rdsr = exam.rdsr;
+                const rdsrTable = rdsr && rdsr.acquisitions && rdsr.acquisitions.length ? `
+                    <p><small>Total DLP: ${rdsr.total_dlp_mgy_cm != null ? rdsr.total_dlp_mgy_cm.toFixed(2) + ' mGy·cm' : '—'}</small></p>
+                    <table role="grid"><thead><tr><th>Protocol</th><th>Type</th><th>kVp</th><th>mean mA</th>
+                        <th>Mean CTDIvol</th><th>DLP</th></tr></thead>
+                    <tbody>${rdsr.acquisitions.map(a => `<tr><td>${esc(a.acquisition_protocol)}</td><td>${esc(a.acquisition_type)}</td>` +
+                        `<td>${esc(a.kvp)}</td><td>${esc(a.mean_ma)}</td>` +
+                        `<td>${a.mean_ctdivol_mgy != null ? a.mean_ctdivol_mgy.toFixed(2) : '—'}</td>` +
+                        `<td>${a.dlp_mgy_cm != null ? a.dlp_mgy_cm.toFixed(2) : '—'}</td></tr>`).join('')}</tbody></table>`
+                    : '<p><small>No RDSR data for this study.</small></p>';
+
+                const notes = (exam.notes || []).map(n2 => `<li>${esc(n2)}</li>`).join('');
+
+                el.innerHTML = `
+                    <article>
+                        <h4>Manual review — study ${String(n).padStart(4, '0')}</h4>
+                        <div class="grid">
+                            <label>Weight (kg)
+                                <input type="number" step="any" data-path="patient.weight_kg"
+                                    class="${isManual(exam, 'patient.weight_kg') ? 'manual-set' : ''}"
+                                    value="${get(exam, 'patient.weight_kg') != null ? get(exam, 'patient.weight_kg') : ''}">
+                            </label>
+                            <label>Age (years)
+                                <input type="number" step="any" data-path="patient.age_years"
+                                    class="${isManual(exam, 'patient.age_years') ? 'manual-set' : ''}"
+                                    value="${get(exam, 'patient.age_years') != null ? get(exam, 'patient.age_years') : ''}">
+                            </label>
+                            <label>Region / Indication
+                                <select id="region-indication-${n}"
+                                    class="${(isManual(exam, 'indication.region') || isManual(exam, 'indication.clinical_indication')) ? 'manual-set' : ''}">
+                                    <option value="">— unset —</option>
+                                    ${regionOptions}
+                                </select>
+                            </label>
+                            <label>IV contrast
+                                <select data-path="indication.iv_contrast"
+                                    class="${isManual(exam, 'indication.iv_contrast') ? 'manual-set' : ''}">
+                                    <option value="">—</option>
+                                    ${contrastOptions}
+                                </select>
+                            </label>
+                        </div>
+                        <div class="grid">
+                            <label>Image quality
+                                <select data-path="image_quality"
+                                    class="${isManual(exam, 'image_quality') ? 'manual-set' : ''}">
+                                    ${qualityOptions}
+                                </select>
+                            </label>
+                            <label>Protocol name
+                                <input type="text" data-path="protocol_used_hint.protocol_name"
+                                    class="${isManual(exam, 'protocol_used_hint.protocol_name') ? 'manual-set' : ''}"
+                                    value="${esc(get(exam, 'protocol_used_hint.protocol_name') || '')}">
+                            </label>
+                            <label>Scanner ID
+                                <input type="text" data-path="scanner.rhythm_scanner_id"
+                                    class="${isManual(exam, 'scanner.rhythm_scanner_id') ? 'manual-set' : ''}"
+                                    value="${esc(get(exam, 'scanner.rhythm_scanner_id') || '')}">
+                                <span class="field-hint">RHYTHM UUID</span>
+                            </label>
+                        </div>
+                        ${phasesFields}
+                        <label>Operator notes
+                            <textarea data-path="operator_notes"
+                                class="${isManual(exam, 'operator_notes') ? 'manual-set' : ''}"
+                            >${esc(get(exam, 'operator_notes') || '')}</textarea>
+                        </label>
+                        <div class="action-row">
+                            <button type="button" onclick="saveExam(${n})">Save</button>
+                            <small id="save-status-${n}" class="status-line"></small>
+                        </div>
+                    </article>
+
+                    <article>
+                        <h5>Derived: ${esc(exam.protocol_type) || '—'} / ${esc(exam.examination_group) || '—'}</h5>
+                        <p class="hint-box">Prefer <code>rdsr.acquisitions[*].mean_ctdivol_mgy</code> over
+                            <code>phases[*].ctdi_vol_mgy</code> — the flat per-image CTDIvol tag is cumulative
+                            dose-to-date on this scanner, not per-acquisition.</p>
+                        <h6>RDSR acquisitions (read-only)</h6>
+                        ${rdsrTable}
+                        <h6>Phases (read-only)</h6>
+                        ${phasesTable}
+                        <h6>Notes</h6>
+                        <ul class="notes-list">${notes || '<li>None.</li>'}</ul>
+                    </article>
+
+                    ${actionsHtml(n, study)}
+                `;
+
+                const riSelect = document.getElementById(`region-indication-${n}`);
+                if (riSelect) {
+                    riSelect.dataset.initial = riSelect.value;
+                    riSelect.addEventListener('change', () => {
+                        const idx = riSelect.value;
+                        if (idx === '') return;
+                        const opt = REGION_INDICATION_OPTIONS[parseInt(idx, 10)];
+                        const contrastSelect = el.querySelector('select[data-path="indication.iv_contrast"]');
+                        if (contrastSelect && !contrastSelect.value) {
+                            contrastSelect.value = opt.contrast;
+                        }
+                    });
+                }
+
+                // Snapshot each field's rendered value so Save can tell an
+                // untouched field (skip) from one the operator actually
+                // changed (send) — sending every non-empty field would pin
+                // extracted values into the manual overlay forever.
+                el.querySelectorAll('[data-path]').forEach(input => {
+                    input.dataset.initial = input.value;
+                });
+
+                wireActions(n, study);
+            }
+
+            function actionsHtml(n, study) {
+                const location = study.location || 'absent';
+                const absent = location === 'absent';
+                const dicomDisabled = absent || !CAPABILITIES.dicom;
+                const httpDisabled = absent || !CAPABILITIES.http;
+                const dicomTitle = absent ? 'study directory not found' :
+                    (!CAPABILITIES.dicom ? 'DICOM export is not configured' : '');
+                const httpTitle = absent ? 'study directory not found' :
+                    (!CAPABILITIES.http ? 'HTTP export is not configured' : '');
+                const reextractTitle = absent ? 'study directory not found' : '';
+                return `
+                    <article>
+                        <h5>Actions</h5>
+                        <div class="action-row">
+                            <button type="button" id="btn-dicom-${n}" ${dicomDisabled ? 'disabled' : ''} title="${dicomTitle}">Send to DICOM</button>
+                            <button type="button" id="btn-reextract-${n}" ${absent ? 'disabled' : ''} title="${reextractTitle}" class="secondary">Re-extract</button>
+                            <button type="button" id="btn-http-${n}" ${httpDisabled ? 'disabled' : ''} title="${httpTitle}" class="secondary">Upload to HTTP storage</button>
+                        </div>
+                        <small id="action-status-${n}" class="status-line"></small>
+                    </article>
+                `;
+            }
+
+            function wireActions(n, study) {
+                const dicomBtn = document.getElementById(`btn-dicom-${n}`);
+                const reBtn = document.getElementById(`btn-reextract-${n}`);
+                const httpBtn = document.getElementById(`btn-http-${n}`);
+                if (dicomBtn) dicomBtn.addEventListener('click', () => runAction(n, 'send_dicom'));
+                if (reBtn) reBtn.addEventListener('click', () => runAction(n, 'reextract'));
+                if (httpBtn) httpBtn.addEventListener('click', () => runAction(n, 'upload_http'));
+            }
+
+            async function runAction(n, action) {
+                const status = document.getElementById(`action-status-${n}`);
+                if (status) status.textContent = 'Working…';
+                let message = '';
+                try {
+                    const resp = await fetch(`/api/studies/${n}/actions/${action}`, {
+                        method: 'POST',
+                        headers: authHeaders({ 'Content-Type': 'application/json' }),
+                    });
+                    const data = await resp.json();
+                    message = data.message || (data.ok ? 'Done.' : 'Failed.');
+                } catch (err) {
+                    console.error(err);
+                    message = 'Request failed.';
+                }
+
+                // Reload the list (counters/location may have changed) and
+                // the detail panel (re-extract refreshes the exam data) —
+                // loadStudies() rebuilds the whole table, which would wipe
+                // out anything loadDetail wrote if called first, so the
+                // status message is applied to the freshly-rendered panel
+                // last, not before these reloads run.
+                await loadStudies();
+                if (EXPANDED === n) {
+                    const row = document.querySelector(`tr.detail-row[data-n="${n}"]`);
+                    if (row) row.style.display = '';
+                    await loadDetail(n);
+                    const newStatus = document.getElementById(`action-status-${n}`);
+                    if (newStatus) newStatus.textContent = message;
+                }
+            }
+
+            async function saveExam(n) {
+                const el = document.getElementById(`detail-${n}`);
+                const status = document.getElementById(`save-status-${n}`);
+                const fields = {};
+
+                // Only send fields the operator actually changed from what was
+                // rendered — sending every filled-in field would re-pin values
+                // ExamExtractor already derived correctly into the manual
+                // overlay, and they'd never update again on re-extract.
+                el.querySelectorAll('[data-path]').forEach(input => {
+                    const path = input.dataset.path;
+                    const val = input.value;
+                    if (val === (input.dataset.initial || '')) return;
+                    if (val === '') return;
+                    if (input.type === 'number') {
+                        const num = parseFloat(val);
+                        if (!Number.isNaN(num)) fields[path] = num;
+                    } else {
+                        fields[path] = val;
+                    }
+                });
+
+                const riSelect = document.getElementById(`region-indication-${n}`);
+                if (riSelect && riSelect.value !== '' && riSelect.value !== (riSelect.dataset.initial || '')) {
+                    const opt = REGION_INDICATION_OPTIONS[parseInt(riSelect.value, 10)];
+                    fields['indication.region'] = opt.region;
+                    fields['indication.clinical_indication'] = opt.indication;
+                }
+
+                if (status) status.textContent = 'Saving…';
+                try {
+                    const resp = await fetch(`/api/studies/${n}/exam`, {
+                        method: 'PUT',
+                        headers: authHeaders({ 'Content-Type': 'application/json' }),
+                        body: JSON.stringify({ fields }),
+                    });
+                    const data = await resp.json();
+                    if (!resp.ok) {
+                        if (status) status.textContent = data.message || data.error || 'Save failed.';
+                        return;
+                    }
+                    if (status) status.textContent = 'Saved.';
+                    await loadStudies();
+                    await loadDetail(n);
+                } catch (err) {
+                    console.error(err);
+                    if (status) status.textContent = 'Save failed.';
+                }
+            }
+
+            document.addEventListener('DOMContentLoaded', loadStudies);
+        </script>
+    </body>
+</html>

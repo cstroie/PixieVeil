@@ -20,24 +20,30 @@ storage:
   #retain_after_export_days: 14
   #retain_path: "./data/retained"
 
-# Optional remote storage — remove entire block to keep archives local.
-# DICOM C-STORE takes priority over HTTP ZIP upload if both are configured.
-#remote_storage:
-#  # HTTP ZIP upload
-#    http:
-#      base_url: "https://your-storage-server"
-#      auth_token: "your-bearer-token"
-#  # DICOM C-STORE (send individual .dcm files to a DICOM node / PACS)
-#    dicom:
-#      host: "127.0.0.1"
-#      port: 4070
-#      ae_title: "ORTHANC"          # called AE title (remote node)
-#      calling_ae: "PIXIEVEIL_SCU"  # our AE title (defaults to dicom_server.ae_title)
+  # Optional remote storage — remove entire block to keep archives local.
+  # DICOM C-STORE takes priority over HTTP ZIP upload if both are configured.
+  # Must nest under storage: (this indentation) — code reads it from
+  # settings.storage["remote_storage"], not from a top-level key.
+  #remote_storage:
+  #  # HTTP ZIP upload
+  #  http:
+  #    base_url: "https://your-storage-server"
+  #    auth_token: "your-bearer-token"
+  #  # DICOM C-STORE (send individual .dcm files to a DICOM node / PACS)
+  #  dicom:
+  #    host: "127.0.0.1"
+  #    port: 4070
+  #    ae_title: "ORTHANC"          # called AE title (remote node)
+  #    calling_ae: "PIXIEVEIL_SCU"  # our AE title (defaults to dicom_server.ae_title)
 
 # HTTP Server Settings
 http_server:
   port: 8070
   ip: "0.0.0.0"
+  # Optional: require this token (as "Authorization: Bearer <token>" or
+  # "X-Auth-Token: <token>") on non-GET requests to the dashboard's mutating
+  # endpoints (PUT/POST under /api/studies). Unset = no auth (default).
+  #auth_token: "change-me"
 
 # Study Management
 study:

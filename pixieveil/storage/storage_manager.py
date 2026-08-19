@@ -19,7 +19,7 @@ import shutil
 import time
 import threading
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Any, Optional
 
@@ -33,7 +33,9 @@ from pixieveil.processing.anonymizer import Anonymizer
 from pixieveil.processing.series_filter import SeriesFilter
 from pixieveil.processing.defacer import Defacer
 from pixieveil.processing.exam_extractor import ExamExtractor
+from pixieveil.processing import exam_merge
 from pixieveil.storage.exam_sidecar import ExamSidecar
+from pixieveil.storage.study_sidecar import StudySidecar
 
 logger = logging.getLogger(__name__)
 
@@ -181,6 +183,12 @@ class StorageManager:
         self._shutting_down = False
         # UIDs of studies currently being processed (defaced/zipped/uploaded)
         self._processing_studies: set = set()
+        # Study numbers with a manual dashboard action (send/upload/re-extract/
+        # save) in progress. Separate from _processing_studies (keyed by
+        # study_uid, driven by the automated pipeline) to avoid either set
+        # needing to translate between study_number and study_uid to guard
+        # the other's operations.
+        self._manual_actions_in_progress: set = set()
         # Active pipeline stage counters (thread-safe via self.lock)
         self._active_receiving: int = 0
         self._active_waiting: int = 0
@@ -1041,3 +1049,179 @@ class StorageManager:
         logger.debug("Retrieving storage counters")
         with self.lock:
             return dict(self.counters)
+
+    # -----------------------------------------------------------------
+    # Manual dashboard actions (/studies page)
+    #
+    # These deliberately do NOT reuse _export_via_dicom / _export_via_http_zip:
+    # those also run retention/delete and mark_study_archived, which would be
+    # wrong for a manual re-send or re-upload of a study that is already
+    # archived — it must not move or delete files that are already in their
+    # resting place.
+    # -----------------------------------------------------------------
+
+    def resolve_study_dir(self, study_number: int) -> tuple[Optional[Path], str]:
+        """Locate a study's directory, checking base_path then retained_path."""
+        base_dir = self.base_path / f"{study_number:04d}"
+        if base_dir.exists():
+            return base_dir, "base"
+        retained_dir = self.retained_path / f"{study_number:04d}"
+        if retained_dir.exists():
+            return retained_dir, "retained"
+        return None, "absent"
+
+    def find_sidecar_by_number(self, study_number: int) -> Optional[StudySidecar]:
+        for sc in self.study_manager._sidecars.values():
+            if sc.study_number == study_number:
+                return sc
+        return None
+
+    async def manual_send_dicom(self, study_number: int) -> dict:
+        """Re-send an already-organized study to the configured DICOM node."""
+        if study_number in self._manual_actions_in_progress:
+            return {"ok": False, "message": "action already in progress for this study"}
+        self._manual_actions_in_progress.add(study_number)
+        try:
+            study_dir, location = self.resolve_study_dir(study_number)
+            if study_dir is None:
+                return {"ok": False, "message": "study directory not found"}
+            if not self.dicom_storage.enabled:
+                return {"ok": False, "message": "DICOM export is not configured"}
+
+            success = await self.dicom_storage.send_study(study_dir)
+            if success:
+                image_count = await asyncio.to_thread(
+                    lambda: sum(
+                        1 for f in study_dir.rglob("*.dcm")
+                        if not any(part.endswith("_pre_deface") for part in f.parts)
+                    )
+                )
+                with self.lock:
+                    self.inc_counter('export', 'dicom_studies')
+                    self.inc_counter('export', 'dicom_images', image_count)
+                return {"ok": True, "message": f"sent to DICOM node ({location})"}
+
+            with self.lock:
+                self.inc_counter('export', 'errors')
+                self.inc_counter('errors', 'total')
+            return {"ok": False, "message": "DICOM send failed"}
+        finally:
+            self._manual_actions_in_progress.discard(study_number)
+
+    async def manual_upload_http(self, study_number: int) -> dict:
+        """Zip and upload an already-organized study to the configured HTTP endpoint."""
+        if study_number in self._manual_actions_in_progress:
+            return {"ok": False, "message": "action already in progress for this study"}
+        self._manual_actions_in_progress.add(study_number)
+        try:
+            study_dir, location = self.resolve_study_dir(study_number)
+            if study_dir is None:
+                return {"ok": False, "message": "study directory not found"}
+            if not self.remote_storage.enabled:
+                return {"ok": False, "message": "HTTP export is not configured"}
+
+            zip_path = await self.zip_manager.create_zip(
+                f"{study_number:04d}", self.base_path, source_dir=study_dir
+            )
+            if not zip_path:
+                with self.lock:
+                    self.inc_counter('archive', 'errors')
+                    self.inc_counter('errors', 'total')
+                return {"ok": False, "message": "failed to create ZIP archive"}
+
+            zip_size = zip_path.stat().st_size
+            try:
+                success = await self.remote_storage.upload_file(zip_path, zip_path.name)
+            finally:
+                await asyncio.to_thread(zip_path.unlink, missing_ok=True)
+
+            if success:
+                image_count = await asyncio.to_thread(
+                    lambda: sum(
+                        1 for f in study_dir.rglob("*.dcm")
+                        if not any(part.endswith("_pre_deface") for part in f.parts)
+                    )
+                )
+                with self.lock:
+                    self.inc_counter('export', 'http_studies')
+                    self.inc_counter('export', 'http_images', image_count)
+                    self.inc_counter('export', 'http_bytes', zip_size)
+                return {"ok": True, "message": f"uploaded to HTTP storage ({location})"}
+
+            with self.lock:
+                self.inc_counter('export', 'errors')
+                self.inc_counter('errors', 'total')
+            return {"ok": False, "message": "HTTP upload failed"}
+        finally:
+            self._manual_actions_in_progress.discard(study_number)
+
+    def _manual_reextract_sync(self, study_number: int, study_dir: Path) -> dict:
+        exam_path = ExamSidecar.path_for(self.base_path, study_number)
+        previous: dict = {}
+        if exam_path.exists():
+            try:
+                previous = ExamSidecar.load(exam_path).data
+            except Exception:
+                logger.warning(
+                    "Could not read existing exam sidecar %s — proceeding without it",
+                    exam_path, exc_info=True,
+                )
+
+        sc = self.find_sidecar_by_number(study_number)
+        anonymized_study_uid = sc.anonymized_study_uid if sc is not None else ""
+
+        fresh = self.exam_extractor.extract(study_dir, study_number, anonymized_study_uid)
+        merged = exam_merge.merge_extracted(fresh, previous)
+        ExamSidecar(study_number, merged).save(self.base_path)
+        return merged
+
+    async def manual_reextract(self, study_number: int) -> dict:
+        """Re-run RHYTHM exam extraction, preserving manual overlay fields."""
+        if study_number in self._manual_actions_in_progress:
+            return {"ok": False, "message": "action already in progress for this study"}
+        self._manual_actions_in_progress.add(study_number)
+        try:
+            study_dir, _location = self.resolve_study_dir(study_number)
+            if study_dir is None:
+                return {"ok": False, "message": "study directory not found"}
+            try:
+                merged = await asyncio.to_thread(
+                    self._manual_reextract_sync, study_number, study_dir
+                )
+            except Exception:
+                logger.exception("Manual re-extract failed for study %04d", study_number)
+                return {"ok": False, "message": "re-extraction failed"}
+            return {"ok": True, "data": merged}
+        finally:
+            self._manual_actions_in_progress.discard(study_number)
+
+    def _save_exam_sync(self, study_number: int, manual_fields: dict) -> Optional[dict]:
+        exam_path = ExamSidecar.path_for(self.base_path, study_number)
+        if not exam_path.exists():
+            return None
+
+        sidecar = ExamSidecar.load(exam_path)
+        data = sidecar.data
+        existing_manual = data.get("manual") or {"edited_at": None, "fields": {}}
+        merged_fields = {**existing_manual.get("fields", {}), **manual_fields}
+        manual = {
+            "edited_at": datetime.now(timezone.utc).astimezone().isoformat(timespec="microseconds"),
+            "fields": merged_fields,
+        }
+        exam_merge.apply_manual(data, manual)
+        exam_merge.recompute_buckets(data)
+        ExamSidecar(study_number, data).save(self.base_path)
+        return data
+
+    async def save_exam(self, study_number: int, manual_fields: dict) -> dict:
+        """Apply manually-entered fields to a study's exam sidecar and save it."""
+        if study_number in self._manual_actions_in_progress:
+            return {"ok": False, "message": "action already in progress for this study"}
+        self._manual_actions_in_progress.add(study_number)
+        try:
+            data = await asyncio.to_thread(self._save_exam_sync, study_number, manual_fields)
+            if data is None:
+                return {"ok": False, "message": "exam sidecar not found"}
+            return {"ok": True, "data": data}
+        finally:
+            self._manual_actions_in_progress.discard(study_number)
