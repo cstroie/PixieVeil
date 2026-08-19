@@ -13,10 +13,20 @@ import tempfile
 import threading
 import warnings
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pydicom
 from pydicom.dataset import FileMetaDataset
 from pydicom.uid import ImplicitVRLittleEndian
+
+if TYPE_CHECKING:
+    # numpy/nibabel are only imported lazily inside the methods that need
+    # them (deface() shouldn't require the [deface] extra just to import
+    # this module) — this import is type-checking-only, so the quoted
+    # "np.ndarray" / "nib.Nifti1Image" annotations below can resolve
+    # without adding a hard runtime dependency.
+    import nibabel as nib
+    import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -543,8 +553,8 @@ class Defacer:
         import SimpleITK as sitk
 
         dicom_dir = str(Path(dicom_dir).resolve())
-        output_dir = Path(output_dir).resolve()
-        output_dir.mkdir(parents=True, exist_ok=True)
+        output_path = Path(output_dir).resolve()
+        output_path.mkdir(parents=True, exist_ok=True)
 
         reader = sitk.ImageSeriesReader()
         series_ids = reader.GetGDCMSeriesIDs(dicom_dir)
@@ -566,7 +576,7 @@ class Defacer:
         reader.SetFileNames(fnames)
         image = reader.Execute()
 
-        nifti_path = output_dir / f"{series_instance_uid}_0000.nii.gz"
+        nifti_path = output_path / f"{series_instance_uid}_0000.nii.gz"
         sitk.WriteImage(image, str(nifti_path))
 
         logger.info("Converted DICOM to NIfTI: %s", nifti_path)
@@ -601,19 +611,19 @@ class Defacer:
         import nibabel as nib
         import numpy as np
 
-        nifti_file = Path(nifti_file).resolve()
-        dicom_template_dir = Path(dicom_template_dir).resolve()
-        output_dir = Path(output_dir).resolve()
-        output_dir.mkdir(parents=True, exist_ok=True)
+        nifti_path = Path(nifti_file).resolve()
+        template_dir = Path(dicom_template_dir).resolve()
+        output_path = Path(output_dir).resolve()
+        output_path.mkdir(parents=True, exist_ok=True)
 
-        nii = nib.load(str(nifti_file))
+        nii = nib.load(str(nifti_path))
         arr = np.asarray(nii.get_fdata())
         if arr.ndim != 3:
             raise ValueError("Only 3D NIfTI volumes are supported.")
 
         logger.info("NIfTI shape: %s", arr.shape)
 
-        groups = self._load_series_groups(dicom_template_dir)
+        groups = self._load_series_groups(template_dir)
 
         # Choose series whose slice count matches NIfTI dim 0 or dim 2
         dim0, dim2 = arr.shape[0], arr.shape[2]
@@ -654,7 +664,7 @@ class Defacer:
         if hasattr(sample_ds, "pixel_array"):
             ref_dtype = sample_ds.pixel_array.dtype
         else:
-            ref_dtype = np.int16
+            ref_dtype = np.dtype(np.int16)
 
         # Cap HU values at the physical air density floor before converting back to pixels.
         arr_slices = np.clip(arr_slices, -1000.0, None)
@@ -724,7 +734,7 @@ class Defacer:
 
             ds.PixelData = slice_arr.tobytes()
             self._prepare_for_write(ds)
-            out_path = output_dir / Path(src_path).name
+            out_path = output_path / Path(src_path).name
             ds.save_as(str(out_path))
             created_files.append(str(out_path))
 
@@ -733,11 +743,11 @@ class Defacer:
         for src_path, _ in chosen_list[n_update:]:
             ds_full = pydicom.dcmread(src_path, force=True)
             self._prepare_for_write(ds_full)
-            out_path = output_dir / Path(src_path).name
+            out_path = output_path / Path(src_path).name
             ds_full.save_as(str(out_path))
             created_files.append(str(out_path))
 
-        logger.info("Wrote %d DICOM slices to %s", len(created_files), output_dir)
+        logger.info("Wrote %d DICOM slices to %s", len(created_files), output_path)
         return created_files
 
     # ------------------------------------------------------------------

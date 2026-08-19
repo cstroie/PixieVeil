@@ -62,6 +62,14 @@ class DicomStorage:
 
     def _send_study_sync(self, study_dir: Path) -> bool:
         """Blocking C-STORE transfer — runs in a thread pool."""
+        if self.host is None or self.port is None:
+            # send_study() already guards on self.enabled before offloading
+            # here, so this only fires on a direct call bypassing that
+            # guard — but it also narrows the Optional types below for the
+            # type checker, which can't see across the two methods.
+            logger.warning("DICOM export is not configured")
+            return False
+
         dcm_files = [
             f for f in sorted(study_dir.rglob("*.dcm"))
             if f.is_file()

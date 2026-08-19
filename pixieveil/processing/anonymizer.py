@@ -11,7 +11,7 @@ Classes:
 
 import logging
 from datetime import datetime
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, TypeVar
 import hashlib
 import pydicom
 from pydicom.uid import generate_uid
@@ -19,6 +19,13 @@ from pydicom.uid import generate_uid
 from pixieveil.config import Settings, AnonymizationProfile
 
 logger = logging.getLogger(__name__)
+
+# anonymize() mutates and returns the exact same object it's given (e.g. a
+# FileDataset read off disk) — a plain `Dataset -> Dataset` signature would
+# widen that back to the base type on every call site's reassignment
+# (`ds = anonymizer.anonymize(ds)`), losing FileDataset-specific attributes
+# for the type checker even though nothing changes at runtime.
+_DatasetT = TypeVar("_DatasetT", bound=pydicom.Dataset)
 
 
 class Anonymizer:
@@ -63,9 +70,9 @@ class Anonymizer:
         self.profile = settings.get_anonymization_profile(profile_name)
         
         # Mappings to ensure consistency across studies and series
-        self._pseudonym_map = {}  # Maps original value -> pseudonym for "PSEUDO" strategy
-        self._study_uid_map = {}  # Maps original StudyInstanceUID -> anonymized UID
-        self._series_uid_map = {}  # Maps original SeriesInstanceUID -> anonymized UID
+        self._pseudonym_map: Dict[str, str] = {}  # original value -> pseudonym for "PSEUDO"
+        self._study_uid_map: Dict[str, str] = {}  # original StudyInstanceUID -> anonymized UID
+        self._series_uid_map: Dict[str, str] = {}  # original SeriesInstanceUID -> anonymized UID
         
         logger.info(f"Anonymizer initialized with profile: {profile_name or settings.anonymization.get('profile', 'research')}")
         
@@ -210,7 +217,7 @@ class Anonymizer:
             mapping_dict[original_uid] = new_value if new_value is not None else ""
         return mapping_dict[original_uid]
 
-    def anonymize(self, ds: pydicom.Dataset) -> pydicom.Dataset:
+    def anonymize(self, ds: _DatasetT) -> _DatasetT:
         """
         Comprehensive DICOM field anonymization using the active profile.
         

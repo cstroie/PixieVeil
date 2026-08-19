@@ -171,6 +171,8 @@ def _sr_numeric_value(item: "pydicom.Dataset") -> Optional[float]:
     if not mv:
         return None
     raw = getattr(mv[0], "NumericValue", None)
+    if raw is None:
+        return None
     try:
         return float(raw)
     except (TypeError, ValueError):

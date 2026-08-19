@@ -244,6 +244,9 @@ class StorageManager:
         in a thread‑pool so the event‑loop stays responsive.
         """
         interval = self.settings.study.get("completion_check_interval", 30)
+        # start() always sets this before creating the task that runs this
+        # coroutine — same reasoning as the assert in stop().
+        assert self._stop_event is not None
 
         while not self._stop_event.is_set():
             try:
@@ -266,7 +269,8 @@ class StorageManager:
             except asyncio.TimeoutError:
                 pass
 
-    def get_counter(self, category: str, subcategory: str = None, default: Any = 0) -> Any:
+    def get_counter(self, category: str, subcategory: Optional[str] = None,
+                    default: Any = 0) -> Any:
         """
         Get a counter value from the hierarchical counters structure.
         
@@ -322,7 +326,8 @@ class StorageManager:
             "exporting": exporting,
         }
 
-    def set_counter(self, category: str, subcategory: str = None, value: Any = 0) -> None:
+    def set_counter(self, category: str, subcategory: Optional[str] = None,
+                    value: Any = 0) -> None:
         """
         Set a counter to a specific value in the hierarchical counters structure.
         
@@ -357,7 +362,8 @@ class StorageManager:
             
             self.counters[category][subcategory] = value
 
-    def inc_counter(self, category: str, subcategory: str = None, increment: int = 1) -> None:
+    def inc_counter(self, category: str, subcategory: Optional[str] = None,
+                    increment: float = 1) -> None:
         """
         Increment a counter by a specified value in the hierarchical counters structure.
         
@@ -621,9 +627,19 @@ class StorageManager:
                     self.inc_counter('storage', 'series')
                 logger.debug(f"Creating new series {series_number} for study {study_number}")
 
-                anon_study_uid  = self.anonymizer.get_study_uid_mapping(study_uid)
+                # anonymize() has already run on this ds, so the study/series
+                # UID mappings are guaranteed present (apply_uid_mapping caches
+                # "" rather than None for an unmapped strategy — never a bare
+                # None). Patient ID is different: get_patient_id_mapping only
+                # ever gets populated for a PSEUDO/PSEUDOUID PatientID
+                # strategy, so a profile using CLEAR/KEEP/a literal genuinely
+                # has no entry — fall back to "" the same way UID mapping does,
+                # rather than writing None into the sidecar.
+                anon_study_uid = self.anonymizer.get_study_uid_mapping(study_uid)
                 anon_series_uid = self.anonymizer.get_series_uid_mapping(series_uid)
-                anon_patient_id = self.anonymizer.get_patient_id_mapping(patient_id)
+                assert anon_study_uid is not None
+                assert anon_series_uid is not None
+                anon_patient_id = self.anonymizer.get_patient_id_mapping(patient_id) or ""
                 self.study_manager.record_new_series(
                     study_uid, series_uid, patient_id,
                     anon_study_uid, anon_series_uid, anon_patient_id,
@@ -1050,6 +1066,7 @@ class StorageManager:
                     self.inc_counter('export', 'dicom_studies')
                     self.inc_counter('export', 'dicom_images', image_count)
                 if first_export:
+                    assert sc is not None  # implied by first_export being True
                     with self.lock:
                         self.inc_counter('cleanup', 'studies')
                         self.inc_counter('cleanup', 'images', image_count)
@@ -1110,6 +1127,7 @@ class StorageManager:
                     self.inc_counter('export', 'http_images', image_count)
                     self.inc_counter('export', 'http_bytes', zip_size)
                 if first_export:
+                    assert sc is not None  # implied by first_export being True
                     with self.lock:
                         self.inc_counter('cleanup', 'studies')
                         self.inc_counter('cleanup', 'images', image_count)
