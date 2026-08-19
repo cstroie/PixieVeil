@@ -101,7 +101,13 @@ class SeriesFilter:
             # Check if we should keep only original series
             if self.only_original_series:
                 if not self.is_original_series(ds):
-                    logger.debug(f"Filtering out non-original series: {ds.SeriesInstanceUID}")
+                    # getattr, not ds.SeriesInstanceUID: a direct attribute
+                    # access raises AttributeError when the tag is absent,
+                    # which the broad except below turns into "keep the
+                    # image" — a logging statement silently defeating the
+                    # actual filter decision it's meant to describe.
+                    series_uid = getattr(ds, "SeriesInstanceUID", "<no SeriesInstanceUID>")
+                    logger.debug(f"Filtering out non-original series: {series_uid}")
                     return True
 
             # Attribute-based include/exclude rules
@@ -136,8 +142,19 @@ class SeriesFilter:
         image_type = getattr(ds, "ImageType", None)
         if image_type is None:
             return True
-        # ImageType is a multi-value CS attribute; first value indicates original vs derived
-        first_value = image_type[0] if hasattr(image_type, "__iter__") else str(image_type)
+        # ImageType is nominally a multi-value CS attribute, but pydicom
+        # hands back a plain str (not a MultiValue) when only one value was
+        # present on the wire — a bare `hasattr(image_type, "__iter__")`
+        # check is True for both, and indexing a str with [0] takes its
+        # first *character* ("ORIGINAL"[0] == "O"), silently misclassifying
+        # a genuinely original single-valued image as derived and dropping
+        # it. Treat str explicitly as the whole first value instead.
+        if isinstance(image_type, str):
+            first_value = image_type
+        elif hasattr(image_type, "__iter__"):
+            first_value = image_type[0] if len(image_type) > 0 else ""
+        else:
+            first_value = str(image_type)
         return str(first_value).upper().startswith("ORIGINAL")
 
     def matches_attribute_filters(self, ds: pydicom.Dataset) -> bool:
