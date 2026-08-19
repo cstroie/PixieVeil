@@ -28,6 +28,19 @@ rules:
     clinical_indication: "Trauma"
     iv_contrast: "Non-contrast"
 
+  # Confirmed from a real exam sent through our own PixieVeil instance
+  # (study 0049, 2026-08-18): ProtocolName "CAP_SPIRAL_NATIV",
+  # StudyDescription "Head^CAP_SPIRAL_NATIV (Adult)", BodyPartExamined
+  # HEAD, no ContrastBolusAgent. Head/Trauma is the only pure-Head entry
+  # in RHYTHM's 8 indications, but this is our best inference from the
+  # naming, not a confirmed clinical classification — worth a tech/
+  # radiologist sanity check the first few times it auto-matches.
+  - protocol_name_contains: "CAP_SPIRAL_NATIV"
+    body_part_examined_contains: "HEAD"
+    region: "Head"
+    clinical_indication: "Trauma"
+    iv_contrast: "Non-contrast"
+
   # Add more rules here as you observe real ProtocolName / StudyDescription
   # values coming through, e.g.:
   # - protocol_name_contains: "MASTOID"

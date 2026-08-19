@@ -187,6 +187,16 @@
     margin: -4px 0 10px;
   }
 
+  .block-note code {
+    font-family: var(--mono);
+    font-style: normal;
+    font-size: 11px;
+    background: var(--paper-well);
+    border: 1px solid var(--rule);
+    padding: 0 3px;
+    border-radius: 3px;
+  }
+
   .flag-note {
     font-family: var(--grotesk);
     font-size: 10.5px;
@@ -336,7 +346,7 @@
   <div class="masthead">
     <div>
       <h1>CT Console Sheet</h1>
-      <p class="sub">Recorded at the scanner console — values PixieVeil cannot read from the DICOM header. Transcribed into the study's exam sidecar afterward.</p>
+      <p class="sub">Check the exam sidecar first — most technique &amp; dose values now come from the scanner's own dose report automatically. This sheet is only for what's genuinely console-only: mode labels, mAs, quality, and anything the sidecar left blank.</p>
     </div>
     <div class="study-stamp">
       <div class="label">PixieVeil Study #</div>
@@ -425,18 +435,18 @@
 
   <section class="block">
     <div class="block-title"><span class="n">3</span> Console technique</div>
-    <p class="block-note">None of this section is written to the DICOM header on this scanner — it exists only on the console screen at scan time.</p>
+    <p class="block-note">Check the exam sidecar's <code>rdsr</code> field first — scan type, pitch, kVp and rotation time are usually already there. Only fill in what's actually blank.</p>
 
     <div class="row c2">
       <div>
-        <span class="field-label">Scan type</span>
+        <span class="field-label">Scan type <span class="flag-note">check rdsr first</span></span>
         <div class="check-list">
           <span class="check-item"><span class="box"></span> Sequential / axial</span>
           <span class="check-item"><span class="box"></span> Helical / spiral</span>
         </div>
       </div>
       <div>
-        <span class="field-label">Pitch</span>
+        <span class="field-label">Pitch <span class="flag-note">check rdsr first</span></span>
         <div class="fill">&nbsp;</div>
       </div>
     </div>
@@ -452,7 +462,7 @@
         </div>
       </div>
       <div>
-        <span class="field-label">kVp</span>
+        <span class="field-label">kVp <span class="flag-note">check rdsr first</span></span>
         <div class="fill">&nbsp;</div>
       </div>
     </div>
@@ -468,14 +478,14 @@
         </div>
       </div>
       <div>
-        <span class="field-label">mAs value (Effective / QR mAs / mA — per mode above)</span>
+        <span class="field-label">mAs value (Effective / QR mAs / mA — per mode above) <span class="flag-note">not rdsr mean/max mA</span></span>
         <div class="fill">&nbsp;</div>
       </div>
     </div>
 
     <div class="row c4">
       <div>
-        <span class="field-label">Rotation time (s) <span class="flag-note">key gap</span></span>
+        <span class="field-label">Rotation time (s) <span class="flag-note">check rdsr first</span></span>
         <div class="fill">&nbsp;</div>
       </div>
       <div>
@@ -495,7 +505,11 @@
 
   <section class="block">
     <div class="block-title"><span class="n">4</span> Dose per phase</div>
-    <p class="block-note">Read CTDI<sub>vol</sub> and DLP off the console dose summary screen — DLP is not recoverable from PACS afterward.</p>
+    <p class="block-note">Check the exam sidecar's <code>rdsr.acquisitions</code> first — CTDI<sub>vol</sub> and DLP are usually already there per acquisition. Fill this table in only if <code>rdsr</code> is null for this exam.</p>
+    <div class="check-list" style="margin-bottom:10px;">
+      <span class="check-item"><span class="box"></span> Sidecar's rdsr had this data — table below not needed</span>
+      <span class="check-item"><span class="box"></span> rdsr was null — filled in from console dose screen below</span>
+    </div>
     <table class="dose">
       <thead>
         <tr><th>Phase</th><th>Series&nbsp;#</th><th>CTDI<sub>vol</sub> (mGy)</th><th>DLP (mGy·cm)</th></tr>

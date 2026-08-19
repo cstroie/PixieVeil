@@ -79,6 +79,150 @@ def _parse_dicom_age(value: Optional[str]) -> Optional[float]:
     return None
 
 
+# DCM/SRT concept codes used by the CT Radiation Dose SR template (TID 10011
+# "X-Ray Radiation Dose Report" / TID 10013 "CT Acquisition"). Some scanners
+# (confirmed on our Siemens Emotion 16) send this as a *Secondary Capture*
+# object — SOPClassUID 1.2.840.10008.5.1.4.1.1.7, not the real RDSR SOP class
+# — with the same structured content tree attached alongside the rendered
+# screenshot pixels. _parse_rdsr_content reads that tree wherever it's found,
+# regardless of which SOP class carries it.
+_RDSR_ROOT = "113701"                    # X-Ray Radiation Dose Report
+_RDSR_TOTAL_DLP = "113813"               # CT Dose Length Product Total
+_RDSR_ACQUISITION = "113819"             # CT Acquisition (container, repeated)
+_RDSR_ACQ_PROTOCOL = "125203"            # Acquisition Protocol
+_RDSR_TARGET_REGION = "123014"           # Target Region
+_RDSR_ACQ_TYPE = "113820"                # CT Acquisition Type (Spiral/Sequenced/...)
+_RDSR_PROCEDURE_CONTEXT = "G-C32C"       # Procedure Context (e.g. "CT without contrast")
+_RDSR_PITCH = "113828"                   # Pitch Factor
+_RDSR_KVP = "113733"                     # KVP
+_RDSR_MAX_MA = "113833"                  # Maximum X-Ray Tube Current
+_RDSR_MEAN_MA = "113734"                 # Mean X-Ray Tube Current
+_RDSR_ROTATION_TIME = "113834"           # Exposure Time per Rotation
+_RDSR_MEAN_CTDIVOL = "113830"            # Mean CTDIvol
+_RDSR_DLP = "113838"                     # DLP (per acquisition)
+_RDSR_MODULATION_TYPE = "113842"         # X-Ray Modulation Type
+
+
+def _sr_concept_code(item: "pydicom.Dataset") -> Optional[str]:
+    seq = item.get("ConceptNameCodeSequence")
+    if not seq:
+        return None
+    return str(getattr(seq[0], "CodeValue", "") or "") or None
+
+
+def _sr_numeric_value(item: "pydicom.Dataset") -> Optional[float]:
+    mv = item.get("MeasuredValueSequence")
+    if not mv:
+        return None
+    raw = getattr(mv[0], "NumericValue", None)
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+def _sr_text_or_code_value(item: "pydicom.Dataset") -> Optional[str]:
+    value_type = str(getattr(item, "ValueType", "") or "")
+    if value_type == "TEXT":
+        return str(getattr(item, "TextValue", "") or "") or None
+    if value_type == "CODE":
+        ccs = item.get("ConceptCodeSequence")
+        if ccs:
+            return str(getattr(ccs[0], "CodeMeaning", "") or "") or None
+    return None
+
+
+def _collect_sr_subtree_by_code(item: "pydicom.Dataset") -> Dict[str, "pydicom.Dataset"]:
+    """Flatten every descendant of item into {concept_code: item}, first hit wins."""
+    found: Dict[str, "pydicom.Dataset"] = {}
+
+    def walk(node: "pydicom.Dataset") -> None:
+        for child in node.get("ContentSequence") or []:
+            code = _sr_concept_code(child)
+            if code and code not in found:
+                found[code] = child
+            walk(child)
+
+    walk(item)
+    return found
+
+
+def _parse_rdsr_content(ds: "pydicom.Dataset") -> Optional[Dict[str, Any]]:
+    """
+    If ds carries an X-Ray Radiation Dose Report content tree (native RDSR or
+    a vendor hybrid Secondary Capture with the same tree attached), parse it
+    into {total_dlp_mgy_cm, acquisitions: [...]}. Returns None otherwise.
+    """
+    if _sr_concept_code(ds) != _RDSR_ROOT:
+        return None
+
+    top_level = _collect_sr_subtree_by_code(ds)
+    total_dlp_item = top_level.get(_RDSR_TOTAL_DLP)
+    total_dlp = _sr_numeric_value(total_dlp_item) if total_dlp_item is not None else None
+
+    acquisitions = []
+    for item in ds.get("ContentSequence") or []:
+        acquisitions.extend(_find_acquisitions(item))
+
+    return {
+        "total_dlp_mgy_cm": total_dlp,
+        "acquisitions": acquisitions,
+    }
+
+
+def _find_acquisitions(node: "pydicom.Dataset") -> List[Dict[str, Any]]:
+    """Recursively find every 'CT Acquisition' container and parse it."""
+    results = []
+    if _sr_concept_code(node) == _RDSR_ACQUISITION:
+        results.append(_parse_acquisition(node))
+    for child in node.get("ContentSequence") or []:
+        results.extend(_find_acquisitions(child))
+    return results
+
+
+def _parse_acquisition(acq_item: "pydicom.Dataset") -> Dict[str, Any]:
+    by_code = _collect_sr_subtree_by_code(acq_item)
+
+    def text_or_code(code: str) -> Optional[str]:
+        item = by_code.get(code)
+        return _sr_text_or_code_value(item) if item is not None else None
+
+    def numeric(code: str) -> Optional[float]:
+        item = by_code.get(code)
+        return _sr_numeric_value(item) if item is not None else None
+
+    return {
+        "acquisition_protocol": text_or_code(_RDSR_ACQ_PROTOCOL),
+        "target_region": text_or_code(_RDSR_TARGET_REGION),
+        "acquisition_type": text_or_code(_RDSR_ACQ_TYPE),
+        "procedure_context": text_or_code(_RDSR_PROCEDURE_CONTEXT),
+        "pitch": numeric(_RDSR_PITCH),
+        "kvp": numeric(_RDSR_KVP),
+        "mean_ma": numeric(_RDSR_MEAN_MA),
+        "max_ma": numeric(_RDSR_MAX_MA),
+        "rotation_time_s": numeric(_RDSR_ROTATION_TIME),
+        "mean_ctdivol_mgy": numeric(_RDSR_MEAN_CTDIVOL),
+        "dlp_mgy_cm": numeric(_RDSR_DLP),
+        "modulation_type": text_or_code(_RDSR_MODULATION_TYPE),
+    }
+
+
+def _is_acquisition_image(ds: "pydicom.Dataset") -> bool:
+    """
+    True for an actual CT acquisition image, false for a topogram/localizer
+    or a rendered dose-report screen — neither is a diagnostic "phase" and
+    including them in the phases list means a null CTDIvol/DLP row that
+    looks like a missed reading rather than what it is: not applicable.
+    """
+    modality = str(getattr(ds, "Modality", "") or "")
+    if modality and modality != "CT":
+        return False
+    image_type = [str(v).upper() for v in (getattr(ds, "ImageType", None) or [])]
+    if "LOCALIZER" in image_type:
+        return False
+    return True
+
+
 class ExamExtractor:
     """Derives RHYTHM exam-entry fields from a completed study's DICOM files."""
 
@@ -121,6 +265,7 @@ class ExamExtractor:
         contrast_seen = False
         age_years: Optional[float] = None
         weight_kg: Optional[float] = None
+        rdsr_data: Optional[Dict[str, Any]] = None
 
         dcm_files = [
             f for f in study_dir.rglob("*.dcm")
@@ -152,6 +297,12 @@ class ExamExtractor:
                     except (TypeError, ValueError):
                         pass
 
+            if rdsr_data is None:
+                rdsr_data = _parse_rdsr_content(ds)
+
+            if not _is_acquisition_image(ds):
+                continue
+
             series_number = getattr(ds, "SeriesNumber", None)
             key = str(series_number) if series_number is not None else "?"
             rec = series.setdefault(key, {
@@ -177,11 +328,18 @@ class ExamExtractor:
         if age_years is None:
             notes.append("PatientAge absent or unparseable — needs manual entry")
 
-        notes.append(
-            "dlp_mgy_cm always null: no RDSR/Dose SR object present in this study; "
-            "either configure the scanner to send its dose report to PixieVeil, "
-            "or compute DLP = CTDIvol x scan length manually"
-        )
+        if rdsr_data is None:
+            notes.append(
+                "rdsr null: no X-Ray Radiation Dose Report content found in this study "
+                "(native RDSR or a vendor hybrid Secondary Capture carrying the same "
+                "content tree); DLP needs to be read off the console dose screen manually"
+            )
+        else:
+            notes.append(
+                "rdsr populated: prefer rdsr.acquisitions[*].mean_ctdivol_mgy over "
+                "phases[*].ctdi_vol_mgy — the per-image CTDIvol tag on this scanner "
+                "reports the cumulative dose-to-date, not the per-acquisition value"
+            )
 
         region, indication, iv_contrast, indication_matched = self._match_indication(
             protocol_name, study_description, body_part
@@ -224,6 +382,7 @@ class ExamExtractor:
                 "iv_contrast": contrast,
                 "matched": indication_matched,
             },
+            "rdsr": rdsr_data,
             "protocol_type": protocol_type,
             "examination_group": examination_group,
             "scanner": {

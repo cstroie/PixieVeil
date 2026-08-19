@@ -56,8 +56,8 @@ Modality ──C-STORE──► DicomServer (pynetdicom)
                            │
                   (asyncio.create_task per study)
                   StorageManager._process_study()
-                        ├─ Defacer.deface_series()        [asyncio.to_thread]
                         ├─ ExamExtractor.extract()        [asyncio.to_thread] → <NNNN>_exam.json
+                        ├─ Defacer.deface_series()        [asyncio.to_thread]
                         ├─ DicomStorage.send_study()      [asyncio.to_thread]
                         └─ ZipManager → RemoteStorage     [asyncio.to_thread]
 ```
@@ -70,7 +70,7 @@ Single asyncio event loop. All blocking I/O (nnUNet inference, ZIP, file I/O) us
 |------|---------|
 | `pixieveil.py` | Entry point |
 | `pixieveil/config/settings.py` | Loads/validates `config/settings.yaml` via pydantic |
-| `pixieveil/dicom_server/server.py` | DICOM SCP (C-ECHO + C-STORE) |
+| `pixieveil/dicom_server/server.py` | DICOM SCP (C-ECHO + C-STORE). Supported storage SOP classes: CT, MR, Secondary Capture, X-Ray Radiation Dose SR (RDSR) — anything else is refused at association negotiation, not received-then-filtered |
 | `pixieveil/dicom_server/handlers.py` | C-STORE event handler |
 | `pixieveil/processing/anonymizer.py` | Profile-based field transforms (PSEUDO/PSEUDOUID/NEWUID/CLEAR/KEEP) |
 | `pixieveil/processing/series_filter.py` | Modality, image-type, and regex include/exclude filtering |
@@ -91,7 +91,9 @@ Single asyncio event loop. All blocking I/O (nnUNet inference, ZIP, file I/O) us
 
 **Export priority** — DICOM C-STORE takes priority over HTTP ZIP upload when both are configured. If neither is configured, archives are kept locally.
 
-**RHYTHM exam extraction** — On every completed study, `ExamExtractor.extract()` reads the anonymized DICOM headers under `study_dir` and writes `<study_number>_exam.json` (JSON, not YAML — machine-written/machine-read, mirrors `StudySidecar`'s format) with whatever RHYTHM Manual-Exam-Entry fields are derivable (contrast, patient age, CTDIvol, scanner make/model, indication/protocol-type/exam-group when `integrations/rhythm/indication_lookup.yaml` and `scanner_lookup.yaml` have a matching curated rule). Fields it cannot determine (DLP without an RDSR, image quality, unmatched indications/scanners) are left `null` with an explanation in `notes`. Runs before export/retention so the files are guaranteed to still be on disk.
+**RHYTHM exam extraction** — On every completed study, `ExamExtractor.extract()` reads the anonymized DICOM headers under `study_dir` and writes `<study_number>_exam.json` (JSON, not YAML — machine-written/machine-read, mirrors `StudySidecar`'s format) with whatever RHYTHM Manual-Exam-Entry fields are derivable (contrast, patient age, CTDIvol, scanner make/model, indication/protocol-type/exam-group when `integrations/rhythm/indication_lookup.yaml` and `scanner_lookup.yaml` have a matching curated rule). Topogram/localizer series and non-`CT`-modality series (e.g. a Dose Report screen capture) are excluded from the `phases` list — they're not diagnostic acquisitions. Fields it still cannot determine (image quality, unmatched indications/scanners, DLP/technique on the rare study with no RDSR content at all) are left `null` with an explanation in `notes`. Runs first in `_process_study()` — before defacing, not just before export — since it only needs anonymized headers (defacing rewrites `PixelData` only, never metadata); this way the sidecar survives a defacing crash and isn't blocked behind CPU-mode nnU-Net inference. Skipped if the sidecar already exists, so a re-queued retry never overwrites paper-note data merged in later.
+
+**RDSR content parsing** — Confirmed on our Siemens Emotion 16: its "Dose Report" object is `SOPClassUID`-wise a Secondary Capture image (a rendered screenshot), but the same object also carries the full X-Ray Radiation Dose Report structured-content tree (TID 10011/10013) that a native RDSR would — Siemens converts SR→SC for compatibility but keeps the content sequence attached (`DerivationDescription: "Convert syngo SR to DICOM SC"`). `ExamExtractor._parse_rdsr_content()` walks that tree by DCM concept code (works on a native RDSR too, not just this vendor quirk) and populates the sidecar's `rdsr` key: `total_dlp_mgy_cm` plus, per acquisition, `pitch`, `kvp`, `mean_ma`/`max_ma`, `rotation_time_s`, `mean_ctdivol_mgy`, `dlp_mgy_cm`, `acquisition_type`, `modulation_type`. This is why the DICOM SCP (`pixieveil/dicom_server/server.py`) also registers `XRayRadiationDoseSRStorage` now — without that presentation context a *native* RDSR would be refused at C-STORE association negotiation even though this vendor's SC-hybrid already got through on the pre-existing `SecondaryCaptureImageStorage` context. Important caveat this surfaced: the flat per-image `CTDIvol` tag on this scanner is **cumulative dose-to-date**, not per-acquisition — always prefer `rdsr.acquisitions[*].mean_ctdivol_mgy` over `phases[*].ctdi_vol_mgy` when both are present.
 
 **Post-export retention** — `storage.retain_after_export_days` (optional) keeps a copy of each already-anonymized study under `storage.retain_path` for N days after a successful export instead of deleting it immediately; `StorageManager.enforce_retention_purge()` runs alongside quota enforcement in the completion loop and removes retained studies once the window elapses. Off by default (immediate delete, prior behavior). Retained studies live outside `base_path` and are not counted toward `max_storage_gb`.
 

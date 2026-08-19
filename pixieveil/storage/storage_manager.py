@@ -739,6 +739,19 @@ class StorageManager:
 
             logger.info("Processing completed study: %04d (%s)", study_number, study_uid)
 
+            # RHYTHM exam extraction only needs anonymized headers, which are
+            # already final at this point — defacing only ever rewrites
+            # PixelData, never metadata. Doing this first means the exam
+            # sidecar survives a defacing crash/timeout, and doesn't sit
+            # behind however long CPU-mode nnU-Net inference takes. Skipped
+            # if a sidecar already exists so a re-queued retry never clobbers
+            # paper-note data merged in by hand afterward.
+            if not ExamSidecar.path_for(self.base_path, study_number).exists():
+                try:
+                    await asyncio.to_thread(self._write_exam_sidecar, study_uid, study_number, study_dir)
+                except Exception:
+                    logger.exception("Failed to extract RHYTHM exam data for study %04d", study_number)
+
             # Defacing — skip if the study was already archived locally and
             # is now being re-queued only to attempt remote export.
             sc = self.study_manager._sidecars.get(study_uid)
@@ -760,11 +773,6 @@ class StorageManager:
                 )
             )
             logger.debug("Study %04d contains %d images", study_number, image_count)
-
-            try:
-                await asyncio.to_thread(self._write_exam_sidecar, study_uid, study_number, study_dir)
-            except Exception:
-                logger.exception("Failed to extract RHYTHM exam data for study %04d", study_number)
 
             with self.lock:
                 self.inc_counter('archive', 'studies')

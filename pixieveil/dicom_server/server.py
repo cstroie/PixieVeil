@@ -20,7 +20,8 @@ from pynetdicom.sop_class import (
     Verification,
     CTImageStorage,
     MRImageStorage,
-    SecondaryCaptureImageStorage
+    SecondaryCaptureImageStorage,
+    XRayRadiationDoseSRStorage
 )
 from pydicom.dataset import Dataset
 
@@ -101,6 +102,11 @@ class DicomServer:
         self.ae.add_supported_context(CTImageStorage)
         self.ae.add_supported_context(MRImageStorage)
         self.ae.add_supported_context(SecondaryCaptureImageStorage)
+        # RDSR (Radiation Dose Structured Report) — without this, a scanner's
+        # dose report is refused at association negotiation and never
+        # transferred, regardless of series numbering; see
+        # integrations/rhythm/DATA_REQUIREMENTS.md for why this matters.
+        self.ae.add_supported_context(XRayRadiationDoseSRStorage)
 
         # Register event handlers using proper API
         handlers = [
