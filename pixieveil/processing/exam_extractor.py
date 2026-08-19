@@ -79,6 +79,62 @@ def _parse_dicom_age(value: Optional[str]) -> Optional[float]:
     return None
 
 
+def _first_float(rec: Dict[str, Any], key: str, raw: Any) -> None:
+    """Set rec[key] from raw if it's currently unset and raw parses as a float."""
+    if rec.get(key) is not None or raw in (None, ""):
+        return
+    try:
+        rec[key] = float(raw)
+    except (TypeError, ValueError):
+        pass
+
+
+def _first_str(rec: Dict[str, Any], key: str, raw: Any) -> None:
+    """Set rec[key] from raw if it's currently unset. Joins multi-valued
+    DICOM elements (e.g. ConvolutionKernel can report several values) with
+    '/' rather than keeping only the first."""
+    if rec.get(key) is not None or raw in (None, ""):
+        return
+    if isinstance(raw, str):
+        value = raw
+    elif hasattr(raw, "__iter__"):
+        # pydicom.multival.MultiValue (e.g. a multi-valued ConvolutionKernel)
+        # is iterable but not a list/tuple subclass.
+        value = "/".join(str(v) for v in raw)
+    else:
+        value = str(raw)
+    if value:
+        rec[key] = value
+
+
+def _estimate_phase_dlp(rec: Dict[str, Any]) -> Optional[float]:
+    """
+    Estimate a series' DLP as CTDIvol × imaged length, when no RDSR value is
+    available for it. Length is the z-extent spanned by ImagePositionPatient
+    across the series' images, padded by one slice thickness to cover the
+    two end slices (each contributes a full slice, not just its center
+    point) — the same convention scanners themselves use to report DLP.
+    This is an estimate, not a measurement: gantry tilt, a table pitch mid-
+    series, or an incomplete/re-queued series would all skew it. Skipped for
+    a topogram — it's a single fast low-dose sweep, not a rotational
+    acquisition, so CTDIvol × length isn't a meaningful relationship for it.
+    """
+    if rec.get("is_topogram"):
+        return None
+    ctdi = rec["ctdi_vol_mgy"]
+    if ctdi is None:
+        return None
+    z_min, z_max = rec["z_min_mm"], rec["z_max_mm"]
+    thickness = rec["slice_thickness_mm"] or 0.0
+    if z_min is not None and z_max is not None and z_max > z_min:
+        length_mm = (z_max - z_min) + thickness
+    elif thickness:
+        length_mm = thickness  # single-image series
+    else:
+        return None
+    return round(ctdi * (length_mm / 10.0), 2)
+
+
 # DCM/SRT concept codes used by the CT Radiation Dose SR template (TID 10011
 # "X-Ray Radiation Dose Report" / TID 10013 "CT Acquisition"). Some scanners
 # (confirmed on our Siemens Emotion 16) send this as a *Secondary Capture*
@@ -244,20 +300,21 @@ def _determine_bucket(
     return None, None, notes  # unreachable, satisfies type checkers
 
 
-def _is_acquisition_image(ds: "pydicom.Dataset") -> bool:
+def _is_ct_image(ds: "pydicom.Dataset") -> bool:
     """
-    True for an actual CT acquisition image, false for a topogram/localizer
-    or a rendered dose-report screen — neither is a diagnostic "phase" and
-    including them in the phases list means a null CTDIvol/DLP row that
-    looks like a missed reading rather than what it is: not applicable.
+    True for anything acquired as CT — including a topogram/localizer, which
+    is a real irradiation event and belongs in the phases list with the rest
+    of the dose record. False only for a non-CT object riding along in the
+    same study directory, e.g. a rendered Dose Report screen capture (SC
+    modality) — that one genuinely isn't a phase.
     """
     modality = str(getattr(ds, "Modality", "") or "")
-    if modality and modality != "CT":
-        return False
+    return not modality or modality == "CT"
+
+
+def _is_topogram(ds: "pydicom.Dataset") -> bool:
     image_type = [str(v).upper() for v in (getattr(ds, "ImageType", None) or [])]
-    if "LOCALIZER" in image_type:
-        return False
-    return True
+    return "LOCALIZER" in image_type
 
 
 class ExamExtractor:
@@ -337,7 +394,7 @@ class ExamExtractor:
             if rdsr_data is None:
                 rdsr_data = _parse_rdsr_content(ds)
 
-            if not _is_acquisition_image(ds):
+            if not _is_ct_image(ds):
                 continue
 
             series_number = getattr(ds, "SeriesNumber", None)
@@ -345,9 +402,21 @@ class ExamExtractor:
             rec = series.setdefault(key, {
                 "series_number": series_number,
                 "series_description": str(getattr(ds, "SeriesDescription", "") or ""),
+                "is_topogram": False,
                 "ctdi_vol_mgy": None,
                 "dlp_mgy_cm": None,
+                "slice_thickness_mm": None,
+                "exposure_time_ms": None,
+                "convolution_kernel": None,
+                "patient_position": None,
+                "single_collimation_width_mm": None,
+                "total_collimation_width_mm": None,
+                "spiral_pitch_factor": None,
+                "z_min_mm": None,
+                "z_max_mm": None,
             })
+            if _is_topogram(ds):
+                rec["is_topogram"] = True
             ctdi = getattr(ds, "CTDIvol", None)
             if ctdi is not None:
                 try:
@@ -356,6 +425,37 @@ class ExamExtractor:
                         rec["ctdi_vol_mgy"] = ctdi
                 except (TypeError, ValueError):
                     pass
+
+            # Track the series' imaged extent along the patient z-axis so a
+            # per-phase DLP can be estimated as CTDIvol × scan length when no
+            # RDSR is available to report the real value directly.
+            position = getattr(ds, "ImagePositionPatient", None)
+            if position is not None and len(position) == 3:
+                try:
+                    z = float(position[2])
+                    if rec["z_min_mm"] is None or z < rec["z_min_mm"]:
+                        rec["z_min_mm"] = z
+                    if rec["z_max_mm"] is None or z > rec["z_max_mm"]:
+                        rec["z_max_mm"] = z
+                except (TypeError, ValueError):
+                    pass
+
+            # Reconstruction/acquisition technique parameters — constant for
+            # a given series (unlike CTDIvol, which climbs slice-by-slice on
+            # this scanner), so the first value seen is kept rather than
+            # maxed. Not part of the RDSR content tree (that only covers
+            # dose parameters), so these come from the image headers only.
+            _first_float(rec, "slice_thickness_mm", getattr(ds, "SliceThickness", None))
+            _first_float(rec, "exposure_time_ms", getattr(ds, "ExposureTime", None))
+            _first_str(rec, "convolution_kernel", getattr(ds, "ConvolutionKernel", None))
+            _first_str(rec, "patient_position", getattr(ds, "PatientPosition", None))
+            _first_float(
+                rec, "single_collimation_width_mm", getattr(ds, "SingleCollimationWidth", None)
+            )
+            _first_float(
+                rec, "total_collimation_width_mm", getattr(ds, "TotalCollimationWidth", None)
+            )
+            _first_float(rec, "spiral_pitch_factor", getattr(ds, "SpiralPitchFactor", None))
 
         if not dcm_files:
             notes.append("No .dcm files found under study_dir at extraction time")
@@ -408,6 +508,36 @@ class ExamExtractor:
         )
         notes.extend(bucket_notes)
 
+        sorted_series = sorted(
+            series.values(), key=lambda r: (r["series_number"] is None, r["series_number"])
+        )
+        phases_list = []
+        any_estimated_dlp = False
+        for rec in sorted_series:
+            estimated_dlp = _estimate_phase_dlp(rec)
+            if estimated_dlp is not None:
+                any_estimated_dlp = True
+            phases_list.append({
+                "series_number": rec["series_number"],
+                "series_description": rec["series_description"] or None,
+                "is_topogram": rec["is_topogram"],
+                "ctdi_vol_mgy": rec["ctdi_vol_mgy"],
+                "dlp_mgy_cm": estimated_dlp,
+                "slice_thickness_mm": rec["slice_thickness_mm"],
+                "exposure_time_ms": rec["exposure_time_ms"],
+                "convolution_kernel": rec["convolution_kernel"],
+                "patient_position": rec["patient_position"],
+                "single_collimation_width_mm": rec["single_collimation_width_mm"],
+                "total_collimation_width_mm": rec["total_collimation_width_mm"],
+                "spiral_pitch_factor": rec["spiral_pitch_factor"],
+            })
+        if any_estimated_dlp:
+            notes.append(
+                "phases[*].dlp_mgy_cm is an estimate (CTDIvol × imaged length "
+                "from ImagePositionPatient, not a measured value) — prefer "
+                "rdsr.acquisitions[*].dlp_mgy_cm when an RDSR is present"
+            )
+
         return {
             "study_number": study_number,
             "source": {
@@ -438,15 +568,7 @@ class ExamExtractor:
                 "age_years": age_years,
                 "weight_kg": weight_kg,
             },
-            "phases": [
-                {
-                    "series_number": rec["series_number"],
-                    "series_description": rec["series_description"] or None,
-                    "ctdi_vol_mgy": rec["ctdi_vol_mgy"],
-                    "dlp_mgy_cm": None,
-                }
-                for rec in sorted(series.values(), key=lambda r: (r["series_number"] is None, r["series_number"]))
-            ],
+            "phases": phases_list,
             "image_quality": None,
             "notes": notes,
         }

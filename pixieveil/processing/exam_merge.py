@@ -43,6 +43,13 @@ MANUAL_EDITABLE_PATHS = {
     "scanner.rhythm_scanner_id",
     "phases.series_<N>.dlp_mgy_cm",
     "phases.series_<N>.ctdi_vol_mgy",
+    "phases.series_<N>.slice_thickness_mm",
+    "phases.series_<N>.exposure_time_ms",
+    "phases.series_<N>.convolution_kernel",
+    "phases.series_<N>.patient_position",
+    "phases.series_<N>.single_collimation_width_mm",
+    "phases.series_<N>.total_collimation_width_mm",
+    "phases.series_<N>.spiral_pitch_factor",
     "operator_notes",
 }
 

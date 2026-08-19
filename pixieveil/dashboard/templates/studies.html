@@ -331,32 +331,62 @@
                 ).join('');
 
                 const phases = exam.phases || [];
+
+                // One editable input for a phases.series_<N>.<leaf> path.
+                // type defaults to a number input; pass {type: 'text'} for
+                // string fields (convolution_kernel, patient_position).
+                const phaseField = (seriesNumber, leaf, label, value, opts) => {
+                    opts = opts || {};
+                    const path = `phases.series_${seriesNumber}.${leaf}`;
+                    const cls = isManual(exam, path) ? 'manual-set' : '';
+                    const type = opts.type || 'number';
+                    const step = type === 'number' ? ' step="any"' : '';
+                    const val = value != null ? esc(value) : '';
+                    return `<label>${esc(label)}
+                        <input type="${type}"${step} data-path="${path}" class="${cls}" value="${val}">
+                    </label>`;
+                };
+
                 // Phases with no SeriesNumber (key "?" in the extractor) have no
                 // stable dotted path to overlay a manual value onto — keep them
                 // in the read-only table only.
                 const phasesFields = phases.filter(p => p.series_number != null).map(p => {
-                    const dlpPath = `phases.series_${p.series_number}.dlp_mgy_cm`;
-                    const ctdiPath = `phases.series_${p.series_number}.ctdi_vol_mgy`;
+                    const n2 = p.series_number;
+                    const topoBadge = p.is_topogram ? ' <span class="badge badge-muted">topogram</span>' : '';
                     return `
+                        <h6>Series ${esc(n2)} — ${esc(p.series_description || '')}${topoBadge}</h6>
                         <div class="grid phase-group">
-                            <label>Series ${esc(p.series_number)} — ${esc(p.series_description || '')} — DLP (mGy·cm)
-                                <input type="number" step="any" data-path="${dlpPath}"
-                                    class="${isManual(exam, dlpPath) ? 'manual-set' : ''}"
-                                    value="${p.dlp_mgy_cm != null ? p.dlp_mgy_cm : ''}">
-                            </label>
-                            <label>CTDIvol (mGy)
-                                <input type="number" step="any" data-path="${ctdiPath}"
-                                    class="${isManual(exam, ctdiPath) ? 'manual-set' : ''}"
-                                    value="${p.ctdi_vol_mgy != null ? p.ctdi_vol_mgy : ''}">
-                            </label>
+                            ${phaseField(n2, 'dlp_mgy_cm', 'DLP (mGy·cm)', p.dlp_mgy_cm)}
+                            ${phaseField(n2, 'ctdi_vol_mgy', 'CTDIvol (mGy)', p.ctdi_vol_mgy)}
+                            ${phaseField(n2, 'slice_thickness_mm', 'Slice thickness (mm)', p.slice_thickness_mm)}
+                            ${phaseField(n2, 'exposure_time_ms', 'Exposure time (ms)', p.exposure_time_ms)}
+                            ${phaseField(n2, 'spiral_pitch_factor', 'Pitch factor', p.spiral_pitch_factor)}
+                        </div>
+                        <div class="grid phase-group">
+                            ${phaseField(n2, 'convolution_kernel', 'Convolution kernel', p.convolution_kernel, {type: 'text'})}
+                            ${phaseField(n2, 'patient_position', 'Patient position', p.patient_position, {type: 'text'})}
+                            ${phaseField(n2, 'single_collimation_width_mm', 'Single collimation (mm)', p.single_collimation_width_mm)}
+                            ${phaseField(n2, 'total_collimation_width_mm', 'Total collimation (mm)', p.total_collimation_width_mm)}
                         </div>`;
                 }).join('');
 
+                const num = v => v != null ? v.toFixed(2) : '—';
                 const phasesTable = phases.length ? `
-                    <table role="grid"><thead><tr><th>Series</th><th>Description</th><th>CTDIvol (mGy)</th><th>DLP (mGy·cm)</th></tr></thead>
+                    <table role="grid" class="overflow-auto"><thead><tr>
+                        <th>Series</th><th>Description</th><th>Type</th><th>CTDIvol (mGy)</th><th>DLP (mGy·cm)</th>
+                        <th>Slice (mm)</th><th>Exposure (ms)</th><th>Kernel</th><th>Position</th>
+                        <th>Coll. single/total (mm)</th><th>Pitch</th>
+                    </tr></thead>
                     <tbody>${phases.map(p => `<tr><td>${esc(p.series_number)}</td><td>${esc(p.series_description)}</td>` +
-                        `<td>${p.ctdi_vol_mgy != null ? p.ctdi_vol_mgy.toFixed(2) : '—'}</td>` +
-                        `<td>${p.dlp_mgy_cm != null ? p.dlp_mgy_cm.toFixed(2) : '—'}</td></tr>`).join('')}</tbody></table>`
+                        `<td>${p.is_topogram ? 'Topogram' : 'Acquisition'}</td>` +
+                        `<td>${num(p.ctdi_vol_mgy)}</td>` +
+                        `<td>${num(p.dlp_mgy_cm)}</td>` +
+                        `<td>${num(p.slice_thickness_mm)}</td>` +
+                        `<td>${p.exposure_time_ms != null ? p.exposure_time_ms : '—'}</td>` +
+                        `<td>${esc(p.convolution_kernel) || '—'}</td>` +
+                        `<td>${esc(p.patient_position) || '—'}</td>` +
+                        `<td>${num(p.single_collimation_width_mm)} / ${num(p.total_collimation_width_mm)}</td>` +
+                        `<td>${num(p.spiral_pitch_factor)}</td></tr>`).join('')}</tbody></table>`
                     : '<p><small>No phases.</small></p>';
 
                 const rdsr = exam.rdsr;
