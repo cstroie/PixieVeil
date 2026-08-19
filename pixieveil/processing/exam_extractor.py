@@ -349,15 +349,18 @@ class ExamExtractor:
 
     # ------------------------------------------------------------------
 
-    def extract(self, study_dir: Path, study_number: int,
-                anonymized_study_uid: str) -> Dict[str, Any]:
-        """Read every .dcm in study_dir and build the exam-data dict."""
-        notes: List[str] = []
-        # Keyed by DICOM SeriesNumber. NOT the same thing as an "irradiation
-        # event"/RDSR acquisition — one acquisition can be reconstructed into
-        # several series (different kernel/thickness), so several entries
-        # here can share one real dose event. See rdsr.acquisitions[] for
-        # the true per-irradiation-event record.
+    def _scan_dicom_files(self, study_dir: Path) -> Dict[str, Any]:
+        """
+        Read every anonymized .dcm under study_dir once, accumulating the raw
+        study-level headers, patient age/weight, RDSR content, and per-series
+        technique records that extract() turns into the exam-data dict.
+
+        Keyed by DICOM SeriesNumber. NOT the same thing as an "irradiation
+        event"/RDSR acquisition — one acquisition can be reconstructed into
+        several series (different kernel/thickness), so several entries here
+        can share one real dose event. See rdsr.acquisitions[] for the true
+        per-irradiation-event record.
+        """
         series_records: Dict[str, Dict[str, Any]] = {}
         manufacturer = model = None
         protocol_name = study_description = body_part = ""
@@ -462,7 +465,73 @@ class ExamExtractor:
             )
             _first_float(rec, "spiral_pitch_factor", getattr(ds, "SpiralPitchFactor", None))
 
-        if not dcm_files:
+        return {
+            "dcm_files": dcm_files,
+            "manufacturer": manufacturer,
+            "model": model,
+            "protocol_name": protocol_name,
+            "study_description": study_description,
+            "body_part": body_part,
+            "contrast_seen": contrast_seen,
+            "age_years": age_years,
+            "weight_kg": weight_kg,
+            "rdsr_data": rdsr_data,
+            "series_records": series_records,
+        }
+
+    @staticmethod
+    def _build_series_list(
+        series_records: Dict[str, Dict[str, Any]]
+    ) -> Tuple[List[Dict[str, Any]], bool]:
+        """
+        Sort series_records by SeriesNumber and estimate a per-series DLP.
+
+        Returns ``(series_list, any_estimated_dlp)`` — the latter drives the
+        "series[*].dlp_mgy_cm is an estimate" note in extract().
+        """
+        sorted_records = sorted(
+            series_records.values(), key=lambda r: (r["series_number"] is None, r["series_number"])
+        )
+        series_list = []
+        any_estimated_dlp = False
+        for rec in sorted_records:
+            estimated_dlp = _estimate_series_dlp(rec)
+            if estimated_dlp is not None:
+                any_estimated_dlp = True
+            series_list.append({
+                "series_number": rec["series_number"],
+                "series_description": rec["series_description"] or None,
+                "is_topogram": rec["is_topogram"],
+                "ctdi_vol_mgy": rec["ctdi_vol_mgy"],
+                "dlp_mgy_cm": estimated_dlp,
+                "slice_thickness_mm": rec["slice_thickness_mm"],
+                "exposure_time_ms": rec["exposure_time_ms"],
+                "convolution_kernel": rec["convolution_kernel"],
+                "patient_position": rec["patient_position"],
+                "single_collimation_width_mm": rec["single_collimation_width_mm"],
+                "total_collimation_width_mm": rec["total_collimation_width_mm"],
+                "spiral_pitch_factor": rec["spiral_pitch_factor"],
+            })
+        return series_list, any_estimated_dlp
+
+    def extract(self, study_dir: Path, study_number: int,
+                anonymized_study_uid: str) -> Dict[str, Any]:
+        """Read every .dcm in study_dir and build the exam-data dict."""
+        notes: List[str] = []
+
+        scanned = self._scan_dicom_files(study_dir)
+        manufacturer = scanned["manufacturer"]
+        model = scanned["model"]
+        protocol_name = scanned["protocol_name"]
+        study_description = scanned["study_description"]
+        body_part = scanned["body_part"]
+        contrast_seen = scanned["contrast_seen"]
+        age_years = scanned["age_years"]
+        weight_kg = scanned["weight_kg"]
+        rdsr_data = scanned["rdsr_data"]
+        series_records = scanned["series_records"]
+
+        if not scanned["dcm_files"]:
             notes.append("No .dcm files found under study_dir at extraction time")
 
         if weight_kg is None:
@@ -513,29 +582,7 @@ class ExamExtractor:
         )
         notes.extend(bucket_notes)
 
-        sorted_records = sorted(
-            series_records.values(), key=lambda r: (r["series_number"] is None, r["series_number"])
-        )
-        series_list = []
-        any_estimated_dlp = False
-        for rec in sorted_records:
-            estimated_dlp = _estimate_series_dlp(rec)
-            if estimated_dlp is not None:
-                any_estimated_dlp = True
-            series_list.append({
-                "series_number": rec["series_number"],
-                "series_description": rec["series_description"] or None,
-                "is_topogram": rec["is_topogram"],
-                "ctdi_vol_mgy": rec["ctdi_vol_mgy"],
-                "dlp_mgy_cm": estimated_dlp,
-                "slice_thickness_mm": rec["slice_thickness_mm"],
-                "exposure_time_ms": rec["exposure_time_ms"],
-                "convolution_kernel": rec["convolution_kernel"],
-                "patient_position": rec["patient_position"],
-                "single_collimation_width_mm": rec["single_collimation_width_mm"],
-                "total_collimation_width_mm": rec["total_collimation_width_mm"],
-                "spiral_pitch_factor": rec["spiral_pitch_factor"],
-            })
+        series_list, any_estimated_dlp = self._build_series_list(series_records)
         if any_estimated_dlp:
             notes.append(
                 "series[*].dlp_mgy_cm is an estimate (CTDIvol × imaged length "
