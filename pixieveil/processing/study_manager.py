@@ -48,6 +48,7 @@ class StudyManager:
 
         # UID → number mappings (restored from sidecars at startup)
         self.study_map: Dict[str, int] = {}                          # orig_study_uid → study_number
+        self.number_map: Dict[int, str] = {}                         # study_number → orig_study_uid
         self.series_map: Dict[Tuple[str, str], Tuple[int, int]] = {} # (study_uid, series_uid) → (study_num, series_num)
         self.image_counters: Dict[Tuple[int, int], int] = {}         # (study_num, series_num) → image_count
 
@@ -92,6 +93,7 @@ class StudyManager:
             for study_uid, sc in sidecars.items():
                 # Restore UID → number mappings
                 self.study_map[study_uid] = sc.study_number
+                self.number_map[sc.study_number] = study_uid
                 self.study_counter = max(self.study_counter, sc.study_number)
 
                 for orig_series_uid, rec in sc.series.items():
@@ -144,6 +146,7 @@ class StudyManager:
             if original_study_uid not in self.study_map:
                 self.study_counter += 1
                 self.study_map[original_study_uid] = self.study_counter
+                self.number_map[self.study_counter] = original_study_uid
                 logger.debug(
                     "New study %d assigned to %s", self.study_counter, original_study_uid
                 )
@@ -252,6 +255,12 @@ class StudyManager:
         with self.lock:
             sc = self._sidecars.get(original_study_uid)
             return sc.get_series_uid_for_number(series_number) if sc else None
+
+    def get_sidecar_by_number(self, study_number: int) -> Optional[StudySidecar]:
+        """O(1) reverse lookup via number_map, instead of scanning every sidecar."""
+        with self.lock:
+            uid = self.number_map.get(study_number)
+            return self._sidecars.get(uid) if uid is not None else None
 
     # ------------------------------------------------------------------
     # Study lifecycle

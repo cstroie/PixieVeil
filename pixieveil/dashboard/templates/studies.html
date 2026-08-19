@@ -120,6 +120,7 @@
         </div>
 
         <main>
+            <div id="summary-bar"></div>
             <div id="studies-container"><p aria-busy="true">Loading studies…</p></div>
         </main>
 
@@ -133,6 +134,7 @@
             let AUTH_REQUIRED = false;
             let STUDIES = [];
             let EXPANDED = null;
+            let LAST_BULK_MESSAGE = '';
 
             const REGION_INDICATION_OPTIONS = [
                 { region: "Head", indication: "Trauma", contrast: "Non-contrast" },
@@ -181,6 +183,7 @@
                     if (AUTH_REQUIRED) {
                         document.getElementById('auth-token').value = authToken();
                     }
+                    renderSummaryBar();
                     renderTable();
                 } catch (err) {
                     console.error(err);
@@ -194,8 +197,66 @@
             }
 
             function statusBadge(status) {
-                const cls = status === 'archived' ? 'badge-ok' : 'badge-muted';
+                const cls = status === 'archived' ? 'badge-ok' :
+                    (status === 'ready' ? 'badge-warn' : 'badge-muted');
                 return `<span class="badge ${cls}">${status}</span>`;
+            }
+
+            function renderSummaryBar() {
+                const bar = document.getElementById('summary-bar');
+                const pending = STUDIES.filter(s => s.status === 'ready');
+                if (!pending.length) {
+                    // Show the last bulk-action result once, even though
+                    // there's no longer a pending count to attach it to.
+                    bar.innerHTML = LAST_BULK_MESSAGE ? `<p><small>${esc(LAST_BULK_MESSAGE)}</small></p>` : '';
+                    LAST_BULK_MESSAGE = '';
+                    return;
+                }
+                const dicomBtn = CAPABILITIES.dicom
+                    ? `<button type="button" id="bulk-dicom-btn">Send all to DICOM</button>` : '';
+                const httpBtn = CAPABILITIES.http
+                    ? `<button type="button" id="bulk-http-btn" class="secondary">Upload all to HTTP</button>` : '';
+                bar.innerHTML = `
+                    <article class="action-row">
+                        <span class="badge badge-warn">${pending.length} awaiting export</span>
+                        ${dicomBtn}${httpBtn}
+                        <small id="bulk-status" class="status-line"></small>
+                    </article>
+                `;
+                const db = document.getElementById('bulk-dicom-btn');
+                const hb = document.getElementById('bulk-http-btn');
+                if (db) db.addEventListener('click', () => runBulkAction('send_dicom'));
+                if (hb) hb.addEventListener('click', () => runBulkAction('upload_http'));
+            }
+
+            async function runBulkAction(action) {
+                const pending = STUDIES.filter(s => s.status === 'ready');
+                if (!pending.length) return;
+                const label = action === 'send_dicom' ? 'the DICOM node' : 'HTTP storage';
+                if (!confirm(`Send ${pending.length} study(ies) awaiting export to ${label}?`)) return;
+
+                let sent = 0, failed = 0;
+                for (const s of pending) {
+                    const statusEl = document.getElementById('bulk-status');
+                    if (statusEl) statusEl.textContent = `Sending ${sent + failed + 1}/${pending.length}…`;
+                    try {
+                        const resp = await fetch(`/api/studies/${s.study_number}/actions/${action}`, {
+                            method: 'POST',
+                            headers: authHeaders({ 'Content-Type': 'application/json' }),
+                        });
+                        const data = await resp.json();
+                        if (data.ok) sent++; else failed++;
+                    } catch (err) {
+                        console.error(err);
+                        failed++;
+                    }
+                }
+
+                LAST_BULK_MESSAGE = failed
+                    ? `Sent ${sent}, failed ${failed}.`
+                    : `Sent ${sent} study(ies).`;
+                await loadStudies();
+                if (EXPANDED != null) await loadDetail(EXPANDED);
             }
 
             function esc(s) {

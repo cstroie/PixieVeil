@@ -911,10 +911,12 @@ class StorageManager:
 
     def enforce_storage_quota_sync(self) -> None:
         """
-        Synchronous quota enforcement. Removes the oldest completed studies from
+        Synchronous quota enforcement. Removes the oldest archived studies from
         base_path (lowest study number first) until disk usage drops below 75% of
-        the configured max_storage_gb limit.  Active (in-progress) studies are
-        never touched.
+        the configured max_storage_gb limit. Active (in-progress) studies, and
+        studies that are "ready" but have never been exported, are never
+        touched — export is manual-only now, so purging an un-exported study
+        would destroy data nobody ever got a chance to send anywhere.
         """
         max_storage_gb = self.settings.storage.get("max_storage_gb")
         if not max_storage_gb:
@@ -941,12 +943,18 @@ class StorageManager:
             key=lambda d: int(d.name)
         )
 
+        skipped_unexported = 0
         for study_dir in study_dirs:
             if used_bytes <= target_bytes:
                 break
 
             study_number = int(study_dir.name)
             if study_number in active_study_numbers:
+                continue
+
+            sc = self.study_manager.get_sidecar_by_number(study_number)
+            if sc is None or sc.status != "archived":
+                skipped_unexported += 1
                 continue
 
             dir_size = sum(f.stat().st_size for f in study_dir.rglob("*") if f.is_file())
@@ -962,6 +970,14 @@ class StorageManager:
 
             with self.lock:
                 self.inc_counter('cleanup', 'studies')
+
+        if used_bytes > target_bytes and skipped_unexported:
+            logger.warning(
+                "Storage quota still exceeded after cleanup (%.2f GB used, limit %s GB) — "
+                "%d study(ies) awaiting manual export were left in place. Export or "
+                "manually clear them from the /studies dashboard to free space.",
+                used_bytes / (1024 ** 3), max_storage_gb, skipped_unexported,
+            )
 
         logger.info(f"Storage after quota cleanup: {used_bytes / (1024 ** 3):.2f} GB")
 
@@ -1003,10 +1019,7 @@ class StorageManager:
         return None, "absent"
 
     def find_sidecar_by_number(self, study_number: int) -> Optional[StudySidecar]:
-        for sc in self.study_manager._sidecars.values():
-            if sc.study_number == study_number:
-                return sc
-        return None
+        return self.study_manager.get_sidecar_by_number(study_number)
 
     async def manual_send_dicom(self, study_number: int) -> dict:
         """Send a study to the configured DICOM node at the user's request."""
@@ -1079,7 +1092,7 @@ class StorageManager:
                     self.inc_counter('errors', 'total')
                 return {"ok": False, "message": "failed to create ZIP archive"}
 
-            zip_size = zip_path.stat().st_size
+            zip_size = await asyncio.to_thread(lambda: zip_path.stat().st_size)
             try:
                 success = await self.remote_storage.upload_file(zip_path, zip_path.name)
             finally:
@@ -1175,16 +1188,20 @@ class StorageManager:
         # never reaches whatever the study eventually gets exported as.
         # Only safe while the files are still sitting in base_path awaiting
         # manual export; once archived, exported copies are already gone.
-        if "patient.weight_kg" in manual_fields or "patient.age_years" in manual_fields:
+        def _as_number(v: Any) -> Optional[float]:
+            # Guards against a malformed PUT body (string/list/dict/bool)
+            # reaching round()/pydicom below and crashing the request after
+            # the sidecar write above already succeeded.
+            return v if isinstance(v, (int, float)) and not isinstance(v, bool) else None
+
+        weight_kg = _as_number(manual_fields.get("patient.weight_kg"))
+        age_years = _as_number(manual_fields.get("patient.age_years"))
+        if weight_kg is not None or age_years is not None:
             sc = self.find_sidecar_by_number(study_number)
             if sc is not None and sc.status != "archived":
                 study_dir, location = self.resolve_study_dir(study_number)
                 if study_dir is not None and location == "base":
-                    self._writeback_patient_fields_sync(
-                        study_dir,
-                        manual_fields.get("patient.weight_kg"),
-                        manual_fields.get("patient.age_years"),
-                    )
+                    self._writeback_patient_fields_sync(study_dir, weight_kg, age_years)
 
         return data
 
