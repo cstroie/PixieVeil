@@ -69,7 +69,12 @@ StorageManager that records calls and can be told to raise, plus one
 integration test wiring up the real `StorageManager` to catch signature
 drift; `DicomServer`'s config, the C-ECHO/C-STORE event adapters, the
 port-already-bound guard in `start()` via a real socket bind, and `stop()`'s
-shutdown bookkeeping via a fake `AE`).
+shutdown bookkeeping via a fake `AE`), `ZipManager` (pure filesystem/zip
+logic — arcname layout, `_pre_deface` exclusion, the default-vs-explicit
+`source_dir` split used for retained studies, empty/missing-source-dir
+edge cases), and `RemoteStorage` (config resolution and the HTTP upload
+path against a small fake `aiohttp.ClientSession`/response substituted with
+`monkeypatch` — never a real HTTP request).
 
 Deliberately still out of scope: `dicom_to_nifti`, the pixel-array half of
 `nifti_to_dicom`, `run_nnunet_inference`, `_run_nnunet_and_apply_mask`, and
