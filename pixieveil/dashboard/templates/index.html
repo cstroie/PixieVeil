@@ -122,8 +122,7 @@
             .last-updated {
                 font-size: 0.75rem;
                 color: var(--pico-muted-color);
-                text-align: right;
-                margin: calc(var(--pico-spacing) * 0.5) 0 0;
+                margin: 0 0 0 auto;
             }
         </style>
     </head>
@@ -152,8 +151,8 @@
                     <span class="led"><span class="led-dot" id="led-waiting"></span>Waiting</span>
                     <span class="led"><span class="led-dot" id="led-defacing"></span>Defacing</span>
                     <span class="led"><span class="led-dot" id="led-exporting"></span>Exporting</span>
+                    <span class="last-updated">Last updated: <span id="last-updated">Never</span></span>
                 </div>
-                <p class="last-updated">Last updated: <span id="last-updated">Never</span></p>
             </article>
         </header>
         

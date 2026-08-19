@@ -11,7 +11,6 @@
             }
             table {
                 display: block;
-                overflow-x: auto;
                 white-space: nowrap;
             }
             tr.study-row {
@@ -45,24 +44,17 @@
                 color: var(--pico-primary);
                 font-weight: bold;
             }
-            /* The row/table-cell holding the detail panel would otherwise
-               share column-width negotiation with the (nowrap, narrow)
-               summary rows above it via the table's shared column-layout
-               algorithm, forcing the whole table — and the page — wider
-               than the viewport. Taking the row/cell out of table display
-               lets the panel just wrap to the container's actual width. */
-            tr.detail-row {
-                display: block;
+            tr.study-row.selected {
+                background-color: var(--pico-table-row-stripe-background-color);
+                box-shadow: inset 3px 0 0 var(--pico-primary);
             }
-            tr.detail-row > td {
-                display: block;
-                width: 100%;
-                box-sizing: border-box;
-            }
+            /* Rendered as a plain block below the table rather than inside a
+               table row/cell — a <td> sharing column-width negotiation with
+               the (nowrap, narrow) summary rows above it via the table's
+               shared column-layout algorithm forced the whole table, and the
+               panel inside it, to an unpredictable width in every browser. */
             .detail-panel {
-                margin-top: -1px;
-                white-space: normal;
-                max-width: 100%;
+                margin-top: var(--pico-spacing);
             }
             .manual-set {
                 border-color: var(--pico-primary);
@@ -132,7 +124,7 @@
         </main>
 
         <footer>
-            <button onclick="loadStudies()" role="button">Refresh</button>
+            <button onclick="refreshStudies()" role="button">Refresh</button>
         </footer>
 
         <script>
@@ -221,7 +213,7 @@
                     container.innerHTML = '<p>No studies found.</p>';
                     return;
                 }
-                let html = '<table role="grid"><thead><tr>' +
+                let html = '<table role="grid" class="overflow-auto"><thead><tr>' +
                     '<th>#</th><th>Status</th><th>Location</th><th>Indication</th>' +
                     '<th>Protocol type</th><th>Exam group</th><th>Scanner</th>' +
                     '<th>Total DLP</th><th>Edited</th>' +
@@ -232,7 +224,8 @@
                     const scanner = ex && ex.scanner ? `${esc(ex.scanner.manufacturer || '')} ${esc(ex.scanner.model || '')}`.trim() || '—' : '—';
                     const dlp = ex && ex.total_dlp_mgy_cm != null ? ex.total_dlp_mgy_cm.toFixed(1) + ' mGy·cm' : '—';
                     const edited = ex && ex.has_manual_edits ? '<span class="edited-flag" title="has manual edits">&#9998;</span>' : '';
-                    html += `<tr class="study-row" data-n="${s.study_number}">` +
+                    const rowClass = 'study-row' + (EXPANDED === s.study_number ? ' selected' : '');
+                    html += `<tr class="${rowClass}" data-n="${s.study_number}">` +
                         `<td>${String(s.study_number).padStart(4, '0')}</td>` +
                         `<td>${statusBadge(s.status)}</td>` +
                         `<td>${locationBadge(s.location)}</td>` +
@@ -242,8 +235,7 @@
                         `<td>${scanner}</td>` +
                         `<td>${dlp}</td>` +
                         `<td>${edited}</td>` +
-                        `</tr><tr class="detail-row" data-n="${s.study_number}" style="display:none;">` +
-                        `<td colspan="9"><div class="detail-panel" id="detail-${s.study_number}"></div></td></tr>`;
+                        `</tr>`;
                 });
                 html += '</tbody></table>';
                 container.innerHTML = html;
@@ -251,24 +243,43 @@
                 container.querySelectorAll('tr.study-row').forEach(row => {
                     row.addEventListener('click', () => toggleDetail(parseInt(row.dataset.n, 10)));
                 });
+
+                // The edit panel is a single block below the table, not a
+                // per-row table cell — see the .detail-panel CSS comment.
+                let panel = document.getElementById('detail-panel-container');
+                if (!panel) {
+                    panel = document.createElement('div');
+                    panel.id = 'detail-panel-container';
+                    panel.className = 'detail-panel';
+                    container.appendChild(panel);
+                }
+                if (EXPANDED != null && !STUDIES.some(s => s.study_number === EXPANDED)) {
+                    EXPANDED = null;
+                }
+            }
+
+            function updateSelectedRow() {
+                document.querySelectorAll('tr.study-row').forEach(r => {
+                    r.classList.toggle('selected', parseInt(r.dataset.n, 10) === EXPANDED);
+                });
             }
 
             async function toggleDetail(n) {
-                const detailRow = document.querySelector(`tr.detail-row[data-n="${n}"]`);
-                if (!detailRow) return;
+                const panel = document.getElementById('detail-panel-container');
+                if (!panel) return;
                 if (EXPANDED === n) {
-                    detailRow.style.display = 'none';
                     EXPANDED = null;
+                    panel.innerHTML = '';
+                    updateSelectedRow();
                     return;
                 }
-                document.querySelectorAll('tr.detail-row').forEach(r => r.style.display = 'none');
                 EXPANDED = n;
-                detailRow.style.display = '';
+                updateSelectedRow();
                 await loadDetail(n);
             }
 
             async function loadDetail(n) {
-                const el = document.getElementById(`detail-${n}`);
+                const el = document.getElementById('detail-panel-container');
                 el.innerHTML = '<p aria-busy="true">Loading…</p>';
                 try {
                     const resp = await fetch(`/api/studies/${n}`);
@@ -291,7 +302,7 @@
             }
 
             function renderDetail(n, payload) {
-                const el = document.getElementById(`detail-${n}`);
+                const el = document.getElementById('detail-panel-container');
                 const study = payload.study || {};
                 const exam = payload.exam;
 
@@ -518,8 +529,6 @@
                 // last, not before these reloads run.
                 await loadStudies();
                 if (EXPANDED === n) {
-                    const row = document.querySelector(`tr.detail-row[data-n="${n}"]`);
-                    if (row) row.style.display = '';
                     await loadDetail(n);
                     const newStatus = document.getElementById(`action-status-${n}`);
                     if (newStatus) newStatus.textContent = message;
@@ -527,7 +536,7 @@
             }
 
             async function saveExam(n) {
-                const el = document.getElementById(`detail-${n}`);
+                const el = document.getElementById('detail-panel-container');
                 const status = document.getElementById(`save-status-${n}`);
                 const fields = {};
 
@@ -574,6 +583,11 @@
                     console.error(err);
                     if (status) status.textContent = 'Save failed.';
                 }
+            }
+
+            async function refreshStudies() {
+                await loadStudies();
+                if (EXPANDED != null) await loadDetail(EXPANDED);
             }
 
             document.addEventListener('DOMContentLoaded', loadStudies);
