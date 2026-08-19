@@ -1210,7 +1210,31 @@ class StorageManager:
                                         age_years: Optional[float]) -> None:
         """Patch a manually-corrected PatientWeight/PatientAge into every
         anonymized DICOM file under study_dir, so the correction reaches
-        the objects that eventually get exported."""
+        the objects that eventually get exported.
+
+        Untested edge case this guards against: DICOM's AS VR for
+        PatientAge is a fixed 4 characters ("034Y"). A negative or >=1000
+        age_years would format as "-05Y" or "1500Y" — neither is valid AS
+        content, and a downstream DICOM reader could reject the whole
+        object over one bad tag. Weight has no VR-length constraint at
+        plausible values but is range-checked too, since it's the same
+        "operator fat-fingered the form" failure mode.
+        """
+        if weight_kg is not None and not (0 < weight_kg <= 500):
+            logger.warning(
+                "Refusing to write back implausible PatientWeight=%s kg into %s",
+                weight_kg, study_dir,
+            )
+            weight_kg = None
+        if age_years is not None and not (0 <= age_years < 1000):
+            logger.warning(
+                "Refusing to write back implausible PatientAge=%s years into %s",
+                age_years, study_dir,
+            )
+            age_years = None
+        if weight_kg is None and age_years is None:
+            return
+
         age_str = f"{int(round(age_years)):03d}Y" if age_years is not None else None
 
         for dcm_path in study_dir.rglob("*.dcm"):
