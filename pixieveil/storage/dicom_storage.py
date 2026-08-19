@@ -100,9 +100,16 @@ class DicomStorage:
                 status = assoc.send_c_store(ds)
                 if status and status.Status == 0x0000:
                     logger.debug("C-STORE OK: %s", dcm_path.name)
+                elif status is None:
+                    # %04X below can't format a string — a bare "no
+                    # response" fallback here used to raise inside the
+                    # logging call itself, masking the real error.
+                    logger.error("C-STORE failed for %s: no response", dcm_path.name)
+                    errors += 1
                 else:
-                    code = status.Status if status else "no-response"
-                    logger.error("C-STORE failed for %s: status=0x%04X", dcm_path.name, code)
+                    logger.error(
+                        "C-STORE failed for %s: status=0x%04X", dcm_path.name, status.Status
+                    )
                     errors += 1
         finally:
             assoc.release()

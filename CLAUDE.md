@@ -42,19 +42,40 @@ See [INSTALL.md](INSTALL.md) for the full bootstrap/systemd/OpenRC flow.
 ## Testing
 
 Unit tests live under `tests/`, run with `pytest` (config in `pyproject.toml`
-under `[tool.pytest.ini_options]`). They target pure/deterministic logic —
-`exam_extractor`'s standalone helpers (age parsing, DLP estimation, protocol
-bucketing), `exam_merge`'s manual-overlay semantics, `StudySidecar`'s JSON
-round-trip — not the DICOM network stack, nnU-Net inference, or anything
-requiring GPU/real scanner data. `tests/test_exam_extractor.py`,
-`test_exam_merge.py`, and `test_study_sidecar.py` are the current pattern to
-follow: instantiate pure functions/dataclasses directly, no mocking
-framework, `tmp_path` for anything that touches disk. Extend this suite when
-touching that kind of logic instead of leaving it untested; the DICOM
-server/anonymizer/defacer path still has no coverage and would need fixture
-`.dcm` files or a fake association to test meaningfully — treat adding that
-as a separate, deliberate task rather than folding it into an unrelated
-change.
+under `[tool.pytest.ini_options]`; `pip install -e ".[test]"` for `pytest`
+itself — note some fixtures additionally exercise code paths that only run
+when the `[deface]` extra's heavy libs (torch/SimpleITK/nibabel/nnunetv2)
+happen to be installed too, skipping gracefully via `pytest.importorskip`
+when they aren't). `tests/conftest.py` holds shared fixtures: a
+`StorageManager` fixture (dicom/http export and defacing left disabled — no
+test should ever touch the network or a GPU) and `write_minimal_dicom()` for
+building tiny-but-valid `.dcm` fixtures.
+
+Coverage spans: `StudyManager`/`StorageManager` (numbering, the
+`number_map` index, quota/retention rules, the manual-export-only pipeline,
+the weight/age DICOM write-back), `exam_extractor` (including
+`_scan_dicom_files`, the highest-complexity function in the codebase),
+`exam_merge`'s manual-overlay semantics, `StudySidecar`'s JSON round-trip,
+`Anonymizer` and `SeriesFilter` (field-value strategies, UID-mapping
+consistency, original/derived series detection), `DicomStorage` (config
+resolution and the C-STORE send loop, via a small fake AE/association
+substituted with `monkeypatch` — never a real network call), and `Defacer`
+(config, head/topogram detection, model-path resolution, `_prepare_for_write`,
+`_load_series_groups`, device resolution via monkeypatched `torch`, and
+`deface_series`'s directory bookkeeping/atomic-swap safety with the three
+heavy conversion steps stubbed at the instance level).
+
+Deliberately still out of scope: `dicom_to_nifti`, the pixel-array half of
+`nifti_to_dicom`, `run_nnunet_inference`, `_run_nnunet_and_apply_mask`, and
+`_dilate_mask` — real volumetric conversion math that needs actual scanner
+image data to test meaningfully, not synthetic 2x2 arrays; same for the
+live DICOM C-STORE server/handler path in `dicom_server/`. Extend the
+suite when touching logic in scope for it instead of leaving it untested;
+treat adding coverage for the still-excluded paths as a separate,
+deliberate task (real fixture volumes, a fake association) rather than
+folding it into an unrelated change. No mocking framework is used anywhere
+in this suite — fakes are small, purpose-built classes/functions, monkeypatched
+in via pytest's built-in `monkeypatch` fixture.
 
 Manual linting:
 
