@@ -53,22 +53,25 @@ class StudySidecar:
 
     ``status`` lifecycle::
 
-        receiving → complete → defacing → archived
+        receiving → complete → defacing → ready → archived
 
     - ``receiving``  images still arriving
-    - ``complete``   inactivity timeout fired; ready to deface + archive
+    - ``complete``   inactivity timeout fired; ready to deface
     - ``defacing``   defacing in progress (crash here → re-run on restart,
                      skipping series already marked ``defaced: true``)
-    - ``archived``   export succeeded; terminal state
+    - ``ready``      processing finished; sits in ``base_path`` awaiting a
+                     manual send/upload action from the ``/studies``
+                     dashboard — exports are never triggered automatically
+    - ``archived``   a manual export succeeded; terminal state
 
     ``archived_via`` is set when the study is archived:
     - ``"dicom"``  sent via C-STORE to a DICOM node
     - ``"http"``   uploaded as a ZIP via HTTP
-    - ``None``     not yet archived (or kept locally with no remote configured)
+    - ``None``     archived without a remote export (kept locally only)
     """
 
     study_number: int
-    status: str                  # receiving | complete | defacing | archived
+    status: str                  # receiving | complete | defacing | ready | archived
     original_study_uid: str
     original_patient_id: str
     anonymized_study_uid: str

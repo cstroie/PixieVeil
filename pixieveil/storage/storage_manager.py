@@ -760,10 +760,10 @@ class StorageManager:
                 except Exception:
                     logger.exception("Failed to extract RHYTHM exam data for study %04d", study_number)
 
-            # Defacing — skip if the study was already archived locally and
-            # is now being re-queued only to attempt remote export.
+            # Defacing — skip if this study already finished processing
+            # (e.g. re-queued spuriously after reaching "ready"/"archived").
             sc = self.study_manager._sidecars.get(study_uid)
-            already_processed = sc is not None and sc.status == "archived"
+            already_processed = sc is not None and sc.status in ("ready", "archived")
             if self.defacer.enabled and not already_processed:
                 with self.lock:
                     self._active_defacing += 1
@@ -786,84 +786,14 @@ class StorageManager:
                 self.inc_counter('archive', 'studies')
                 self.inc_counter('archive', 'images', image_count)
 
-            # --- Export: DICOM push takes priority over HTTP ZIP upload ---
-            with self.lock:
-                self._active_exporting += 1
-            try:
-                if self.dicom_storage.enabled:
-                    await self._export_via_dicom(
-                        study_uid, study_number, study_dir, image_count
-                    )
-                else:
-                    await self._export_via_http_zip(
-                        study_uid, study_number, study_dir, image_count
-                    )
-            finally:
-                with self.lock:
-                    self._active_exporting -= 1
+            # Exports are never triggered automatically — the study sits in
+            # base_path until a user sends/uploads it from the /studies
+            # dashboard (StorageManager.manual_send_dicom / manual_upload_http).
+            self.study_manager.mark_study_ready(study_uid)
         except Exception:
             logger.exception("Unexpected error processing study %s", study_uid)
         finally:
             self._processing_studies.discard(study_uid)
-
-    async def _export_via_dicom(self, study_uid: str, study_number: int,
-                                study_dir: Path, image_count: int) -> None:
-        """Send study files to the configured DICOM node via C-STORE."""
-        logger.info("Sending study %04d to DICOM node %s:%d",
-                    study_number, self.dicom_storage.host, self.dicom_storage.port)
-        success = await self.dicom_storage.send_study(study_dir)
-        if success:
-            with self.lock:
-                self.inc_counter('export', 'dicom_studies')
-                self.inc_counter('export', 'dicom_images', image_count)
-                self.inc_counter('cleanup', 'studies')
-                self.inc_counter('cleanup', 'images', image_count)
-            await asyncio.to_thread(self._retain_or_delete_sync, study_dir)
-            self.study_manager.mark_study_archived(study_uid, via="dicom")
-        else:
-            logger.error("DICOM push failed for study %s", study_uid)
-            with self.lock:
-                self.inc_counter('export', 'errors')
-                self.inc_counter('errors', 'total')
-
-    async def _export_via_http_zip(self, study_uid: str, study_number: int,
-                                   study_dir: Path, image_count: int) -> None:
-        """Create a ZIP and upload it via HTTP, or keep locally if not configured."""
-        zip_filename = f"{study_number:04d}"
-        zip_path = await self.zip_manager.create_zip(zip_filename, self.base_path)
-        if not zip_path:
-            logger.error("Failed to create ZIP for study %s", study_uid)
-            with self.lock:
-                self.inc_counter('archive', 'errors')
-                self.inc_counter('errors', 'total')
-            return
-
-        logger.info("Created ZIP archive: %s", zip_path)
-
-        success = await self.remote_storage.upload_file(zip_path, zip_path.name)
-
-        if success is None:
-            logger.info("Remote storage not configured — keeping local files for study %s", zip_filename)
-            with self.lock:
-                self.inc_counter('cleanup', 'studies')
-                self.inc_counter('cleanup', 'images', image_count)
-            self.study_manager.mark_study_archived(study_uid, via=None)
-        elif success:
-            logger.info("Successfully uploaded study %04d", study_number)
-            with self.lock:
-                self.inc_counter('export', 'http_studies')
-                self.inc_counter('export', 'http_images', image_count)
-                self.inc_counter('export', 'http_bytes', zip_path.stat().st_size)
-                self.inc_counter('cleanup', 'studies')
-                self.inc_counter('cleanup', 'images', image_count)
-            await asyncio.to_thread(self._retain_or_delete_sync, study_dir)
-            await asyncio.to_thread(zip_path.unlink)
-            self.study_manager.mark_study_archived(study_uid, via="http")
-        else:
-            logger.error("Failed to upload study %s", study_uid)
-            with self.lock:
-                self.inc_counter('export', 'errors')
-                self.inc_counter('errors', 'total')
 
     def _write_exam_sidecar(self, study_uid: str, study_number: int, study_dir: Path) -> None:
         """
@@ -1053,11 +983,13 @@ class StorageManager:
     # -----------------------------------------------------------------
     # Manual dashboard actions (/studies page)
     #
-    # These deliberately do NOT reuse _export_via_dicom / _export_via_http_zip:
-    # those also run retention/delete and mark_study_archived, which would be
-    # wrong for a manual re-send or re-upload of a study that is already
-    # archived — it must not move or delete files that are already in their
-    # resting place.
+    # Exports are user-triggered only — StorageManager never sends a study
+    # to a DICOM node or HTTP endpoint on its own. The first successful
+    # manual send/upload for a study also performs the same
+    # retain-or-delete + mark_study_archived bookkeeping _export_via_dicom /
+    # _export_via_http_zip used to do automatically. A later manual re-send
+    # of an already-archived study must NOT move or delete files that are
+    # already in their resting place, so that step is skipped then.
     # -----------------------------------------------------------------
 
     def resolve_study_dir(self, study_number: int) -> tuple[Optional[Path], str]:
@@ -1077,16 +1009,21 @@ class StorageManager:
         return None
 
     async def manual_send_dicom(self, study_number: int) -> dict:
-        """Re-send an already-organized study to the configured DICOM node."""
+        """Send a study to the configured DICOM node at the user's request."""
         if study_number in self._manual_actions_in_progress:
             return {"ok": False, "message": "action already in progress for this study"}
         self._manual_actions_in_progress.add(study_number)
+        with self.lock:
+            self._active_exporting += 1
         try:
             study_dir, location = self.resolve_study_dir(study_number)
             if study_dir is None:
                 return {"ok": False, "message": "study directory not found"}
             if not self.dicom_storage.enabled:
                 return {"ok": False, "message": "DICOM export is not configured"}
+
+            sc = self.find_sidecar_by_number(study_number)
+            first_export = sc is not None and sc.status != "archived"
 
             success = await self.dicom_storage.send_study(study_dir)
             if success:
@@ -1099,6 +1036,12 @@ class StorageManager:
                 with self.lock:
                     self.inc_counter('export', 'dicom_studies')
                     self.inc_counter('export', 'dicom_images', image_count)
+                if first_export:
+                    with self.lock:
+                        self.inc_counter('cleanup', 'studies')
+                        self.inc_counter('cleanup', 'images', image_count)
+                    await asyncio.to_thread(self._retain_or_delete_sync, study_dir)
+                    self.study_manager.mark_study_archived(sc.original_study_uid, via="dicom")
                 return {"ok": True, "message": f"sent to DICOM node ({location})"}
 
             with self.lock:
@@ -1107,18 +1050,25 @@ class StorageManager:
             return {"ok": False, "message": "DICOM send failed"}
         finally:
             self._manual_actions_in_progress.discard(study_number)
+            with self.lock:
+                self._active_exporting -= 1
 
     async def manual_upload_http(self, study_number: int) -> dict:
-        """Zip and upload an already-organized study to the configured HTTP endpoint."""
+        """Zip and upload a study to the configured HTTP endpoint at the user's request."""
         if study_number in self._manual_actions_in_progress:
             return {"ok": False, "message": "action already in progress for this study"}
         self._manual_actions_in_progress.add(study_number)
+        with self.lock:
+            self._active_exporting += 1
         try:
             study_dir, location = self.resolve_study_dir(study_number)
             if study_dir is None:
                 return {"ok": False, "message": "study directory not found"}
             if not self.remote_storage.enabled:
                 return {"ok": False, "message": "HTTP export is not configured"}
+
+            sc = self.find_sidecar_by_number(study_number)
+            first_export = sc is not None and sc.status != "archived"
 
             zip_path = await self.zip_manager.create_zip(
                 f"{study_number:04d}", self.base_path, source_dir=study_dir
@@ -1146,6 +1096,12 @@ class StorageManager:
                     self.inc_counter('export', 'http_studies')
                     self.inc_counter('export', 'http_images', image_count)
                     self.inc_counter('export', 'http_bytes', zip_size)
+                if first_export:
+                    with self.lock:
+                        self.inc_counter('cleanup', 'studies')
+                        self.inc_counter('cleanup', 'images', image_count)
+                    await asyncio.to_thread(self._retain_or_delete_sync, study_dir)
+                    self.study_manager.mark_study_archived(sc.original_study_uid, via="http")
                 return {"ok": True, "message": f"uploaded to HTTP storage ({location})"}
 
             with self.lock:
@@ -1154,6 +1110,8 @@ class StorageManager:
             return {"ok": False, "message": "HTTP upload failed"}
         finally:
             self._manual_actions_in_progress.discard(study_number)
+            with self.lock:
+                self._active_exporting -= 1
 
     def _manual_reextract_sync(self, study_number: int, study_dir: Path) -> dict:
         exam_path = ExamSidecar.path_for(self.base_path, study_number)

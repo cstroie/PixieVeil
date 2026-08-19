@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this project is
 
-PixieVeil is a DICOM anonymization server: it receives medical images via DICOM C-STORE, anonymizes them (profile-based), optionally defaces head scans with nnU-Net, organizes them into a numbered study/series hierarchy, and exports completed studies to a remote DICOM node or HTTP endpoint. A web dashboard exposes live metrics.
+PixieVeil is a DICOM anonymization server: it receives medical images via DICOM C-STORE, anonymizes them (profile-based), optionally defaces head scans with nnU-Net, organizes them into a numbered study/series hierarchy, and holds completed studies ready for export to a remote DICOM node or HTTP endpoint. A web dashboard exposes live metrics and is also where a user manually triggers each study's export — nothing is sent automatically.
 
 ## Commands
 
@@ -57,9 +57,13 @@ Modality ──C-STORE──► DicomServer (pynetdicom)
                   (asyncio.create_task per study)
                   StorageManager._process_study()
                         ├─ ExamExtractor.extract()        [asyncio.to_thread] → <NNNN>_exam.json
-                        ├─ Defacer.deface_series()        [asyncio.to_thread]
+                        └─ Defacer.deface_series()        [asyncio.to_thread]
+                           │  (study now "ready" — sits in base_path)
+                           ▼
+                  /studies dashboard → user clicks Send/Upload
+                  StorageManager.manual_send_dicom() / manual_upload_http()
                         ├─ DicomStorage.send_study()      [asyncio.to_thread]
-                        └─ ZipManager → RemoteStorage     [asyncio.to_thread]
+                        └─ ZipManager → RemoteStorage      [asyncio.to_thread]
 ```
 
 Single asyncio event loop. All blocking I/O (nnUNet inference, ZIP, file I/O) uses `asyncio.to_thread`. GPU jobs are serialized via a class-level `threading.Semaphore(1)` on `Defacer`.
@@ -88,9 +92,9 @@ Single asyncio event loop. All blocking I/O (nnUNet inference, ZIP, file I/O) us
 
 ## Key design decisions
 
-**Sidecar files** — Each study has `<study_number>.json` written atomically (write-to-tmp + rename). Tracks `status` (`receiving → complete → defacing → archived`), `archived_via` (`"dicom"` / `"http"` / `null`), and per-series defacing progress. On restart, `StudyManager.initialize_from_sidecars()` re-queues any study that did not finish.
+**Sidecar files** — Each study has `<study_number>.json` written atomically (write-to-tmp + rename). Tracks `status` (`receiving → complete → defacing → ready → archived`), `archived_via` (`"dicom"` / `"http"` / `null`), and per-series defacing progress. On restart, `StudyManager.initialize_from_sidecars()` re-queues any study that did not finish reaching `ready` (i.e. still `complete` or `defacing`); studies already `ready` or `archived` are left alone.
 
-**Export priority** — DICOM C-STORE takes priority over HTTP ZIP upload when both are configured. If neither is configured, archives are kept locally.
+**Manual-only export** — `StorageManager._process_study()` never sends a study anywhere: once exam extraction and defacing finish, the study is marked `ready` and sits in `base_path`. Export only happens when a user clicks Send/Upload on the `/studies` dashboard, which calls `StorageManager.manual_send_dicom()` or `manual_upload_http()`. The first successful export for a study also performs the retain-or-delete + `mark_study_archived()` bookkeeping (DICOM takes priority if the user sends via both); a later manual re-send of an already-`archived` study just resends without moving files again, since they're already in their resting place (`base_path` or `storage.retain_path`).
 
 **RHYTHM exam extraction** — On every completed study, `ExamExtractor.extract()` reads the anonymized DICOM headers under `study_dir` and writes `<study_number>_exam.json` (JSON, not YAML — machine-written/machine-read, mirrors `StudySidecar`'s format) with whatever RHYTHM Manual-Exam-Entry fields are derivable (contrast, patient age, CTDIvol, scanner make/model, indication/protocol-type/exam-group when `integrations/rhythm/indication_lookup.yaml` and `scanner_lookup.yaml` have a matching curated rule). **Terminology**: the sidecar's `series` list is keyed by DICOM `SeriesNumber` — it is *not* the same thing as an irradiation event. One RDSR acquisition (one real dose event) can be reconstructed into several DICOM series at different kernel/thickness, so several `series[]` entries legitimately share one event; `rdsr.acquisitions[]` is the authoritative per-irradiation-event record. Every CT-modality series — including topograms/localizers — gets a `series[]` entry flagged `is_topogram`; a topogram is a real irradiation event and stays in the dose record rather than being dropped. Only genuinely non-CT objects riding along in the study directory (e.g. a rendered Dose Report screen capture) are excluded. Each `series[]` entry also carries per-series technique parameters read straight off the image headers — `slice_thickness_mm`, `exposure_time_ms`, `convolution_kernel`, `patient_position`, `single_collimation_width_mm`, `total_collimation_width_mm`, `spiral_pitch_factor` — and a best-effort `dlp_mgy_cm` estimated as CTDIvol × the z-extent spanned by `ImagePositionPatient` across the series (skipped for topograms, where that relationship doesn't hold); `notes` flags it as an estimate and says to prefer `rdsr.acquisitions[*].dlp_mgy_cm` when an RDSR is present. Fields it still cannot determine (image quality, unmatched indications/scanners) are left `null` with an explanation in `notes`. Runs first in `_process_study()` — before defacing, not just before export — since it only needs anonymized headers (defacing rewrites `PixelData` only, never metadata); this way the sidecar survives a defacing crash and isn't blocked behind CPU-mode nnU-Net inference. Skipped if the sidecar already exists, so a re-queued retry never overwrites paper-note data merged in later.
 

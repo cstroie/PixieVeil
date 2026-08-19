@@ -110,13 +110,11 @@ class StudyManager:
                 # Keep the sidecar reference
                 self._sidecars[study_uid] = sc
 
-                # Re-queue studies that did not finish processing, and studies
-                # that were kept locally (archived_via=None) with their directory
-                # still on disk so they can be exported now that remote may be
-                # configured.
+                # Re-queue studies that did not finish processing (crash before
+                # reaching "ready"). Studies already "ready" or "archived" are
+                # left alone — export is manual-only, never retried automatically.
                 needs_requeue = (
                     sc.status in ("complete", "defacing")
-                    or (sc.status == "archived" and sc.archived_via is None)
                 ) and study_dir.exists()
                 if needs_requeue:
                     self._recovered_studies.append(study_uid)
@@ -297,6 +295,17 @@ class StudyManager:
     def mark_study_defacing(self, original_study_uid: str) -> None:
         """Called just before defacing begins for a study."""
         self._update_sidecar_status(original_study_uid, "defacing")
+
+    def mark_study_ready(self, original_study_uid: str) -> None:
+        """Called once exam extraction/defacing finish, with no export attempted.
+
+        The study now sits in ``base_path`` awaiting a manual export/archive
+        action from the ``/studies`` dashboard — see ``StorageManager.manual_send_dicom``
+        and ``manual_upload_http``.
+        """
+        self._update_sidecar_status(original_study_uid, "ready")
+        with self.lock:
+            self.study_states.pop(original_study_uid, None)
 
     def mark_study_archived(self, original_study_uid: str,
                              via: Optional[str] = None) -> None:
