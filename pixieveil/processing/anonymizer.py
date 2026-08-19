@@ -444,15 +444,17 @@ class Anonymizer:
                 del ds[tag]
     
     def handle_pixel_blackout(self, ds: pydicom.Dataset) -> None:
-        """Blackout pixel data if configured."""
+        """Blackout pixel data if configured.
+
+        Deliberately does not catch its own exceptions: PixelBlackout is a
+        privacy control, and a failure here must fail the whole anonymize()
+        call (StorageManager.process_image already drops an image whose
+        anonymization raised) rather than silently ship pixel data that was
+        never actually redacted.
+        """
         if self.profile.PixelBlackout and "PixelData" in ds:
-            try:
-                # Set all pixel data to zeros
-                ds.pixel_array[:] = 0
-                # Update the PixelData element
-                ds.PixelData = ds.pixel_array.tobytes()
-            except Exception as e:
-                logger.warning(f"Failed to blackout pixel data: {e}")
+            ds.pixel_array[:] = 0
+            ds.PixelData = ds.pixel_array.tobytes()
     
     def get_patient_id_mapping(self, original_patient_id: str) -> Optional[str]:
         """

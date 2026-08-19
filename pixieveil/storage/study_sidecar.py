@@ -139,6 +139,16 @@ class StudySidecar:
                 return uid
         return None
 
+    def has_undefaced_head_series(self) -> bool:
+        """True if any series classified as a head scan never got defaced.
+
+        Used after a defacing pass to tell "genuinely done" from "some
+        series failed to deface" — those must not look the same, since the
+        latter means a study could be exported with a patient's face still
+        in the pixel data.
+        """
+        return any(rec.is_head and not rec.defaced for rec in self.series.values())
+
     # ------------------------------------------------------------------
     # Serialisation
 

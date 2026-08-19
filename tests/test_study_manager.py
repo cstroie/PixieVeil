@@ -142,6 +142,13 @@ class TestLifecycleTransitions:
         assert sc.archived_via == "dicom"
         assert "study-uid-1" not in sm.study_states
 
+    def test_mark_study_defacing_failed_sets_status_and_clears_active_state(self, tmp_path):
+        sm = make_study_manager(tmp_path)
+        self._sidecar_study(sm, tmp_path)
+        sm.mark_study_defacing_failed("study-uid-1")
+        assert sm.get_sidecar_by_number(1).status == "defacing_failed"
+        assert "study-uid-1" not in sm.study_states
+
 
 class TestRecoveryRequeue:
     def _save(self, tmp_path, study_number, status, with_dir=True):
@@ -165,6 +172,16 @@ class TestRecoveryRequeue:
         sm = StudyManager(Settings())
         sm.initialize_from_sidecars(tmp_path)
         assert set(sm._recovered_studies) == {"uid-1", "uid-2"}
+
+    def test_defacing_failed_study_is_requeued_to_retry(self, tmp_path):
+        # A restart should retry the series that never got defaced —
+        # is_series_defaced already makes re-running defacing idempotent
+        # for series that succeeded the first time.
+        self._save(tmp_path, 5, "defacing_failed")
+
+        sm = StudyManager(Settings())
+        sm.initialize_from_sidecars(tmp_path)
+        assert sm._recovered_studies == ["uid-5"]
 
     def test_ready_and_archived_studies_are_not_requeued(self, tmp_path):
         self._save(tmp_path, 3, "ready")

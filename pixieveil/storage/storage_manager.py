@@ -21,7 +21,7 @@ import threading
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Tuple, List
 
 import pydicom
 
@@ -814,7 +814,20 @@ class StorageManager:
             # Exports are never triggered automatically — the study sits in
             # base_path until a user sends/uploads it from the /studies
             # dashboard (StorageManager.manual_send_dicom / manual_upload_http).
-            self.study_manager.mark_study_ready(study_uid)
+            # A defacing pass that left a head-scan series undefaced must not
+            # reach "ready" looking indistinguishable from one that fully
+            # succeeded — manual_send_dicom/manual_upload_http both refuse to
+            # export a study in that state.
+            sc = self.study_manager._sidecars.get(study_uid)
+            if sc is not None and sc.has_undefaced_head_series():
+                logger.warning(
+                    "Study %04d has an undefaced head-scan series — marking "
+                    "defacing_failed instead of ready; export is blocked until resolved",
+                    study_number,
+                )
+                self.study_manager.mark_study_defacing_failed(study_uid)
+            else:
+                self.study_manager.mark_study_ready(study_uid)
         except Exception:
             logger.exception("Unexpected error processing study %s", study_uid)
         finally:
@@ -924,11 +937,23 @@ class StorageManager:
             except (OSError, ValueError):
                 retained_at = study_dir.stat().st_mtime
             if retained_at < cutoff:
+                # ignore_errors=True so one bad file doesn't stop the rest
+                # of this loop's purges — but that also means rmtree can
+                # leave the directory partially intact without raising, so
+                # the log line must check reality instead of assuming
+                # success.
                 shutil.rmtree(study_dir, ignore_errors=True)
-                logger.info(
-                    "Retention: purged %s (older than retain_after_export_days=%s)",
-                    study_dir.name, retain_days,
-                )
+                if study_dir.exists():
+                    logger.warning(
+                        "Retention: failed to fully purge %s (older than "
+                        "retain_after_export_days=%s) — some files may remain",
+                        study_dir.name, retain_days,
+                    )
+                else:
+                    logger.info(
+                        "Retention: purged %s (older than retain_after_export_days=%s)",
+                        study_dir.name, retain_days,
+                    )
 
     async def enforce_retention_purge(self) -> None:
         """Offload retention purge to a thread so the event loop stays responsive."""
@@ -1061,6 +1086,10 @@ class StorageManager:
                 return {"ok": False, "message": "DICOM export is not configured"}
 
             sc = self.find_sidecar_by_number(study_number)
+            if sc is not None and sc.status == "defacing_failed":
+                return {"ok": False, "message":
+                        "defacing did not complete for this study (a head-scan series "
+                        "is still undefaced) — cannot export until that is resolved"}
             first_export = sc is not None and sc.status != "archived"
 
             success = await self.dicom_storage.send_study(study_dir)
@@ -1107,6 +1136,10 @@ class StorageManager:
                 return {"ok": False, "message": "HTTP export is not configured"}
 
             sc = self.find_sidecar_by_number(study_number)
+            if sc is not None and sc.status == "defacing_failed":
+                return {"ok": False, "message":
+                        "defacing did not complete for this study (a head-scan series "
+                        "is still undefaced) — cannot export until that is resolved"}
             first_export = sc is not None and sc.status != "archived"
 
             zip_path = await self.zip_manager.create_zip(
@@ -1157,13 +1190,14 @@ class StorageManager:
         exam_path = ExamSidecar.path_for(self.base_path, study_number)
         previous: dict = {}
         if exam_path.exists():
-            try:
-                previous = ExamSidecar.load(exam_path).data
-            except Exception:
-                logger.warning(
-                    "Could not read existing exam sidecar %s — proceeding without it",
-                    exam_path, exc_info=True,
-                )
+            # Deliberately not caught here: a previous sidecar that exists
+            # but fails to load means whatever manual overlay it held (hand-
+            # entered weight, an indication the lookup table couldn't
+            # match, paper-note corrections) can't be recovered — silently
+            # proceeding "without it" would discard that data while
+            # manual_reextract() still reported ok:True. Let it propagate;
+            # the caller's except turns it into a clear failure instead.
+            previous = ExamSidecar.load(exam_path).data
 
         sc = self.find_sidecar_by_number(study_number)
         anonymized_study_uid = sc.anonymized_study_uid if sc is not None else ""
@@ -1193,7 +1227,13 @@ class StorageManager:
         finally:
             self._manual_actions_in_progress.discard(study_number)
 
-    def _save_exam_sync(self, study_number: int, manual_fields: dict) -> Optional[dict]:
+    def _save_exam_sync(self, study_number: int,
+                        manual_fields: dict) -> Optional[Tuple[dict, List[Path]]]:
+        """Returns (exam_data, failed_dicom_paths) — the second element is
+        non-empty when the sidecar itself saved fine but the weight/age
+        DICOM write-back failed for one or more files, so save_exam() can
+        report that instead of a bare "Saved." that isn't true for those
+        files."""
         exam_path = ExamSidecar.path_for(self.base_path, study_number)
         if not exam_path.exists():
             return None
@@ -1223,18 +1263,21 @@ class StorageManager:
 
         weight_kg = _as_number(manual_fields.get("patient.weight_kg"))
         age_years = _as_number(manual_fields.get("patient.age_years"))
+        failed_paths: List[Path] = []
         if weight_kg is not None or age_years is not None:
             sc = self.find_sidecar_by_number(study_number)
             if sc is not None and sc.status != "archived":
                 study_dir, location = self.resolve_study_dir(study_number)
                 if study_dir is not None and location == "base":
-                    self._writeback_patient_fields_sync(study_dir, weight_kg, age_years)
+                    failed_paths = self._writeback_patient_fields_sync(
+                        study_dir, weight_kg, age_years
+                    )
 
-        return data
+        return data, failed_paths
 
     def _writeback_patient_fields_sync(self, study_dir: Path,
                                         weight_kg: Optional[float],
-                                        age_years: Optional[float]) -> None:
+                                        age_years: Optional[float]) -> List[Path]:
         """Patch a manually-corrected PatientWeight/PatientAge into every
         anonymized DICOM file under study_dir, so the correction reaches
         the objects that eventually get exported.
@@ -1260,10 +1303,11 @@ class StorageManager:
             )
             age_years = None
         if weight_kg is None and age_years is None:
-            return
+            return []
 
         age_str = f"{int(round(age_years)):03d}Y" if age_years is not None else None
 
+        failed: List[Path] = []
         for dcm_path in study_dir.rglob("*.dcm"):
             if any(part.endswith("_pre_deface") for part in dcm_path.parts):
                 continue
@@ -1276,6 +1320,8 @@ class StorageManager:
                 ds.save_as(dcm_path)
             except Exception:
                 logger.exception("Failed to write back patient fields into %s", dcm_path)
+                failed.append(dcm_path)
+        return failed
 
     async def save_exam(self, study_number: int, manual_fields: dict) -> dict:
         """Apply manually-entered fields to a study's exam sidecar and save it."""
@@ -1283,9 +1329,22 @@ class StorageManager:
             return {"ok": False, "message": "action already in progress for this study"}
         self._manual_actions_in_progress.add(study_number)
         try:
-            data = await asyncio.to_thread(self._save_exam_sync, study_number, manual_fields)
-            if data is None:
+            result = await asyncio.to_thread(self._save_exam_sync, study_number, manual_fields)
+            if result is None:
                 return {"ok": False, "message": "exam sidecar not found"}
+            data, failed_paths = result
+            if failed_paths:
+                # The sidecar itself saved fine — data isn't lost — but the
+                # correction didn't reach every DICOM file, so this must not
+                # look like a plain "Saved." to the operator.
+                return {
+                    "ok": True,
+                    "data": data,
+                    "message": (
+                        f"Saved, but failed to write weight/age into "
+                        f"{len(failed_paths)} DICOM file(s) — see server logs"
+                    ),
+                }
             return {"ok": True, "data": data}
         finally:
             self._manual_actions_in_progress.discard(study_number)

@@ -401,6 +401,19 @@ class TestHandlePixelBlackout:
         a.handle_pixel_blackout(ds)
         assert ds.pixel_array.sum() != 0
 
+    def test_pixel_blackout_failure_raises_instead_of_shipping_unredacted_data(self):
+        # Regression: this used to catch its own exception and just log a
+        # warning, so a study configured with PixelBlackout=True could ship
+        # with un-redacted pixel data while the pipeline believed
+        # anonymization succeeded. It must now propagate, so
+        # StorageManager.process_image's existing anonymization-error
+        # handling drops the image instead.
+        a = make_anonymizer(PixelBlackout=True)
+        ds = pydicom.Dataset()
+        ds.PixelData = b"\x00\x00"  # no Rows/Columns/etc -> pixel_array raises
+        with pytest.raises(Exception):
+            a.handle_pixel_blackout(ds)
+
 
 class TestAnonymizeIntegration:
     def test_burned_in_annotation_forced_to_no(self):

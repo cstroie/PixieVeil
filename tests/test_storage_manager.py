@@ -5,6 +5,7 @@ conftest.make_settings), so nothing here touches the network or a GPU.
 """
 
 import asyncio
+import time
 
 from pixieveil.processing.exam_extractor import _parse_dicom_age
 from pixieveil.processing.study_manager import StudyState
@@ -127,6 +128,70 @@ class TestEnforceStorageQuota:
         assert (storage_manager.base_path / "0001").exists()
 
 
+class TestEnforceRetentionPurge:
+    def _manager_with_retention(self, tmp_path, retain_days=14):
+        from .conftest import make_settings
+        return StorageManager(make_settings(tmp_path, storage={
+            "base_path": str(tmp_path / "data"),
+            "temp_path": str(tmp_path / "tmp"),
+            "retain_after_export_days": retain_days,
+        }))
+
+    def _retained_study(self, sm, retained_at):
+        retained_dir = sm.retained_path / "0001"
+        (retained_dir / "0001").mkdir(parents=True)
+        (retained_dir / "0001" / "img.dcm").write_bytes(b"x")
+        (retained_dir / ".retained_at").write_text(str(retained_at))
+        return retained_dir
+
+    def test_expired_study_is_purged(self, tmp_path):
+        sm = self._manager_with_retention(tmp_path, retain_days=1)
+        retained_dir = self._retained_study(sm, retained_at=time.time() - 999999)
+
+        sm.enforce_retention_purge_sync()
+
+        assert not retained_dir.exists()
+
+    def test_not_yet_expired_study_is_kept(self, tmp_path):
+        sm = self._manager_with_retention(tmp_path, retain_days=14)
+        retained_dir = self._retained_study(sm, retained_at=time.time())
+
+        sm.enforce_retention_purge_sync()
+
+        assert retained_dir.exists()
+
+    def test_no_op_when_retention_not_configured(self, tmp_path):
+        from .conftest import make_settings
+        sm = StorageManager(make_settings(tmp_path))
+        retained_dir = sm.retained_path / "0001"
+        (retained_dir / "0001").mkdir(parents=True)
+        (retained_dir / ".retained_at").write_text(str(time.time() - 999999))
+
+        sm.enforce_retention_purge_sync()
+
+        assert retained_dir.exists()
+
+    def test_failed_purge_is_logged_as_a_warning_not_a_success(self, tmp_path, monkeypatch, caplog):
+        # Regression: shutil.rmtree(ignore_errors=True) can silently leave a
+        # directory intact, but the "purged" log used to fire unconditionally
+        # right after it regardless of whether that actually happened.
+        import pixieveil.storage.storage_manager as storage_manager_module
+
+        sm = self._manager_with_retention(tmp_path, retain_days=1)
+        retained_dir = self._retained_study(sm, retained_at=time.time() - 999999)
+
+        monkeypatch.setattr(
+            storage_manager_module.shutil, "rmtree", lambda *a, **k: None
+        )  # simulates every error inside rmtree being swallowed, dir untouched
+
+        with caplog.at_level("WARNING"):
+            sm.enforce_retention_purge_sync()
+
+        assert retained_dir.exists()
+        assert any("failed to fully purge" in r.message for r in caplog.records)
+        assert not any("Retention: purged" in r.message for r in caplog.records)
+
+
 class TestWritebackPatientFields:
     def _study_with_two_images(self, storage_manager, study_number=1):
         study_dir = storage_manager.base_path / f"{study_number:04d}"
@@ -219,6 +284,60 @@ class TestSaveExamWriteback:
         assert result["data"]["patient"]["weight_kg"] == 25.0
         assert float(read_dicom(dcm_path).PatientWeight) == 10.0  # untouched
 
+    def test_dicom_writeback_failure_is_reported_not_silently_swallowed(self, storage_manager):
+        # Regression: the sidecar write succeeding used to be reported as a
+        # bare "ok" with no way to tell whether the correction actually
+        # reached the DICOM files it's meant to travel with.
+        dcm_path = self._setup_ready_study(storage_manager)
+        dcm_path.write_bytes(b"not a dicom file")  # dcmread will raise on it
+
+        result = asyncio.run(storage_manager.save_exam(1, {"patient.weight_kg": 25.0}))
+
+        assert result["ok"] is True  # the sidecar itself did save
+        assert result["data"]["patient"]["weight_kg"] == 25.0
+        assert "1 DICOM file" in result["message"]
+
+
+class TestManualReextract:
+    def _setup_study(self, storage_manager, study_number=1):
+        study_dir = storage_manager.base_path / f"{study_number:04d}"
+        write_minimal_dicom(study_dir / "0001" / "img1.dcm", SeriesNumber=1)
+        register_study(storage_manager, study_number, "ready")
+        return study_dir
+
+    def test_reextract_with_no_previous_sidecar_succeeds(self, storage_manager):
+        self._setup_study(storage_manager)
+        result = asyncio.run(storage_manager.manual_reextract(1))
+        assert result["ok"] is True
+
+    def test_reextract_preserves_manual_overlay_from_valid_previous_sidecar(self, storage_manager):
+        self._setup_study(storage_manager)
+        ExamSidecar(1, {
+            "study_number": 1,
+            "patient": {"weight_kg": None, "age_years": None},
+            "indication": {"region": None, "clinical_indication": None},
+            "manual": {"edited_at": "t", "fields": {"patient.weight_kg": 12.0}},
+            "notes": [],
+        }).save(storage_manager.base_path)
+
+        result = asyncio.run(storage_manager.manual_reextract(1))
+
+        assert result["ok"] is True
+        assert result["data"]["patient"]["weight_kg"] == 12.0
+
+    def test_reextract_with_corrupt_previous_sidecar_fails_loudly(self, storage_manager):
+        # Regression: this used to log a warning and silently proceed
+        # "without" the corrupt sidecar's manual overlay — discarding any
+        # hand-entered corrections it held while still reporting ok:True.
+        self._setup_study(storage_manager)
+        exam_path = ExamSidecar.path_for(storage_manager.base_path, 1)
+        exam_path.write_text("{not valid json")
+
+        result = asyncio.run(storage_manager.manual_reextract(1))
+
+        assert result["ok"] is False
+        assert result["message"] == "re-extraction failed"
+
 
 class TestManualExportGuards:
     def test_send_dicom_missing_study_dir(self, storage_manager):
@@ -243,3 +362,52 @@ class TestManualExportGuards:
         storage_manager._manual_actions_in_progress.add(1)
         result = asyncio.run(storage_manager.manual_send_dicom(1))
         assert result == {"ok": False, "message": "action already in progress for this study"}
+
+
+class TestManualExportBlockedOnDefacingFailure:
+    def _manager_with_dicom_configured(self, tmp_path):
+        from .conftest import make_settings
+        return StorageManager(make_settings(tmp_path, storage={
+            "base_path": str(tmp_path / "data"),
+            "temp_path": str(tmp_path / "tmp"),
+            "remote_storage": {
+                "dicom": {"host": "127.0.0.1", "port": 4070, "ae_title": "REMOTE"},
+                "http": {"base_url": "https://storage.example"},
+            },
+        }))
+
+    def test_send_dicom_refuses_a_defacing_failed_study(self, tmp_path):
+        sm = self._manager_with_dicom_configured(tmp_path)
+        register_study(sm, 1, "defacing_failed")
+        (sm.base_path / "0001").mkdir(parents=True)
+
+        result = asyncio.run(sm.manual_send_dicom(1))
+
+        assert result["ok"] is False
+        assert "defacing did not complete" in result["message"]
+
+    def test_upload_http_refuses_a_defacing_failed_study(self, tmp_path):
+        sm = self._manager_with_dicom_configured(tmp_path)
+        register_study(sm, 1, "defacing_failed")
+        (sm.base_path / "0001").mkdir(parents=True)
+
+        result = asyncio.run(sm.manual_upload_http(1))
+
+        assert result["ok"] is False
+        assert "defacing did not complete" in result["message"]
+
+    def test_ready_study_is_not_blocked_by_the_defacing_failed_guard(self, tmp_path, monkeypatch):
+        # Sanity check the guard is specific to defacing_failed, not a
+        # regression that blocks every export. Uses the same fake AE as
+        # test_dicom_storage.py so this never opens a real association.
+        from .test_dicom_storage import FakeAssociation, install_fake_ae
+
+        sm = self._manager_with_dicom_configured(tmp_path)
+        register_study(sm, 1, "ready")
+        write_minimal_dicom(sm.base_path / "0001" / "0001" / "img1.dcm")
+        install_fake_ae(monkeypatch, FakeAssociation())
+
+        result = asyncio.run(sm.manual_send_dicom(1))
+
+        assert "defacing did not complete" not in result.get("message", "")
+        assert result["ok"] is True

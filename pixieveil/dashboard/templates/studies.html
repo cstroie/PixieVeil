@@ -281,7 +281,11 @@
                     '</tr></thead><tbody>';
                 STUDIES.forEach(s => {
                     const ex = s.exam_summary;
-                    const ind = ex && ex.indication ? `${esc(ex.indication.region || '—')} / ${esc(ex.indication.clinical_indication || '—')}` : '—';
+                    // A corrupt exam sidecar must not look identical to "not
+                    // yet extracted" (both would otherwise just show "—").
+                    const ind = s.exam_corrupt
+                        ? '<span class="badge badge-warn" title="exam sidecar could not be read">⚠ corrupt exam data</span>'
+                        : (ex && ex.indication ? `${esc(ex.indication.region || '—')} / ${esc(ex.indication.clinical_indication || '—')}` : '—');
                     const scanner = ex && ex.scanner ? `${esc(ex.scanner.manufacturer || '')} ${esc(ex.scanner.model || '')}`.trim() || '—' : '—';
                     const dlp = ex && ex.total_dlp_mgy_cm != null ? ex.total_dlp_mgy_cm.toFixed(1) + ' mGy·cm' : '—';
                     const edited = ex && ex.has_manual_edits ? '<span class="edited-flag" title="has manual edits">&#9998;</span>' : '';
@@ -676,9 +680,14 @@
                         if (status) status.textContent = data.message || data.error || 'Save failed.';
                         return;
                     }
-                    if (status) status.textContent = 'Saved.';
+                    // Reload first, then set the message on the freshly-rendered
+                    // panel's status element — loadDetail() rebuilds the whole
+                    // panel (same reasoning as runAction()), so setting it
+                    // before would just get wiped out.
                     await loadStudies();
                     await loadDetail(n);
+                    const newStatus = document.getElementById(`save-status-${n}`);
+                    if (newStatus) newStatus.textContent = data.message || 'Saved.';
                 } catch (err) {
                     console.error(err);
                     if (status) status.textContent = 'Save failed.';

@@ -113,10 +113,15 @@ class StudyManager:
                 self._sidecars[study_uid] = sc
 
                 # Re-queue studies that did not finish processing (crash before
-                # reaching "ready"). Studies already "ready" or "archived" are
-                # left alone — export is manual-only, never retried automatically.
+                # reaching "ready"), and studies where a previous defacing pass
+                # left a head-scan series undefaced — reusing the same recovery
+                # path retries defacing for just the series that still need it
+                # (is_series_defaced already makes that idempotent) rather than
+                # requiring a separate "redo defacing" action. Studies already
+                # "ready" or "archived" are left alone — export is manual-only,
+                # never retried automatically.
                 needs_requeue = (
-                    sc.status in ("complete", "defacing")
+                    sc.status in ("complete", "defacing", "defacing_failed")
                 ) and study_dir.exists()
                 if needs_requeue:
                     self._recovered_studies.append(study_uid)
@@ -313,6 +318,18 @@ class StudyManager:
         and ``manual_upload_http``.
         """
         self._update_sidecar_status(original_study_uid, "ready")
+        with self.lock:
+            self.study_states.pop(original_study_uid, None)
+
+    def mark_study_defacing_failed(self, original_study_uid: str) -> None:
+        """Called when a defacing pass finishes but at least one head-scan
+        series never got defaced — never "ready", so manual export stays
+        blocked (see StorageManager.manual_send_dicom/manual_upload_http)
+        instead of silently letting an undefaced study out. Included in the
+        crash-recovery requeue set so a restart retries the series that
+        still need it.
+        """
+        self._update_sidecar_status(original_study_uid, "defacing_failed")
         with self.lock:
             self.study_states.pop(original_study_uid, None)
 

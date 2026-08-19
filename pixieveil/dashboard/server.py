@@ -398,12 +398,18 @@ class Dashboard:
 
             exam_path = ExamSidecar.path_for(storage_manager.base_path, sc.study_number)
             exam_data = None
+            exam_corrupt = False
             if exam_path.exists():
                 try:
                     exam_data = ExamSidecar.load(exam_path).data
                 except Exception:
                     logger.warning("Corrupt exam sidecar %s — skipping", exam_path, exc_info=True)
+                    exam_corrupt = True
+            # A corrupt sidecar must not render identically to "not yet
+            # extracted" — an operator needs to know exam data exists but
+            # couldn't be read, not just that the summary column is empty.
             entry["exam_summary"] = self._exam_summary(exam_data)
+            entry["exam_corrupt"] = exam_corrupt
             results.append(entry)
         return results
 

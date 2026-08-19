@@ -54,6 +54,45 @@ class TestSeriesLifecycle:
         assert rec.is_topogram is False
 
 
+class TestHasUndefacedHeadSeries:
+    def test_no_series_at_all(self):
+        sc = _make()
+        assert sc.has_undefaced_head_series() is False
+
+    def test_head_series_defaced_is_fine(self):
+        sc = _make()
+        sc.add_series("s1", series_number=1, anonymized_series_uid="a1")
+        sc.set_series_classification("s1", is_head=True, is_topogram=False)
+        sc.mark_series_defaced("s1")
+        assert sc.has_undefaced_head_series() is False
+
+    def test_head_series_not_defaced_is_flagged(self):
+        sc = _make()
+        sc.add_series("s1", series_number=1, anonymized_series_uid="a1")
+        sc.set_series_classification("s1", is_head=True, is_topogram=False)
+        assert sc.has_undefaced_head_series() is True
+
+    def test_non_head_series_not_defaced_is_fine(self):
+        # Only head-scan series ever get defaced in the first place — a
+        # body series with defaced=False is the normal, expected state.
+        sc = _make()
+        sc.add_series("s1", series_number=1, anonymized_series_uid="a1")
+        sc.set_series_classification("s1", is_head=False, is_topogram=False)
+        assert sc.has_undefaced_head_series() is False
+
+    def test_one_undefaced_head_series_among_several_others(self):
+        sc = _make()
+        sc.add_series("s1", series_number=1, anonymized_series_uid="a1")
+        sc.set_series_classification("s1", is_head=True, is_topogram=False)
+        sc.mark_series_defaced("s1")
+        sc.add_series("s2", series_number=2, anonymized_series_uid="a2")
+        sc.set_series_classification("s2", is_head=False, is_topogram=False)
+        sc.add_series("s3", series_number=3, anonymized_series_uid="a3")
+        sc.set_series_classification("s3", is_head=True, is_topogram=False)
+        # s3 never got mark_series_defaced()
+        assert sc.has_undefaced_head_series() is True
+
+
 class TestPersistence:
     def test_save_then_load_round_trips(self, tmp_path):
         sc = _make(study_number=42)
