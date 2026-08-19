@@ -31,11 +31,32 @@ pip install -e .
 # Install the deface extra (simpleitk/nibabel/numpy/gdown/nnunetv2) — still
 # needs install.py afterwards for a CUDA-matched torch build
 pip install -e ".[deface]"
+
+# Install test dependencies (pytest) and run the suite
+pip install -e ".[test]"
+pytest
 ```
 
 See [INSTALL.md](INSTALL.md) for the full bootstrap/systemd/OpenRC flow.
 
-No automated test suite exists. Manual linting:
+## Testing
+
+Unit tests live under `tests/`, run with `pytest` (config in `pyproject.toml`
+under `[tool.pytest.ini_options]`). They target pure/deterministic logic —
+`exam_extractor`'s standalone helpers (age parsing, DLP estimation, protocol
+bucketing), `exam_merge`'s manual-overlay semantics, `StudySidecar`'s JSON
+round-trip — not the DICOM network stack, nnU-Net inference, or anything
+requiring GPU/real scanner data. `tests/test_exam_extractor.py`,
+`test_exam_merge.py`, and `test_study_sidecar.py` are the current pattern to
+follow: instantiate pure functions/dataclasses directly, no mocking
+framework, `tmp_path` for anything that touches disk. Extend this suite when
+touching that kind of logic instead of leaving it untested; the DICOM
+server/anonymizer/defacer path still has no coverage and would need fixture
+`.dcm` files or a fake association to test meaningfully — treat adding that
+as a separate, deliberate task rather than folding it into an unrelated
+change.
+
+Manual linting:
 
 ```bash
 flake8 pixieveil/ --max-line-length=100

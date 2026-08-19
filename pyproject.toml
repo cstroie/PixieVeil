@@ -28,6 +28,9 @@ deface = [
     "gdown>=5.0.0",
     "nnunetv2"
 ]
+test = [
+    "pytest>=8.0.0"
+]
 
 [project.scripts]
 pixieveil = "pixieveil.cli:run"
@@ -39,3 +42,6 @@ Repository = "https://github.com/cstroie/PixieVeil.git"
 
 [tool.setuptools.packages.find]
 include = ["pixieveil*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

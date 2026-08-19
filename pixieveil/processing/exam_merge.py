@@ -63,6 +63,12 @@ MANUAL_EDITABLE_PATHS = {
 # MANUAL_EDITABLE_PATHS except the series.<N>.* family).
 _SIMPLE_PATHS = {p for p in MANUAL_EDITABLE_PATHS if "<N>" not in p}
 
+# Leaf names allowed after "series.<N>." — derived from the series.<N>.*
+# entries in MANUAL_EDITABLE_PATHS, so a path like "series.3.patient_name"
+# (right shape, arbitrary leaf) is rejected instead of silently writing an
+# unexpected key into the series dict.
+_SERIES_LEAVES = {p.rsplit(".", 1)[1] for p in MANUAL_EDITABLE_PATHS if "<N>" in p}
+
 # notes[] prefixes that _determine_bucket / extract() itself produces and
 # that recompute_buckets must strip before appending its own fresh notes —
 # otherwise a resolved field (e.g. weight now supplied manually) would leave
@@ -77,9 +83,10 @@ _STALE_NOTE_PREFIXES = (
 
 
 def _is_series_path(path: str) -> Optional[tuple[int, str]]:
-    """Return (series_number, leaf) if path is 'series.<N>.<leaf>'."""
+    """Return (series_number, leaf) if path is 'series.<N>.<leaf>' and leaf
+    is one of the whitelisted per-series fields — not just shape-matching."""
     parts = path.split(".")
-    if len(parts) != 3 or parts[0] != "series":
+    if len(parts) != 3 or parts[0] != "series" or parts[2] not in _SERIES_LEAVES:
         return None
     try:
         series_number = int(parts[1])
