@@ -107,7 +107,7 @@ def _first_str(rec: Dict[str, Any], key: str, raw: Any) -> None:
         rec[key] = value
 
 
-def _estimate_phase_dlp(rec: Dict[str, Any]) -> Optional[float]:
+def _estimate_series_dlp(rec: Dict[str, Any]) -> Optional[float]:
     """
     Estimate a series' DLP as CTDIvol × imaged length, when no RDSR value is
     available for it. Length is the z-extent spanned by ImagePositionPatient
@@ -303,10 +303,10 @@ def _determine_bucket(
 def _is_ct_image(ds: "pydicom.Dataset") -> bool:
     """
     True for anything acquired as CT — including a topogram/localizer, which
-    is a real irradiation event and belongs in the phases list with the rest
+    is a real irradiation event and belongs in the series list with the rest
     of the dose record. False only for a non-CT object riding along in the
     same study directory, e.g. a rendered Dose Report screen capture (SC
-    modality) — that one genuinely isn't a phase.
+    modality) — that one isn't a DICOM series of the exam at all.
     """
     modality = str(getattr(ds, "Modality", "") or "")
     return not modality or modality == "CT"
@@ -353,7 +353,12 @@ class ExamExtractor:
                 anonymized_study_uid: str) -> Dict[str, Any]:
         """Read every .dcm in study_dir and build the exam-data dict."""
         notes: List[str] = []
-        series: Dict[str, Dict[str, Any]] = {}
+        # Keyed by DICOM SeriesNumber. NOT the same thing as an "irradiation
+        # event"/RDSR acquisition — one acquisition can be reconstructed into
+        # several series (different kernel/thickness), so several entries
+        # here can share one real dose event. See rdsr.acquisitions[] for
+        # the true per-irradiation-event record.
+        series_records: Dict[str, Dict[str, Any]] = {}
         manufacturer = model = None
         protocol_name = study_description = body_part = ""
         contrast_seen = False
@@ -399,7 +404,7 @@ class ExamExtractor:
 
             series_number = getattr(ds, "SeriesNumber", None)
             key = str(series_number) if series_number is not None else "?"
-            rec = series.setdefault(key, {
+            rec = series_records.setdefault(key, {
                 "series_number": series_number,
                 "series_description": str(getattr(ds, "SeriesDescription", "") or ""),
                 "is_topogram": False,
@@ -427,8 +432,8 @@ class ExamExtractor:
                     pass
 
             # Track the series' imaged extent along the patient z-axis so a
-            # per-phase DLP can be estimated as CTDIvol × scan length when no
-            # RDSR is available to report the real value directly.
+            # per-series DLP can be estimated as CTDIvol × scan length when
+            # no RDSR is available to report the real value directly.
             position = getattr(ds, "ImagePositionPatient", None)
             if position is not None and len(position) == 3:
                 try:
@@ -474,7 +479,7 @@ class ExamExtractor:
         else:
             notes.append(
                 "rdsr populated: prefer rdsr.acquisitions[*].mean_ctdivol_mgy over "
-                "phases[*].ctdi_vol_mgy — the per-image CTDIvol tag on this scanner "
+                "series[*].ctdi_vol_mgy — the per-image CTDIvol tag on this scanner "
                 "reports the cumulative dose-to-date, not the per-acquisition value"
             )
 
@@ -508,16 +513,16 @@ class ExamExtractor:
         )
         notes.extend(bucket_notes)
 
-        sorted_series = sorted(
-            series.values(), key=lambda r: (r["series_number"] is None, r["series_number"])
+        sorted_records = sorted(
+            series_records.values(), key=lambda r: (r["series_number"] is None, r["series_number"])
         )
-        phases_list = []
+        series_list = []
         any_estimated_dlp = False
-        for rec in sorted_series:
-            estimated_dlp = _estimate_phase_dlp(rec)
+        for rec in sorted_records:
+            estimated_dlp = _estimate_series_dlp(rec)
             if estimated_dlp is not None:
                 any_estimated_dlp = True
-            phases_list.append({
+            series_list.append({
                 "series_number": rec["series_number"],
                 "series_description": rec["series_description"] or None,
                 "is_topogram": rec["is_topogram"],
@@ -533,7 +538,7 @@ class ExamExtractor:
             })
         if any_estimated_dlp:
             notes.append(
-                "phases[*].dlp_mgy_cm is an estimate (CTDIvol × imaged length "
+                "series[*].dlp_mgy_cm is an estimate (CTDIvol × imaged length "
                 "from ImagePositionPatient, not a measured value) — prefer "
                 "rdsr.acquisitions[*].dlp_mgy_cm when an RDSR is present"
             )
@@ -560,7 +565,8 @@ class ExamExtractor:
             "protocol_used_hint": {
                 "protocol_name": protocol_name or None,
                 "series_description_sample": next(
-                    (r["series_description"] for r in series.values() if r["series_description"]),
+                    (r["series_description"] for r in series_records.values()
+                     if r["series_description"]),
                     None,
                 ),
             },
@@ -568,7 +574,7 @@ class ExamExtractor:
                 "age_years": age_years,
                 "weight_kg": weight_kg,
             },
-            "phases": phases_list,
+            "series": series_list,
             "image_quality": None,
             "notes": notes,
         }

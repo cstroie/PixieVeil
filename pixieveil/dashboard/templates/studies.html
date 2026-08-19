@@ -59,7 +59,7 @@
             .manual-set {
                 border-color: var(--pico-primary);
             }
-            .phase-group {
+            .series-group {
                 margin-bottom: var(--pico-spacing);
             }
             .field-hint {
@@ -330,14 +330,20 @@
                     })
                 ).join('');
 
-                const phases = exam.phases || [];
+                // exam.series lists DICOM series (reconstructions) — NOT the
+                // same thing as an irradiation event. One RDSR acquisition
+                // (one real dose event) can be reconstructed into several
+                // series at different kernel/thickness, so several rows
+                // here can share one event; rdsr.acquisitions[] below is the
+                // authoritative per-irradiation-event record.
+                const seriesList = exam.series || [];
 
-                // One editable input for a phases.series_<N>.<leaf> path.
-                // type defaults to a number input; pass {type: 'text'} for
+                // One editable input for a series.<N>.<leaf> path. type
+                // defaults to a number input; pass {type: 'text'} for
                 // string fields (convolution_kernel, patient_position).
-                const phaseField = (seriesNumber, leaf, label, value, opts) => {
+                const seriesField = (seriesNumber, leaf, label, value, opts) => {
                     opts = opts || {};
-                    const path = `phases.series_${seriesNumber}.${leaf}`;
+                    const path = `series.${seriesNumber}.${leaf}`;
                     const cls = isManual(exam, path) ? 'manual-set' : '';
                     const type = opts.type || 'number';
                     const step = type === 'number' ? ' step="any"' : '';
@@ -347,47 +353,47 @@
                     </label>`;
                 };
 
-                // Phases with no SeriesNumber (key "?" in the extractor) have no
-                // stable dotted path to overlay a manual value onto — keep them
-                // in the read-only table only.
-                const phasesFields = phases.filter(p => p.series_number != null).map(p => {
-                    const n2 = p.series_number;
-                    const topoBadge = p.is_topogram ? ' <span class="badge badge-muted">topogram</span>' : '';
+                // Series with no SeriesNumber (key "?" in the extractor) have
+                // no stable dotted path to overlay a manual value onto — keep
+                // them in the read-only table only.
+                const seriesFields = seriesList.filter(s => s.series_number != null).map(s => {
+                    const n2 = s.series_number;
+                    const topoBadge = s.is_topogram ? ' <span class="badge badge-muted">topogram</span>' : '';
                     return `
-                        <h6>Series ${esc(n2)} — ${esc(p.series_description || '')}${topoBadge}</h6>
-                        <div class="grid phase-group">
-                            ${phaseField(n2, 'dlp_mgy_cm', 'DLP (mGy·cm)', p.dlp_mgy_cm)}
-                            ${phaseField(n2, 'ctdi_vol_mgy', 'CTDIvol (mGy)', p.ctdi_vol_mgy)}
-                            ${phaseField(n2, 'slice_thickness_mm', 'Slice thickness (mm)', p.slice_thickness_mm)}
-                            ${phaseField(n2, 'exposure_time_ms', 'Exposure time (ms)', p.exposure_time_ms)}
-                            ${phaseField(n2, 'spiral_pitch_factor', 'Pitch factor', p.spiral_pitch_factor)}
+                        <h6>Series ${esc(n2)} — ${esc(s.series_description || '')}${topoBadge}</h6>
+                        <div class="grid series-group">
+                            ${seriesField(n2, 'dlp_mgy_cm', 'DLP (mGy·cm)', s.dlp_mgy_cm)}
+                            ${seriesField(n2, 'ctdi_vol_mgy', 'CTDIvol (mGy)', s.ctdi_vol_mgy)}
+                            ${seriesField(n2, 'slice_thickness_mm', 'Slice thickness (mm)', s.slice_thickness_mm)}
+                            ${seriesField(n2, 'exposure_time_ms', 'Exposure time (ms)', s.exposure_time_ms)}
+                            ${seriesField(n2, 'spiral_pitch_factor', 'Pitch factor', s.spiral_pitch_factor)}
                         </div>
-                        <div class="grid phase-group">
-                            ${phaseField(n2, 'convolution_kernel', 'Convolution kernel', p.convolution_kernel, {type: 'text'})}
-                            ${phaseField(n2, 'patient_position', 'Patient position', p.patient_position, {type: 'text'})}
-                            ${phaseField(n2, 'single_collimation_width_mm', 'Single collimation (mm)', p.single_collimation_width_mm)}
-                            ${phaseField(n2, 'total_collimation_width_mm', 'Total collimation (mm)', p.total_collimation_width_mm)}
+                        <div class="grid series-group">
+                            ${seriesField(n2, 'convolution_kernel', 'Convolution kernel', s.convolution_kernel, {type: 'text'})}
+                            ${seriesField(n2, 'patient_position', 'Patient position', s.patient_position, {type: 'text'})}
+                            ${seriesField(n2, 'single_collimation_width_mm', 'Single collimation (mm)', s.single_collimation_width_mm)}
+                            ${seriesField(n2, 'total_collimation_width_mm', 'Total collimation (mm)', s.total_collimation_width_mm)}
                         </div>`;
                 }).join('');
 
                 const num = v => v != null ? v.toFixed(2) : '—';
-                const phasesTable = phases.length ? `
+                const seriesTable = seriesList.length ? `
                     <table role="grid" class="overflow-auto"><thead><tr>
                         <th>Series</th><th>Description</th><th>Type</th><th>CTDIvol (mGy)</th><th>DLP (mGy·cm)</th>
                         <th>Slice (mm)</th><th>Exposure (ms)</th><th>Kernel</th><th>Position</th>
                         <th>Coll. single/total (mm)</th><th>Pitch</th>
                     </tr></thead>
-                    <tbody>${phases.map(p => `<tr><td>${esc(p.series_number)}</td><td>${esc(p.series_description)}</td>` +
-                        `<td>${p.is_topogram ? 'Topogram' : 'Acquisition'}</td>` +
-                        `<td>${num(p.ctdi_vol_mgy)}</td>` +
-                        `<td>${num(p.dlp_mgy_cm)}</td>` +
-                        `<td>${num(p.slice_thickness_mm)}</td>` +
-                        `<td>${p.exposure_time_ms != null ? p.exposure_time_ms : '—'}</td>` +
-                        `<td>${esc(p.convolution_kernel) || '—'}</td>` +
-                        `<td>${esc(p.patient_position) || '—'}</td>` +
-                        `<td>${num(p.single_collimation_width_mm)} / ${num(p.total_collimation_width_mm)}</td>` +
-                        `<td>${num(p.spiral_pitch_factor)}</td></tr>`).join('')}</tbody></table>`
-                    : '<p><small>No phases.</small></p>';
+                    <tbody>${seriesList.map(s => `<tr><td>${esc(s.series_number)}</td><td>${esc(s.series_description)}</td>` +
+                        `<td>${s.is_topogram ? 'Topogram' : 'Series'}</td>` +
+                        `<td>${num(s.ctdi_vol_mgy)}</td>` +
+                        `<td>${num(s.dlp_mgy_cm)}</td>` +
+                        `<td>${num(s.slice_thickness_mm)}</td>` +
+                        `<td>${s.exposure_time_ms != null ? s.exposure_time_ms : '—'}</td>` +
+                        `<td>${esc(s.convolution_kernel) || '—'}</td>` +
+                        `<td>${esc(s.patient_position) || '—'}</td>` +
+                        `<td>${num(s.single_collimation_width_mm)} / ${num(s.total_collimation_width_mm)}</td>` +
+                        `<td>${num(s.spiral_pitch_factor)}</td></tr>`).join('')}</tbody></table>`
+                    : '<p><small>No series recorded.</small></p>';
 
                 const rdsr = exam.rdsr;
                 const rdsrTable = rdsr && rdsr.acquisitions && rdsr.acquisitions.length ? `
@@ -450,7 +456,7 @@
                                 <span class="field-hint">RHYTHM UUID</span>
                             </label>
                         </div>
-                        ${phasesFields}
+                        ${seriesFields}
                         <label>Operator notes
                             <textarea data-path="operator_notes"
                                 class="${isManual(exam, 'operator_notes') ? 'manual-set' : ''}"
@@ -465,12 +471,15 @@
                     <article>
                         <h5>Derived: ${esc(exam.protocol_type) || '—'} / ${esc(exam.examination_group) || '—'}</h5>
                         <p class="hint-box">Prefer <code>rdsr.acquisitions[*].mean_ctdivol_mgy</code> over
-                            <code>phases[*].ctdi_vol_mgy</code> — the flat per-image CTDIvol tag is cumulative
+                            <code>series[*].ctdi_vol_mgy</code> — the flat per-image CTDIvol tag is cumulative
                             dose-to-date on this scanner, not per-acquisition.</p>
-                        <h6>RDSR acquisitions (read-only)</h6>
+                        <h6>Irradiation events (RDSR acquisitions, read-only)</h6>
+                        <p class="field-hint">The authoritative per-dose-event record. One event can be
+                            reconstructed into several DICOM series below (e.g. two kernels from one spiral
+                            pass) — series counts and event counts don't need to match.</p>
                         ${rdsrTable}
-                        <h6>Phases (read-only)</h6>
-                        ${phasesTable}
+                        <h6>DICOM series (reconstructions, read-only)</h6>
+                        ${seriesTable}
                         <h6>Notes</h6>
                         <ul class="notes-list">${notes || '<li>None.</li>'}</ul>
                     </article>
