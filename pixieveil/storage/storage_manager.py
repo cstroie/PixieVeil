@@ -112,8 +112,17 @@ class StorageManager:
         # Existing studies (loaded from disk on startup) are not tracked here.
         self.study_size_bytes: Dict[str, int] = {}
         
-        # Statistics counters
-        self.counters = {
+        # Statistics counters. Dict[str, Any], not something more precise
+        # like Dict[str, Dict[str, Any]] or a TypedDict per category —
+        # get_counter/set_counter/inc_counter (and a few call sites that
+        # index self.counters directly) are all called with arbitrary
+        # runtime strings for category/subcategory, not a fixed literal set
+        # a TypedDict could check. Most categories hold a Dict[str, int|
+        # float] of subcategories, but inc_counter/set_counter also support
+        # a bare category with no subcategory (a plain int/float value) —
+        # that duality is why the category slot itself has to be Any rather
+        # than a nested dict type.
+        self.counters: Dict[str, Any] = {
             'reception': {
                 'studies': 0,
                 'images': 0,
