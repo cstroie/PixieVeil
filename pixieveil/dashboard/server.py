@@ -13,25 +13,15 @@ import asyncio
 import logging
 import time
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Optional
 
 from aiohttp import web
 
 from pixieveil.config import Settings
 from pixieveil.processing import exam_merge
-from pixieveil.storage.exam_sidecar import ExamSidecar
 from pixieveil.storage.storage_manager import StorageManager
-from pixieveil.storage.study_sidecar import StudySidecar
 
 logger = logging.getLogger(__name__)
-
-# Fields exposed to the browser for each study in list/detail responses.
-# StudySidecar also carries original_study_uid / original_patient_id (PHI) —
-# never serialize to_dict() directly, always go through this whitelist.
-_STUDY_SIDECAR_FIELDS = (
-    "study_number", "status", "archived_via",
-    "received_at", "last_received_at", "anonymized_study_uid",
-)
 
 _VALID_ACTIONS = {"send_dicom", "reextract", "upload_http"}
 
@@ -355,32 +345,6 @@ class Dashboard:
             return web.Response(text="Studies template not found", status=500)
 
     @staticmethod
-    def _whitelist_sidecar(sc: StudySidecar, location: str) -> Dict[str, Any]:
-        out = {field: getattr(sc, field) for field in _STUDY_SIDECAR_FIELDS}
-        out["series_count"] = len(sc.series)
-        out["location"] = location
-        return out
-
-    @staticmethod
-    def _exam_summary(exam_data: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-        if exam_data is None:
-            return None
-        scanner = exam_data.get("scanner") or {}
-        rdsr = exam_data.get("rdsr") or {}
-        manual = exam_data.get("manual") or {}
-        return {
-            "protocol_type": exam_data.get("protocol_type"),
-            "examination_group": exam_data.get("examination_group"),
-            "indication": exam_data.get("indication"),
-            "scanner": {
-                "manufacturer": scanner.get("manufacturer"),
-                "model": scanner.get("model"),
-            },
-            "total_dlp_mgy_cm": rdsr.get("total_dlp_mgy_cm"),
-            "has_manual_edits": bool(manual.get("fields")),
-        }
-
-    @staticmethod
     def _coerce_study_number(request: web.Request) -> int:
         raw = request.match_info.get("n", "")
         try:
@@ -388,34 +352,9 @@ class Dashboard:
         except ValueError:
             raise web.HTTPBadRequest(text=f"invalid study number: {raw!r}")
 
-    def _load_studies_sync(self, storage_manager: StorageManager) -> list:
-        """Blocking: enumerate every study sidecar plus its exam sidecar, if any."""
-        sidecars = StudySidecar.load_all(storage_manager.base_path)
-        results = []
-        for sc in sorted(sidecars.values(), key=lambda s: s.study_number):
-            _dir, location = storage_manager.resolve_study_dir(sc.study_number)
-            entry = self._whitelist_sidecar(sc, location)
-
-            exam_path = ExamSidecar.path_for(storage_manager.base_path, sc.study_number)
-            exam_data = None
-            exam_corrupt = False
-            if exam_path.exists():
-                try:
-                    exam_data = ExamSidecar.load(exam_path).data
-                except Exception:
-                    logger.warning("Corrupt exam sidecar %s — skipping", exam_path, exc_info=True)
-                    exam_corrupt = True
-            # A corrupt sidecar must not render identically to "not yet
-            # extracted" — an operator needs to know exam data exists but
-            # couldn't be read, not just that the summary column is empty.
-            entry["exam_summary"] = self._exam_summary(exam_data)
-            entry["exam_corrupt"] = exam_corrupt
-            results.append(entry)
-        return results
-
     async def handle_list_studies(self, request: web.Request) -> web.Response:
         storage_manager: StorageManager = request.app['storage_manager']
-        studies = await asyncio.to_thread(self._load_studies_sync, storage_manager)
+        studies = await asyncio.to_thread(storage_manager.list_studies_summary_sync)
         return web.json_response({
             "studies": studies,
             "capabilities": {
@@ -425,25 +364,10 @@ class Dashboard:
             "auth_required": bool(self.settings.http_server.get("auth_token")),
         })
 
-    def _load_one_study_sync(
-        self, storage_manager: StorageManager, n: int
-    ) -> Optional[Dict[str, Any]]:
-        sc = storage_manager.find_sidecar_by_number(n)
-        if sc is None:
-            return None
-        _dir, location = storage_manager.resolve_study_dir(n)
-        study_info = self._whitelist_sidecar(sc, location)
-
-        exam_path = ExamSidecar.path_for(storage_manager.base_path, n)
-        if not exam_path.exists():
-            return {"study": study_info, "exam": None}
-        exam_data = ExamSidecar.load(exam_path).data
-        return {"study": study_info, "exam": exam_data}
-
     async def handle_get_study(self, request: web.Request) -> web.Response:
         n = self._coerce_study_number(request)
         storage_manager: StorageManager = request.app['storage_manager']
-        result = await asyncio.to_thread(self._load_one_study_sync, storage_manager, n)
+        result = await asyncio.to_thread(storage_manager.get_study_detail_sync, n)
         if result is None:
             return web.json_response({"error": "study not found"}, status=404)
         return web.json_response(result)

@@ -1071,6 +1071,79 @@ class StorageManager:
     def find_sidecar_by_number(self, study_number: int) -> Optional[StudySidecar]:
         return self.study_manager.get_sidecar_by_number(study_number)
 
+    # Fields exposed to callers (e.g. the dashboard) for each study in
+    # list/detail responses. StudySidecar also carries original_study_uid /
+    # original_patient_id (PHI) — never expose to_dict() directly, always go
+    # through this whitelist.
+    _STUDY_SIDECAR_FIELDS = (
+        "study_number", "status", "archived_via",
+        "received_at", "last_received_at", "anonymized_study_uid",
+    )
+
+    @classmethod
+    def _whitelist_sidecar(cls, sc: StudySidecar, location: str) -> dict:
+        out = {field: getattr(sc, field) for field in cls._STUDY_SIDECAR_FIELDS}
+        out["series_count"] = len(sc.series)
+        out["location"] = location
+        return out
+
+    @staticmethod
+    def _exam_summary(exam_data: Optional[dict]) -> Optional[dict]:
+        if exam_data is None:
+            return None
+        scanner = exam_data.get("scanner") or {}
+        rdsr = exam_data.get("rdsr") or {}
+        manual = exam_data.get("manual") or {}
+        return {
+            "protocol_type": exam_data.get("protocol_type"),
+            "examination_group": exam_data.get("examination_group"),
+            "indication": exam_data.get("indication"),
+            "scanner": {
+                "manufacturer": scanner.get("manufacturer"),
+                "model": scanner.get("model"),
+            },
+            "total_dlp_mgy_cm": rdsr.get("total_dlp_mgy_cm"),
+            "has_manual_edits": bool(manual.get("fields")),
+        }
+
+    def list_studies_summary_sync(self) -> List[dict]:
+        """Blocking: enumerate every study sidecar plus its exam sidecar, if any."""
+        sidecars = StudySidecar.load_all(self.base_path)
+        results = []
+        for sc in sorted(sidecars.values(), key=lambda s: s.study_number):
+            _dir, location = self.resolve_study_dir(sc.study_number)
+            entry = self._whitelist_sidecar(sc, location)
+
+            exam_path = ExamSidecar.path_for(self.base_path, sc.study_number)
+            exam_data = None
+            exam_corrupt = False
+            if exam_path.exists():
+                try:
+                    exam_data = ExamSidecar.load(exam_path).data
+                except Exception:
+                    logger.warning("Corrupt exam sidecar %s — skipping", exam_path, exc_info=True)
+                    exam_corrupt = True
+            # A corrupt sidecar must not render identically to "not yet
+            # extracted" — a caller needs to know exam data exists but
+            # couldn't be read, not just that the summary is empty.
+            entry["exam_summary"] = self._exam_summary(exam_data)
+            entry["exam_corrupt"] = exam_corrupt
+            results.append(entry)
+        return results
+
+    def get_study_detail_sync(self, study_number: int) -> Optional[dict]:
+        sc = self.find_sidecar_by_number(study_number)
+        if sc is None:
+            return None
+        _dir, location = self.resolve_study_dir(study_number)
+        study_info = self._whitelist_sidecar(sc, location)
+
+        exam_path = ExamSidecar.path_for(self.base_path, study_number)
+        if not exam_path.exists():
+            return {"study": study_info, "exam": None}
+        exam_data = ExamSidecar.load(exam_path).data
+        return {"study": study_info, "exam": exam_data}
+
     async def manual_send_dicom(self, study_number: int) -> dict:
         """Send a study to the configured DICOM node at the user's request."""
         if study_number in self._manual_actions_in_progress:

@@ -78,6 +78,47 @@ class TestFindSidecarByNumber:
         assert storage_manager.find_sidecar_by_number(999) is None
 
 
+class TestListStudiesSummarySync:
+    """Covers the exam_corrupt flag: a corrupt exam sidecar must render
+    distinguishably from "not yet extracted" instead of both looking like
+    an empty summary in the /studies table."""
+
+    def test_study_with_no_exam_sidecar_has_no_summary_and_not_corrupt(self, storage_manager):
+        register_study(storage_manager, 1, "ready")
+
+        results = storage_manager.list_studies_summary_sync()
+
+        assert results[0]["exam_summary"] is None
+        assert results[0]["exam_corrupt"] is False
+
+    def test_study_with_valid_exam_sidecar_is_not_corrupt(self, storage_manager):
+        register_study(storage_manager, 1, "ready")
+        ExamSidecar(1, {
+            "study_number": 1,
+            "protocol_type": "PEDIATRIC_BODY",
+            "examination_group": None,
+            "indication": {"region": None, "clinical_indication": None},
+            "scanner": {}, "rdsr": {}, "manual": {},
+        }).save(storage_manager.base_path)
+
+        results = storage_manager.list_studies_summary_sync()
+
+        assert results[0]["exam_corrupt"] is False
+        assert results[0]["exam_summary"]["protocol_type"] == "PEDIATRIC_BODY"
+
+    def test_study_with_corrupt_exam_sidecar_is_flagged_not_silently_empty(self, storage_manager):
+        # Regression: a corrupt sidecar used to be indistinguishable from
+        # "nothing extracted yet" — both rendered exam_summary: None.
+        register_study(storage_manager, 1, "ready")
+        exam_path = ExamSidecar.path_for(storage_manager.base_path, 1)
+        exam_path.write_text("{not valid json")
+
+        results = storage_manager.list_studies_summary_sync()
+
+        assert results[0]["exam_summary"] is None
+        assert results[0]["exam_corrupt"] is True
+
+
 class TestEnforceStorageQuota:
     def _tiny_quota_manager(self, tmp_path):
         from .conftest import make_settings
