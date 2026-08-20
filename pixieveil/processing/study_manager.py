@@ -267,6 +267,16 @@ class StudyManager:
             uid = self.number_map.get(study_number)
             return self._sidecars.get(uid) if uid is not None else None
 
+    def get_sidecar_by_uid(self, original_study_uid: str) -> Optional[StudySidecar]:
+        with self.lock:
+            return self._sidecars.get(original_study_uid)
+
+    def has_undefaced_head_series(self, original_study_uid: str) -> bool:
+        """True if any series flagged is_head=True still has defaced=False."""
+        with self.lock:
+            sc = self._sidecars.get(original_study_uid)
+            return sc.has_undefaced_head_series() if sc else False
+
     # ------------------------------------------------------------------
     # Study lifecycle
 

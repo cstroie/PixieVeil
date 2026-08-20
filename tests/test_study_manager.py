@@ -72,6 +72,40 @@ class TestNumberMapIndex:
         sm = make_study_manager(tmp_path)
         assert sm.get_sidecar_by_number(999) is None
 
+    def test_get_sidecar_by_uid_after_record_new_series(self, tmp_path):
+        sm = make_study_manager(tmp_path)
+        study_num, series_num, _, _ = sm.add_image_to_study("study-uid-1", "series-uid-1")
+        sm.record_new_series(
+            "study-uid-1", "series-uid-1", "orig-pid",
+            "anon-study-uid-1", "anon-series-uid-1", "anon-pid",
+            study_num, series_num,
+        )
+        sc = sm.get_sidecar_by_uid("study-uid-1")
+        assert sc is not None
+        assert sc.study_number == study_num
+
+    def test_get_sidecar_by_uid_unknown_uid_returns_none(self, tmp_path):
+        sm = make_study_manager(tmp_path)
+        assert sm.get_sidecar_by_uid("no-such-uid") is None
+
+    def test_has_undefaced_head_series_unknown_uid_returns_false(self, tmp_path):
+        sm = make_study_manager(tmp_path)
+        assert sm.has_undefaced_head_series("no-such-uid") is False
+
+    def test_has_undefaced_head_series_delegates_to_sidecar(self, tmp_path):
+        sm = make_study_manager(tmp_path)
+        study_num, series_num, _, _ = sm.add_image_to_study("study-uid-1", "series-uid-1")
+        sm.record_new_series(
+            "study-uid-1", "series-uid-1", "orig-pid",
+            "anon-study-uid-1", "anon-series-uid-1", "anon-pid",
+            study_num, series_num,
+        )
+        assert sm.has_undefaced_head_series("study-uid-1") is False
+        sm.set_series_classification("study-uid-1", "series-uid-1", is_head=True, is_topogram=False)
+        assert sm.has_undefaced_head_series("study-uid-1") is True
+        sm.mark_series_defaced("study-uid-1", "series-uid-1")
+        assert sm.has_undefaced_head_series("study-uid-1") is False
+
     def test_number_map_restored_on_initialize_from_sidecars(self, tmp_path):
         sc = StudySidecar.create(
             study_number=5,

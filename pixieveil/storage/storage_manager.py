@@ -787,7 +787,7 @@ class StorageManager:
 
             # Defacing — skip if this study already finished processing
             # (e.g. re-queued spuriously after reaching "ready"/"archived").
-            sc = self.study_manager._sidecars.get(study_uid)
+            sc = self.study_manager.get_sidecar_by_uid(study_uid)
             already_processed = sc is not None and sc.status in ("ready", "archived")
             if self.defacer.enabled and not already_processed:
                 with self.lock:
@@ -818,8 +818,7 @@ class StorageManager:
             # reach "ready" looking indistinguishable from one that fully
             # succeeded — manual_send_dicom/manual_upload_http both refuse to
             # export a study in that state.
-            sc = self.study_manager._sidecars.get(study_uid)
-            if sc is not None and sc.has_undefaced_head_series():
+            if self.study_manager.has_undefaced_head_series(study_uid):
                 logger.warning(
                     "Study %04d has an undefaced head-scan series — marking "
                     "defacing_failed instead of ready; export is blocked until resolved",
@@ -839,7 +838,7 @@ class StorageManager:
         headers and write them to <study_number>_exam.json. Must run before
         export/retention can move or delete study_dir.
         """
-        sc = self.study_manager._sidecars.get(study_uid)
+        sc = self.study_manager.get_sidecar_by_uid(study_uid)
         anonymized_study_uid = sc.anonymized_study_uid if sc is not None else ""
         data = self.exam_extractor.extract(study_dir, study_number, anonymized_study_uid)
         ExamSidecar(study_number, data).save(self.base_path)
