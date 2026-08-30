@@ -23,7 +23,7 @@ from pixieveil.storage.storage_manager import StorageManager
 
 logger = logging.getLogger(__name__)
 
-_VALID_ACTIONS = {"send_dicom", "reextract", "upload_http"}
+_VALID_ACTIONS = {"send_dicom", "reextract", "upload_http", "upload_rhythm"}
 
 
 class Dashboard:
@@ -115,6 +115,7 @@ class Dashboard:
             web.get("/api/studies", self.handle_list_studies),
             web.get("/api/studies/{n}", self.handle_get_study),
             web.put("/api/studies/{n}/exam", self.handle_save_exam),
+            web.post("/api/studies/rhythm-batch", self.handle_rhythm_batch),
             web.post("/api/studies/{n}/actions/{action}", self.handle_study_action),
         ])
 
@@ -360,6 +361,12 @@ class Dashboard:
             "capabilities": {
                 "dicom": storage_manager.dicom_storage.enabled,
                 "http": storage_manager.remote_storage.enabled,
+                "rhythm": storage_manager.rhythm_storage.enabled,
+                # so the page can explain a disabled RHYTHM button ("requires
+                # the 'gdpr' profile") rather than just greying it out.
+                "anonymization_profile": storage_manager.settings.anonymization.get(
+                    "profile", "research"
+                ),
             },
             "auth_required": bool(self.settings.http_server.get("auth_token")),
         })
@@ -408,6 +415,7 @@ class Dashboard:
             "send_dicom": storage_manager.manual_send_dicom,
             "reextract": storage_manager.manual_reextract,
             "upload_http": storage_manager.manual_upload_http,
+            "upload_rhythm": storage_manager.manual_upload_rhythm,
         }[action]
 
         result = await method(n)
@@ -416,3 +424,23 @@ class Dashboard:
         message = result.get("message", "")
         status = 409 if "in progress" in message else 400
         return web.json_response(result, status=status)
+
+    async def handle_rhythm_batch(self, request: web.Request) -> web.Response:
+        """Upload several studies to RHYTHM as one batch (one dashboard
+        action → one server-assigned batch id)."""
+        storage_manager: StorageManager = request.app['storage_manager']
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response({"error": "invalid JSON body"}, status=400)
+
+        numbers = body.get("study_numbers")
+        if not isinstance(numbers, list) or not all(
+            isinstance(x, int) for x in numbers
+        ):
+            return web.json_response(
+                {"error": 'body must be {"study_numbers": [int, ...]}'}, status=400
+            )
+
+        result = await storage_manager.manual_upload_rhythm_batch(numbers)
+        return web.json_response(result)

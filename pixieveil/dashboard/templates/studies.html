@@ -130,7 +130,7 @@
 
         <script>
             const AUTH_KEY = 'pixieveil_auth_token';
-            let CAPABILITIES = { dicom: false, http: false };
+            let CAPABILITIES = { dicom: false, http: false, rhythm: false };
             let AUTH_REQUIRED = false;
             let STUDIES = [];
             let EXPANDED = null;
@@ -177,7 +177,7 @@
                     if (!resp.ok) throw new Error('failed to load studies');
                     const data = await resp.json();
                     STUDIES = data.studies || [];
-                    CAPABILITIES = data.capabilities || { dicom: false, http: false };
+                    CAPABILITIES = data.capabilities || { dicom: false, http: false, rhythm: false };
                     AUTH_REQUIRED = !!data.auth_required;
                     document.getElementById('token-bar').style.display = AUTH_REQUIRED ? 'flex' : 'none';
                     if (AUTH_REQUIRED) {
@@ -202,6 +202,14 @@
                 return `<span class="badge ${cls}">${status}</span>`;
             }
 
+            function rhythmBadge(st) {
+                if (!st) return '—';
+                const cls = st === 'COMPLETE' ? 'badge-ok'
+                    : (st === 'PARTIAL' || st === 'FAILED' || st === 'failed') ? 'badge-warn'
+                    : 'badge-muted';  // "uploaded" — queued, awaiting ingest
+                return `<span class="badge ${cls}" title="RHYTHM ingest job state">${esc(st)}</span>`;
+            }
+
             function renderSummaryBar() {
                 const bar = document.getElementById('summary-bar');
                 const pending = STUDIES.filter(s => s.status === 'ready');
@@ -216,17 +224,54 @@
                     ? `<button type="button" id="bulk-dicom-btn">Send all to DICOM</button>` : '';
                 const httpBtn = CAPABILITIES.http
                     ? `<button type="button" id="bulk-http-btn" class="secondary">Upload all to HTTP</button>` : '';
+                const rhythmOk = CAPABILITIES.rhythm && CAPABILITIES.anonymization_profile === 'gdpr';
+                const rhythmBtn = CAPABILITIES.rhythm
+                    ? `<button type="button" id="bulk-rhythm-btn" class="secondary" ${rhythmOk ? '' : 'disabled'} title="${rhythmOk ? '' : "requires the 'gdpr' anonymization profile"}">Upload all to RHYTHM</button>` : '';
                 bar.innerHTML = `
                     <article class="action-row">
                         <span class="badge badge-warn">${pending.length} awaiting export</span>
-                        ${dicomBtn}${httpBtn}
+                        ${dicomBtn}${httpBtn}${rhythmBtn}
                         <small id="bulk-status" class="status-line"></small>
                     </article>
                 `;
                 const db = document.getElementById('bulk-dicom-btn');
                 const hb = document.getElementById('bulk-http-btn');
+                const rb = document.getElementById('bulk-rhythm-btn');
                 if (db) db.addEventListener('click', () => runBulkAction('send_dicom'));
                 if (hb) hb.addEventListener('click', () => runBulkAction('upload_http'));
+                if (rb && !rb.disabled) rb.addEventListener('click', runRhythmBulk);
+            }
+
+            async function runRhythmBulk() {
+                const pending = STUDIES.filter(s => s.status === 'ready');
+                if (!pending.length) return;
+                if (!confirm(`Upload ${pending.length} study(ies) awaiting export to RHYTHM as one batch?`)) return;
+                const statusEl = document.getElementById('bulk-status');
+                if (statusEl) statusEl.textContent = `Uploading ${pending.length} study(ies)…`;
+
+                let batch = '', queued = 0, blocked = 0;
+                try {
+                    const resp = await fetch('/api/studies/rhythm-batch', {
+                        method: 'POST',
+                        headers: authHeaders({ 'Content-Type': 'application/json' }),
+                        body: JSON.stringify({ study_numbers: pending.map(s => s.study_number) }),
+                    });
+                    const data = await resp.json();
+                    batch = data.batch || '';
+                    for (const r of Object.values(data.results || {})) {
+                        if (r.ok) queued++; else blocked++;
+                    }
+                } catch (err) {
+                    console.error(err);
+                    LAST_BULK_MESSAGE = 'RHYTHM batch request failed.';
+                    await loadStudies();
+                    return;
+                }
+                LAST_BULK_MESSAGE = blocked
+                    ? `RHYTHM batch ${batch}: queued ${queued}, ${blocked} blocked — open each for the reason.`
+                    : `RHYTHM batch ${batch}: queued ${queued} study(ies) for ingest.`;
+                await loadStudies();
+                if (EXPANDED != null) await loadDetail(EXPANDED);
             }
 
             async function runBulkAction(action) {
@@ -277,7 +322,7 @@
                 let html = '<table role="grid" class="overflow-auto"><thead><tr>' +
                     '<th>#</th><th>Status</th><th>Location</th><th>Indication</th>' +
                     '<th>Protocol type</th><th>Exam group</th><th>Scanner</th>' +
-                    '<th>Total DLP</th><th>Edited</th>' +
+                    '<th>Total DLP</th><th>RHYTHM</th><th>Edited</th>' +
                     '</tr></thead><tbody>';
                 STUDIES.forEach(s => {
                     const ex = s.exam_summary;
@@ -299,6 +344,7 @@
                         `<td>${esc(ex ? ex.examination_group : null) || '—'}</td>` +
                         `<td>${scanner}</td>` +
                         `<td>${dlp}</td>` +
+                        `<td>${rhythmBadge(s.rhythm_status)}</td>` +
                         `<td>${edited}</td>` +
                         `</tr>`;
                 });
@@ -549,7 +595,7 @@
                         <ul class="notes-list">${notes || '<li>None.</li>'}</ul>
                     </article>
 
-                    ${actionsHtml(n, study)}
+                    ${actionsHtml(n, study, exam)}
                 `;
 
                 const riSelect = document.getElementById(`region-indication-${n}`);
@@ -577,7 +623,7 @@
                 wireActions(n, study);
             }
 
-            function actionsHtml(n, study) {
+            function actionsHtml(n, study, exam) {
                 const location = study.location || 'absent';
                 const absent = location === 'absent';
                 const dicomDisabled = absent || !CAPABILITIES.dicom;
@@ -587,6 +633,27 @@
                 const httpTitle = absent ? 'study directory not found' :
                     (!CAPABILITIES.http ? 'HTTP export is not configured' : '');
                 const reextractTitle = absent ? 'study directory not found' : '';
+
+                // RHYTHM is gated on config + the gdpr profile + defacing
+                // having completed + image quality being filled in (the
+                // manifest requires it). The reason goes in the button title.
+                let rhythmTitle = '';
+                if (!CAPABILITIES.rhythm) rhythmTitle = 'RHYTHM export is not configured';
+                else if (CAPABILITIES.anonymization_profile !== 'gdpr')
+                    rhythmTitle = "RHYTHM export requires the 'gdpr' anonymization profile";
+                else if (absent) rhythmTitle = 'study directory not found';
+                else if (study.status === 'defacing_failed')
+                    rhythmTitle = 'defacing did not complete for this study';
+                else if (!exam || !exam.image_quality)
+                    rhythmTitle = 'set Image quality before uploading to RHYTHM';
+                const rhythmDisabled = !!rhythmTitle;
+                const rhythmLabel = study.rhythm_status && study.rhythm_status !== 'failed'
+                    ? 'Re-upload to RHYTHM' : 'Upload to RHYTHM';
+                const rhythmLine = study.rhythm_status
+                    ? `<small class="status-line">RHYTHM job: ${esc(study.rhythm_status)}` +
+                      `${study.rhythm_batch ? ' (batch ' + esc(study.rhythm_batch) + ')' : ''}</small>`
+                    : '';
+
                 return `
                     <article>
                         <h5>Actions</h5>
@@ -594,7 +661,9 @@
                             <button type="button" id="btn-dicom-${n}" ${dicomDisabled ? 'disabled' : ''} title="${dicomTitle}">Send to DICOM</button>
                             <button type="button" id="btn-reextract-${n}" ${absent ? 'disabled' : ''} title="${reextractTitle}" class="secondary">Re-extract</button>
                             <button type="button" id="btn-http-${n}" ${httpDisabled ? 'disabled' : ''} title="${httpTitle}" class="secondary">Upload to HTTP storage</button>
+                            <button type="button" id="btn-rhythm-${n}" ${rhythmDisabled ? 'disabled' : ''} title="${rhythmTitle}" class="secondary">${rhythmLabel}</button>
                         </div>
+                        ${rhythmLine}
                         <small id="action-status-${n}" class="status-line"></small>
                     </article>
                 `;
@@ -604,9 +673,11 @@
                 const dicomBtn = document.getElementById(`btn-dicom-${n}`);
                 const reBtn = document.getElementById(`btn-reextract-${n}`);
                 const httpBtn = document.getElementById(`btn-http-${n}`);
+                const rhythmBtn = document.getElementById(`btn-rhythm-${n}`);
                 if (dicomBtn) dicomBtn.addEventListener('click', () => runAction(n, 'send_dicom'));
                 if (reBtn) reBtn.addEventListener('click', () => runAction(n, 'reextract'));
                 if (httpBtn) httpBtn.addEventListener('click', () => runAction(n, 'upload_http'));
+                if (rhythmBtn) rhythmBtn.addEventListener('click', () => runAction(n, 'upload_rhythm'));
             }
 
             async function runAction(n, action) {

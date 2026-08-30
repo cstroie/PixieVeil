@@ -1113,6 +1113,7 @@ class StorageManager:
             "protocol_type": exam_data.get("protocol_type"),
             "examination_group": exam_data.get("examination_group"),
             "indication": exam_data.get("indication"),
+            "image_quality": exam_data.get("image_quality"),
             "scanner": {
                 "manufacturer": scanner.get("manufacturer"),
                 "model": scanner.get("model"),
