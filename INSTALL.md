@@ -25,6 +25,8 @@ cd PixieVeil
 
 Re-run `./install` any time — it's idempotent, reusing the existing venv and re-checking each step. `pixieveil.sh` and the systemd/OpenRC service files all use `.python/bin/python3` automatically once it exists.
 
+The repo carries one git submodule, `reference/uploader` (a checkout of the RHYTHM uploader project, kept for reference only — not imported, packaged, linted, or tested). It isn't needed to run PixieVeil; clone with `--recurse-submodules`, or run `git submodule update --init` afterwards, if you want it. Refresh it with `git submodule update --remote reference/uploader`.
+
 Extra arguments pass straight through to `install.py`:
 
 ```bash
