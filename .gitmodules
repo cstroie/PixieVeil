@@ -1,3 +1,9 @@
 [submodule "reference/uploader"]
 	path = reference/uploader
 	url = https://github.com/jsfakian/rhythm
+[submodule "reference/deface"]
+	path = reference/deface
+	url = https://github.com/jsfakian/CT-DEFACE
+[submodule "reference/anonymization"]
+	path = reference/anonymization
+	url = https://github.com/jsfakian/dicom_anonymization
