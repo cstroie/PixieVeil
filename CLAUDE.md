@@ -72,9 +72,17 @@ port-already-bound guard in `start()` via a real socket bind, and `stop()`'s
 shutdown bookkeeping via a fake `AE`), `ZipManager` (pure filesystem/zip
 logic — arcname layout, `_pre_deface` exclusion, the default-vs-explicit
 `source_dir` split used for retained studies, empty/missing-source-dir
-edge cases), and `RemoteStorage` (config resolution and the HTTP upload
+edge cases), `RemoteStorage` (config resolution and the HTTP upload
 path against a small fake `aiohttp.ClientSession`/response substituted with
-`monkeypatch` — never a real HTTP request).
+`monkeypatch` — never a real HTTP request), the RHYTHM export path
+(`rhythm_manifest`'s pure item builder + code tables and
+`manifest_item_blockers`; `RhythmStorage`'s init→chunk→complete state
+machine and `check_job` polling against a scripted fake
+`aiohttp.ClientSession` keyed by endpoint; `StorageManager.manual_upload_rhythm`
+/ `_batch` / `reconcile_rhythm_jobs` / `_rhythm_excluded_series_sync` against
+a fake `RhythmStorage`; and the dashboard's `upload_rhythm` action route +
+`/api/studies/rhythm-batch` body validation + capability flags, via handler
+coroutines called directly with a fake request/StorageManager).
 
 Deliberately still out of scope: `dicom_to_nifti`, the pixel-array half of
 `nifti_to_dicom`, `run_nnunet_inference`, `_run_nnunet_and_apply_mask`, and
@@ -115,10 +123,14 @@ Modality ──C-STORE──► DicomServer (pynetdicom)
                         └─ Defacer.deface_series()        [asyncio.to_thread]
                            │  (study now "ready" — sits in base_path)
                            ▼
-                  /studies dashboard → user clicks Send/Upload
+                  /studies dashboard → user clicks Send/Upload/RHYTHM
                   StorageManager.manual_send_dicom() / manual_upload_http()
                         ├─ DicomStorage.send_study()      [asyncio.to_thread]
-                        └─ ZipManager → RemoteStorage      [asyncio.to_thread]
+                        └─ ZipManager → RemoteStorage     [asyncio.to_thread]
+                  StorageManager.manual_upload_rhythm()   (returns once queued)
+                        └─ ZipManager → RhythmStorage.upload_study()
+                  StorageManager.reconcile_rhythm_jobs()  (completion loop)
+                        └─ RhythmStorage.check_job() → on COMPLETE: retain/delete + archive
 ```
 
 Single asyncio event loop. All blocking I/O (nnUNet inference, ZIP, file I/O) uses `asyncio.to_thread`. GPU jobs are serialized via a class-level `threading.Semaphore(1)` on `Defacer`.
@@ -141,13 +153,15 @@ Single asyncio event loop. All blocking I/O (nnUNet inference, ZIP, file I/O) us
 | `pixieveil/storage/exam_sidecar.py` | Atomic `<study_number>_exam.json` sidecar holding ExamExtractor's output |
 | `pixieveil/storage/dicom_storage.py` | DICOM C-STORE export to remote node |
 | `pixieveil/storage/remote_storage.py` | HTTP multipart ZIP upload |
-| `pixieveil/storage/zip_manager.py` | ZIP archive creation |
-| `pixieveil/dashboard/server.py` | aiohttp web server: `/`, `/stats`, `/health`, plus the `/studies` review page and its `/api/studies*` JSON API (list/detail/save/actions) |
+| `pixieveil/storage/rhythm_storage.py` | RHYTHM upload transport — v2 resumable chunked-upload (init→chunks→complete) + `check_job()` job-status poll |
+| `pixieveil/processing/rhythm_manifest.py` | Builds one RHYTHM v2 server-assigned-batch manifest item per study from the effective exam sidecar (indication/contrast/patient-group code tables ported from the RHYTHM server) |
+| `pixieveil/storage/zip_manager.py` | ZIP archive creation (optional `exclude` predicate — the RHYTHM path uses it to drop non-CT objects) |
+| `pixieveil/dashboard/server.py` | aiohttp web server: `/`, `/stats`, `/health`, plus the `/studies` review page and its `/api/studies*` JSON API (list/detail/save/actions, `/api/studies/rhythm-batch`) |
 | `pixieveil/processing/exam_merge.py` | Manual-edit/provenance-overlay semantics for the exam sidecar — shared by the `/api/studies/{n}/exam` save handler and the manual re-extract action |
 
 ## Key design decisions
 
-**Sidecar files** — Each study has `<study_number>.json` written atomically (write-to-tmp + rename). Tracks `status` (`receiving → complete → defacing → ready → archived`, with `defacing_failed` as a side branch off `defacing` — see below), `archived_via` (`"dicom"` / `"http"` / `null`), and per-series defacing progress. On restart, `StudyManager.initialize_from_sidecars()` re-queues any study that did not finish reaching `ready` (i.e. still `complete`, `defacing`, or `defacing_failed`); studies already `ready` or `archived` are left alone.
+**Sidecar files** — Each study has `<study_number>.json` written atomically (write-to-tmp + rename). Tracks `status` (`receiving → complete → defacing → ready → archived`, with `defacing_failed` as a side branch off `defacing` — see below), `archived_via` (`"dicom"` / `"http"` / `"rhythm"` / `null`), the `rhythm_*` upload-job fields (see RHYTHM export below), and per-series defacing progress. On restart, `StudyManager.initialize_from_sidecars()` re-queues any study that did not finish reaching `ready` (i.e. still `complete`, `defacing`, or `defacing_failed`); studies already `ready` or `archived` are left alone.
 
 **Manual-only export** — `StorageManager._process_study()` never sends a study anywhere: once exam extraction and defacing finish, the study is marked `ready` and sits in `base_path`. Export only happens when a user clicks Send/Upload on the `/studies` dashboard, which calls `StorageManager.manual_send_dicom()` or `manual_upload_http()`. The first successful export for a study also performs the retain-or-delete + `mark_study_archived()` bookkeeping (DICOM takes priority if the user sends via both); a later manual re-send of an already-`archived` study just resends without moving files again, since they're already in their resting place (`base_path` or `storage.retain_path`).
 
@@ -159,6 +173,8 @@ Single asyncio event loop. All blocking I/O (nnUNet inference, ZIP, file I/O) us
 
 **Post-export retention** — `storage.retain_after_export_days` (optional) keeps a copy of each already-anonymized study under `storage.retain_path` for N days after a successful export instead of deleting it immediately; `StorageManager.enforce_retention_purge()` runs alongside quota enforcement in the completion loop and removes retained studies once the window elapses. Off by default (immediate delete, prior behavior). Retained studies live outside `base_path` and are not counted toward `max_storage_gb`.
 
+**RHYTHM export (third manual path)** — Alongside DICOM C-STORE and HTTP ZIP, a study can be pushed to the RHYTHM CT upload platform via its v2 "server-assigned batch" API. There is no manifest-ingest endpoint on RHYTHM's side: its partner tooling fans out one resumable chunked upload per studyset, tagging each with a shared `batch` string and a `manifest_item` dict. `pixieveil/processing/rhythm_manifest.py` builds that item from the *effective* exam sidecar (canonical values already carry the manual overlay); `RhythmStorage.upload_study()` (`rhythm_storage.py`) drives `chunked/init → per-chunk POST (sha256, retried) → complete/` and **returns once the ingest job is queued — not once it passed**. `StorageManager.manual_upload_rhythm()` / `manual_upload_rhythm_batch()` (one `batch` id per dashboard action) refuse a study when: RHYTHM isn't configured, the anonymization profile isn't `gdpr` (the `research` profile keeps `StudyDate` / non-regenerated UIDs that RHYTHM's `GDPR-strict` validation rejects), the study is `defacing_failed`, a RHYTHM-required manifest field is still unset (notably `image_quality` — left null by extraction, filled on `/studies`), or the study holds no CT image series. The export ZIP is built with a `ZipManager` `exclude` predicate that keeps only CT / Enhanced CT / Legacy Converted Enhanced CT SOP classes — the rendered Dose Report Secondary Capture and any native RDSR are dropped (RHYTHM wants DICOM CT only), and an unreadable series fails safe (excluded). The ZIP's `sha256`/`size_bytes` are computed *after* it exists and set on the manifest item (RHYTHM verifies the checksum before extracting). Because ingest is async, `manual_upload_rhythm` only persists `rhythm_batch`/`rhythm_session_id`/`rhythm_job_id`/`rhythm_job_status_url`/`rhythm_status` on the study sidecar (via `StudyManager.set_rhythm_job()`) and returns; `StorageManager.reconcile_rhythm_jobs()` runs each completion-loop tick, polls every in-flight job with `RhythmStorage.check_job()`, and on a terminal `COMPLETE` runs the retain-or-delete + `mark_study_archived(via="rhythm")` + counter bookkeeping (`_finalize_rhythm_export`). `PARTIAL`/`FAILED` just record the state — the study stays `ready` so the operator can retry. `archived_via` gains `"rhythm"` as a fourth value.
+
 **Manual provenance overlay** — `ExamSidecar`'s data carries a top-level `manual` key (`{"edited_at": ..., "fields": {"patient.weight_kg": 34.0, ...}}`) recording which dotted paths a human set via the `/studies` dashboard page, distinct from the canonical (effective) values those paths already hold. This exists because `_process_study()` skips extraction entirely when `<study_number>_exam.json` already exists — a naive re-extraction would otherwise silently discard hand-entered fields (weight, image quality, an indication the lookup table couldn't match, per-series DLP/CTDIvol read off a console screen). `pixieveil/processing/exam_merge.py` is the single place this overlay logic lives: `apply_manual()` writes `manual.fields` into the canonical dict (per-series fields keyed `series.<series_number>.<leaf>`, never list index, since `extract()` rebuilds `series[]` from disk and the set can change between runs), `merge_extracted()` re-applies a previous sidecar's `manual` block onto a freshly extracted one, and `recompute_buckets()` reruns `exam_extractor._determine_bucket()` (a module-level function, not a method — it needs no lookup-table state) so a manually-entered weight or age immediately updates `protocol_type`/`examination_group` instead of leaving them stale. Both the PUT-exam handler (`StorageManager.save_exam`) and the manual re-extract action (`StorageManager.manual_reextract`) go through this module so the semantics never drift between the two call sites.
 
 **Patient weight/age write-back** — `StorageManager._save_exam_sync()` also patches a manually-corrected `patient.weight_kg`/`patient.age_years` straight into `PatientWeight`/`PatientAge` on every anonymized `.dcm` file under the study's directory (`_writeback_patient_fields_sync`), not just the exam sidecar — otherwise the correction would never reach whatever gets exported. Only the field(s) present in *this* save's `manual_fields` are patched (not the full merged overlay), and only while the study is still sitting in `base_path` (`sidecar.status != "archived"`); once a study is archived its DICOM copies are already gone, so nothing to patch. Other manual fields (indication, protocol name, per-series DLP, etc.) stay sidecar-only — they don't have a clean 1:1 DICOM tag to write back to.
@@ -169,7 +185,7 @@ Single asyncio event loop. All blocking I/O (nnUNet inference, ZIP, file I/O) us
 
 ## Configuration
 
-Copy `config/settings.example.yaml` → `config/settings.yaml`. Key sections: `dicom_server`, `storage` (with optional `remote_storage.dicom` or `remote_storage.http`), `http_server`, `study`, `series_filter`, `defacing`, `anonymization` (profile: `research` or `gdpr`), `logging`.
+Copy `config/settings.example.yaml` → `config/settings.yaml`. Key sections: `dicom_server`, `storage` (with optional `remote_storage.dicom`, `remote_storage.http`, and/or `remote_storage.rhythm` — the last needs `base_url` + `auth_token` + `site_code` and only works with the `gdpr` anonymization profile), `http_server`, `study`, `series_filter`, `defacing`, `anonymization` (profile: `research` or `gdpr`), `logging`.
 
 ## Code style
 

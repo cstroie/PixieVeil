@@ -98,7 +98,7 @@ data/
 
 ## Optional: remote export
 
-Two export transports are supported. Only one is active at a time; DICOM takes priority if both are configured.
+Three export transports are supported. Export is always manual — a Send/Upload click on the `/studies` dashboard; nothing leaves automatically. A study can be sent via more than one transport; the first successful export does the retain-or-delete bookkeeping (DICOM wins if sent via both DICOM and HTTP).
 
 ### DICOM C-STORE (recommended)
 
@@ -126,7 +126,28 @@ storage:
       auth_token: "your-bearer-token"
 ```
 
-If neither transport is configured, archives stay local.
+### RHYTHM CT upload platform
+
+Uploads a per-study ZIP to the [RHYTHM](https://github.com/jsfakian/rhythm) platform over its v2 resumable chunked-upload API. RHYTHM re-validates GDPR anonymization, assigns the Repository Study ID asynchronously, and pushes to its own Orthanc. On the dashboard the study shows an `uploaded` RHYTHM badge until PixieVeil polls the job to `COMPLETE`, at which point the local copy is removed (or retained per `retain_after_export_days`).
+
+```yaml
+storage:
+  remote_storage:
+    rhythm:
+      base_url: "https://rhythm.your-domain"
+      auth_token: "rhythm-upload-token"   # from `manage.py create_upload_token`, not a login
+      site_code: "S001"                   # your registered submitting-site code
+      # chunk_size: 10485760              # optional, default 10 MiB
+```
+
+Requirements before a study can be sent to RHYTHM:
+- `anonymization.profile: gdpr` (the `research` profile keeps study dates / non-regenerated UIDs that RHYTHM rejects) — the dashboard button is disabled otherwise
+- a per-study **Image quality** value, set on the `/studies` page (extraction leaves it blank)
+- defacing completed (a `defacing_failed` study is blocked)
+
+The Dose Report screenshot and any RDSR object are excluded from the RHYTHM ZIP automatically — it carries CT images only.
+
+If no transport is configured, archives stay local.
 
 ### Recovery on restart
 
