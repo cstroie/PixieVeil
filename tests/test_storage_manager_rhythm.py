@@ -41,11 +41,18 @@ EXAM_OK = {
 
 
 class FakeRhythm:
-    def __init__(self, result: RhythmUploadResult, *, enabled=True, site_code="S001"):
+    def __init__(self, result: RhythmUploadResult = None, *,
+                 job_result: RhythmUploadResult = None,
+                 enabled=True, site_code="S001"):
         self.enabled = enabled
         self.site_code = site_code
-        self._result = result
+        self._result = result or RhythmUploadResult(
+            ok=True, session_id="sess-1", job_id="job-1",
+            job_status_url="/api/v1/uploads/job-1/",
+        )
+        self._job_result = job_result
         self.calls: list[dict] = []
+        self.job_checks: list[str] = []
 
     async def upload_study(self, zip_path, manifest_item, batch, *, file_hash=None):
         self.calls.append(
@@ -57,6 +64,10 @@ class FakeRhythm:
             }
         )
         return self._result
+
+    async def check_job(self, job_status_url):
+        self.job_checks.append(job_status_url)
+        return self._job_result
 
 
 def _manager(tmp_path, *, profile="gdpr", rhythm_configured=True):
@@ -103,8 +114,9 @@ def _ready_study(sm, *, with_exam=EXAM_OK, ct=True, sc_report=False):
         ExamSidecar(1, dict(with_exam)).save(sm.base_path)
 
 
+# upload_study now returns once complete/ succeeds (job queued, not ingested).
 OK_RESULT = RhythmUploadResult(
-    ok=True, status="COMPLETE", session_id="sess-1",
+    ok=True, session_id="sess-1",
     job_id="job-1", job_status_url="/api/v1/uploads/job-1/",
 )
 
@@ -169,7 +181,7 @@ class TestGuards:
 
 
 class TestHappyPath:
-    def test_first_export_archives_and_cleans_up(self, tmp_path):
+    def test_upload_queues_job_without_archiving(self, tmp_path):
         sm = _manager(tmp_path)
         sm.rhythm_storage = FakeRhythm(OK_RESULT)
         _ready_study(sm)
@@ -178,30 +190,19 @@ class TestHappyPath:
         r = asyncio.run(sm.manual_upload_rhythm(1))
 
         assert r["ok"] is True
+        assert r["status"] == "uploaded"
         assert r["job_id"] == "job-1"
         assert r["batch"].startswith("S001-")
-        # bookkeeping
+        # job is queued, NOT finalized — that waits for reconcile on COMPLETE
         sc = sm.find_sidecar_by_number(1)
-        assert sc.status == "archived"
-        assert sc.archived_via == "rhythm"
+        assert sc.status == "ready"
+        assert sc.archived_via is None
         assert sc.rhythm_job_id == "job-1"
+        assert sc.rhythm_job_status_url == "/api/v1/uploads/job-1/"
         assert sc.rhythm_batch == r["batch"]
-        assert sc.rhythm_status == "COMPLETE"
-        # retain not configured -> study dir removed
-        assert not study_dir.exists()
-        assert sm.get_counter("export", "rhythm_studies") == 1
-        assert sm.get_counter("export", "rhythm_images") == 2
-
-    def test_dose_report_series_excluded_from_upload(self, tmp_path):
-        sm = _manager(tmp_path)
-        sm.rhythm_storage = FakeRhythm(OK_RESULT)
-        _ready_study(sm, sc_report=True)
-
-        r = asyncio.run(sm.manual_upload_rhythm(1))
-
-        assert r["ok"] is True
-        # 2 CT images counted, the SC dose-report object not
-        assert sm.get_counter("export", "rhythm_images") == 2
+        assert sc.rhythm_status == "uploaded"
+        assert study_dir.exists()
+        assert sm.get_counter("export", "rhythm_studies") == 0
 
     def test_manifest_item_passed_to_transport(self, tmp_path):
         sm = _manager(tmp_path)
@@ -225,7 +226,7 @@ class TestHappyPath:
         # same hash handed to the transport so it isn't recomputed
         assert call["file_hash"] == call["item"]["sha256"]
 
-    def test_resend_of_archived_study_does_not_re_move_files(self, tmp_path):
+    def test_resend_of_archived_study_still_just_queues(self, tmp_path):
         sm = _manager(tmp_path)
         sm.rhythm_storage = FakeRhythm(OK_RESULT)
         _ready_study(sm)
@@ -235,19 +236,18 @@ class TestHappyPath:
         r = asyncio.run(sm.manual_upload_rhythm(1))
 
         assert r["ok"] is True
-        assert study_dir.exists()  # not deleted on a re-send
+        assert study_dir.exists()
         assert sm.get_counter("cleanup", "studies") == 0
 
 
-class TestFailure:
-    def test_job_failed_persists_status_and_keeps_study(self, tmp_path):
+class TestUploadFailure:
+    def test_transport_failure_persists_failed_status_and_keeps_study(self, tmp_path):
         sm = _manager(tmp_path)
         sm.rhythm_storage = FakeRhythm(
             RhythmUploadResult(
-                ok=False, status="FAILED", session_id="sess-2",
-                job_id="job-2", job_status_url="/api/v1/uploads/job-2/",
-                error="job ended FAILED",
-                error_report=[{"code": "gdpr", "message": "PatientName present"}],
+                ok=False, session_id="sess-2",
+                error="complete failed: HTTP 503",
+                error_report=[{"code": "x", "message": "y"}],
             )
         )
         _ready_study(sm)
@@ -257,14 +257,101 @@ class TestFailure:
 
         assert r["ok"] is False
         assert "RHYTHM upload failed" in r["message"]
-        assert r["error_report"] == [{"code": "gdpr", "message": "PatientName present"}]
+        assert r["error_report"] == [{"code": "x", "message": "y"}]
         sc = sm.find_sidecar_by_number(1)
         assert sc.status == "ready"          # NOT archived
         assert sc.archived_via is None
-        assert sc.rhythm_status == "FAILED"
-        assert sc.rhythm_job_id == "job-2"
+        assert sc.rhythm_status == "failed"
         assert study_dir.exists()
         assert sm.get_counter("export", "errors") == 1
+
+
+class TestReconcile:
+    def _study_with_pending_job(self, sm):
+        sc = register_study(sm, 1, "ready")
+        write_minimal_dicom(
+            sm.base_path / "0001" / "0001" / "a.dcm", SOPClassUID=CTImageStorage
+        )
+        write_minimal_dicom(
+            sm.base_path / "0001" / "0001" / "b.dcm", SOPClassUID=CTImageStorage
+        )
+        sm.study_manager.set_rhythm_job(
+            sc.original_study_uid, batch="S001-x", job_id="job-1",
+            job_status_url="/api/v1/uploads/job-1/", status="uploaded",
+        )
+        return sc
+
+    def test_complete_finalizes_retain_delete_and_archive(self, tmp_path):
+        sm = _manager(tmp_path)
+        sm.rhythm_storage = FakeRhythm(
+            job_result=RhythmUploadResult(ok=True, status="COMPLETE")
+        )
+        self._study_with_pending_job(sm)
+        study_dir = sm.base_path / "0001"
+
+        asyncio.run(sm.reconcile_rhythm_jobs())
+
+        sc = sm.find_sidecar_by_number(1)
+        assert sc.status == "archived"
+        assert sc.archived_via == "rhythm"
+        assert sc.rhythm_status == "COMPLETE"
+        assert not study_dir.exists()
+        assert sm.get_counter("export", "rhythm_studies") == 1
+        assert sm.get_counter("export", "rhythm_images") == 2
+        assert sm.get_counter("cleanup", "studies") == 1
+
+    def test_failed_records_state_without_archiving(self, tmp_path):
+        sm = _manager(tmp_path)
+        sm.rhythm_storage = FakeRhythm(
+            job_result=RhythmUploadResult(
+                ok=False, status="FAILED", error="job ended FAILED",
+                error_report=[{"code": "gdpr"}],
+            )
+        )
+        self._study_with_pending_job(sm)
+
+        asyncio.run(sm.reconcile_rhythm_jobs())
+
+        sc = sm.find_sidecar_by_number(1)
+        assert sc.rhythm_status == "FAILED"
+        assert sc.status == "ready"
+        assert sc.archived_via is None
+        assert (sm.base_path / "0001").exists()
+
+    def test_pending_job_is_left_alone(self, tmp_path):
+        sm = _manager(tmp_path)
+        sm.rhythm_storage = FakeRhythm(
+            job_result=RhythmUploadResult(ok=False, status="PROCESSING")
+        )
+        self._study_with_pending_job(sm)
+
+        asyncio.run(sm.reconcile_rhythm_jobs())
+
+        sc = sm.find_sidecar_by_number(1)
+        assert sc.rhythm_status == "uploaded"
+        assert sc.status == "ready"
+
+    def test_terminal_job_is_not_re_polled(self, tmp_path):
+        sm = _manager(tmp_path)
+        fake = FakeRhythm(job_result=RhythmUploadResult(ok=True, status="COMPLETE"))
+        sm.rhythm_storage = fake
+        sc = self._study_with_pending_job(sm)
+        sm.study_manager.set_rhythm_job(sc.original_study_uid, status="COMPLETE")
+
+        asyncio.run(sm.reconcile_rhythm_jobs())
+
+        assert fake.job_checks == []
+
+    def test_noop_when_rhythm_disabled(self, tmp_path):
+        sm = _manager(tmp_path, rhythm_configured=False)
+        fake = FakeRhythm(job_result=RhythmUploadResult(ok=True, status="COMPLETE"),
+                          enabled=False)
+        sm.rhythm_storage = fake
+        self._study_with_pending_job(sm)
+
+        asyncio.run(sm.reconcile_rhythm_jobs())
+
+        assert fake.job_checks == []
 
 
 class TestBatch:

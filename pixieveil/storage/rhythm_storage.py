@@ -13,9 +13,12 @@ Drives one studyset ZIP through RHYTHM's v2 resumable chunked-upload API:
     GET  {base}{job_status_url}
       -> {status: PENDING|PROCESSING|COMPLETE|PARTIAL|FAILED, error_report, ...}
 
-RHYTHM assigns the Repository Study ID asynchronously, so this polls the job
-URL until it reaches a terminal state. Only ``COMPLETE`` is success:
-``PARTIAL`` means some images were rejected (details in ``error_report``).
+``upload_study`` stops once ``complete/`` returns — the chunks are assembled
+and RHYTHM has queued an ingest job, but the Repository Study ID is assigned
+asynchronously afterwards (GDPR re-validation + Orthanc push). The caller
+persists ``job_status_url`` and polls it later with ``check_job``; only a
+terminal ``COMPLETE`` is success (``PARTIAL`` = some images rejected, detail
+in ``error_report``).
 
 There is deliberately no resume path here — a ``session_id`` is returned in
 the result so a caller can persist it, but a re-run starts a fresh session.
@@ -40,13 +43,17 @@ _TERMINAL_STATUSES = {"COMPLETE", "PARTIAL", "FAILED"}
 
 @dataclass
 class RhythmUploadResult:
-    """Outcome of one ``upload_study`` call.
+    """Outcome of an ``upload_study`` or ``check_job`` call.
 
-    ``ok`` is True only on a terminal ``COMPLETE``. ``session_id`` is set once
-    the chunked session exists (persist it for troubleshooting); ``job_id`` /
-    ``job_status_url`` once ``complete/`` returns. ``error`` is a short reason
-    on any failure; ``error_report`` carries RHYTHM's structured per-item /
-    per-image detail when it supplied one.
+    From ``upload_study``: ``ok`` means the chunks were assembled and an
+    ingest job was queued (``job_id`` / ``job_status_url`` set) — not that
+    ingest succeeded. ``session_id`` is set once the chunked session exists.
+
+    From ``check_job``: ``ok`` is True only for a terminal ``COMPLETE``;
+    ``status`` is the raw job state, ``error_report`` RHYTHM's per-image
+    detail on ``PARTIAL`` / ``FAILED``.
+
+    ``error`` is a short reason on any failure.
     """
 
     ok: bool
@@ -58,12 +65,6 @@ class RhythmUploadResult:
     error_report: Any = None
 
 
-@dataclass
-class _PollConfig:
-    interval_s: float = 5.0
-    timeout_s: float = 1800.0
-
-
 class RhythmStorage:
     """Uploads a study ZIP to the RHYTHM CT upload platform (v2 batch API)."""
 
@@ -71,21 +72,16 @@ class RhythmStorage:
         self.settings = settings
         cfg = settings.storage.get("remote_storage", {}).get("rhythm", {})
 
-        def _num(key: str, default: float) -> float:
-            # `or default` would turn a configured 0 into the default — which
-            # for poll_interval_s / poll_timeout_s matters (0 is meaningful).
+        def _num(key: str, default: int) -> int:
+            # `or default` would turn a configured 0 into the default.
             value = cfg.get(key)
-            return type(default)(value) if value is not None else default
+            return int(value) if value is not None else default
 
         self.base_url: str | None = (cfg.get("base_url") or "").rstrip("/") or None
         self.auth_token: str | None = cfg.get("auth_token") or None
         self.site_code: str | None = cfg.get("site_code") or None
-        self.chunk_size: int = max(1, int(_num("chunk_size", DEFAULT_CHUNK_SIZE)))
-        self.max_chunk_retries: int = int(_num("max_chunk_retries", 3))
-        self._poll = _PollConfig(
-            interval_s=_num("poll_interval_s", _PollConfig.interval_s),
-            timeout_s=_num("poll_timeout_s", _PollConfig.timeout_s),
-        )
+        self.chunk_size: int = max(1, _num("chunk_size", DEFAULT_CHUNK_SIZE))
+        self.max_chunk_retries: int = _num("max_chunk_retries", 3)
         # A usable config needs all three: where to send, how to authenticate,
         # and the site code that every manifest item is stamped with.
         self.enabled: bool = bool(self.base_url and self.auth_token and self.site_code)
@@ -106,10 +102,12 @@ class RhythmStorage:
         computed (the caller sets the same value on ``manifest_item['sha256']``)
         to avoid hashing the file twice, otherwise it is computed here.
 
-        Never raises for an expected failure (misconfig, missing file, HTTP
-        error, rejected manifest item, job FAILED/PARTIAL) — those come back as
-        ``RhythmUploadResult(ok=False, ...)``. Only a genuinely unexpected
-        error propagates.
+        Returns once ``complete/`` succeeds: ``ok=True`` with ``job_id`` /
+        ``job_status_url`` means the job is queued, not that ingest passed —
+        poll ``check_job`` for that. Never raises for an expected failure
+        (misconfig, missing file, HTTP error, rejected manifest item) — those
+        come back as ``RhythmUploadResult(ok=False, ...)``. Only a genuinely
+        unexpected error propagates.
         """
         if not self.enabled:
             logger.warning("RHYTHM storage not configured")
@@ -137,18 +135,50 @@ class RhythmStorage:
                     return sent
 
                 completed = await self._complete(session, init.session_id, file_hash)
-                if completed.error:
-                    return completed
-
-                result = await self._poll_job(session, completed.job_status_url)
-                result.session_id = init.session_id
-                result.job_id = completed.job_id
-                result.job_status_url = completed.job_status_url
-                return result
+                completed.session_id = init.session_id
+                return completed
 
         except Exception as e:  # noqa: BLE001 - reported, not swallowed
             logger.error("RHYTHM upload of %s failed: %s", zip_path, e, exc_info=True)
             return RhythmUploadResult(ok=False, error=str(e))
+
+    async def check_job(self, job_status_url: str) -> RhythmUploadResult:
+        """One poll of a queued ingest job's status URL.
+
+        ``ok`` is True only for a terminal ``COMPLETE``. A non-terminal state
+        (``PENDING`` / ``PROCESSING``) or a transient poll error comes back
+        ``ok=False`` with ``status`` set to what was seen (or None) and no
+        ``error`` for the merely-not-done-yet case — the caller re-polls
+        later. ``PARTIAL`` / ``FAILED`` carry ``error`` + ``error_report``.
+        """
+        if not self.enabled:
+            return RhythmUploadResult(ok=False, error="RHYTHM storage not configured")
+        if not job_status_url:
+            return RhythmUploadResult(ok=False, error="no job_status_url")
+
+        headers = {"Authorization": f"Bearer {self.auth_token}"}
+        url = f"{self.base_url}{job_status_url}"
+        try:
+            async with aiohttp.ClientSession(headers=headers) as session:
+                async with session.get(url) as resp:
+                    body = await _json(resp)
+                    if resp.status != 200:
+                        return RhythmUploadResult(
+                            ok=False, error=f"job poll failed: HTTP {resp.status}"
+                        )
+        except Exception as e:  # noqa: BLE001 - reported, not swallowed
+            logger.warning("RHYTHM job poll of %s failed: %s", url, e)
+            return RhythmUploadResult(ok=False, error=str(e))
+
+        status = body.get("status") if isinstance(body, dict) else None
+        report = body.get("error_report") if isinstance(body, dict) else None
+        if status not in _TERMINAL_STATUSES:
+            return RhythmUploadResult(ok=False, status=status, error_report=report)
+        if status == "COMPLETE":
+            return RhythmUploadResult(ok=True, status=status, error_report=report)
+        return RhythmUploadResult(
+            ok=False, status=status, error=f"job ended {status}", error_report=report
+        )
 
     # -- steps -----------------------------------------------------------
 
@@ -262,46 +292,6 @@ class RhythmStorage:
             return RhythmUploadResult(
                 ok=True, job_id=job_id, job_status_url=job_status_url
             )
-
-    async def _poll_job(
-        self, session: aiohttp.ClientSession, job_status_url: str | None
-    ) -> RhythmUploadResult:
-        if not job_status_url:
-            return RhythmUploadResult(ok=False, error="no job_status_url returned")
-        url = f"{self.base_url}{job_status_url}"
-        loop = asyncio.get_event_loop()
-        deadline = loop.time() + self._poll.timeout_s
-
-        while True:
-            async with session.get(url) as resp:
-                body = await _json(resp)
-                if resp.status != 200:
-                    return RhythmUploadResult(
-                        ok=False, error=f"job poll failed: HTTP {resp.status}"
-                    )
-            status = body.get("status") if isinstance(body, dict) else None
-            if status in _TERMINAL_STATUSES:
-                report = body.get("error_report") if isinstance(body, dict) else None
-                if status == "COMPLETE":
-                    logger.info("RHYTHM job COMPLETE")
-                    return RhythmUploadResult(
-                        ok=True, status=status, error_report=report
-                    )
-                logger.error("RHYTHM job terminal state %s: %s", status, report)
-                return RhythmUploadResult(
-                    ok=False,
-                    status=status,
-                    error=f"job ended {status}",
-                    error_report=report,
-                )
-            if loop.time() >= deadline:
-                return RhythmUploadResult(
-                    ok=False,
-                    status=status,
-                    error=f"job still {status or 'pending'} after "
-                    f"{self._poll.timeout_s:.0f}s",
-                )
-            await asyncio.sleep(self._poll.interval_s)
 
 
 # -- helpers -----------------------------------------------------------------

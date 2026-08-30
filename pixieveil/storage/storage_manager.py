@@ -284,6 +284,11 @@ class StorageManager:
                 logger.error("Unexpected error in retention purge: %s", exc)
 
             try:
+                await self.reconcile_rhythm_jobs()
+            except Exception as exc:
+                logger.error("Unexpected error in RHYTHM job reconciliation: %s", exc)
+
+            try:
                 await asyncio.wait_for(self._stop_event.wait(), timeout=interval)
             except asyncio.TimeoutError:
                 pass
@@ -1353,7 +1358,6 @@ class StorageManager:
                 return {"ok": False, "message":
                         "defacing did not complete for this study (a head-scan series "
                         "is still undefaced) — cannot export until that is resolved"}
-            first_export = sc is not None and sc.status != "archived"
 
             exam_path = ExamSidecar.path_for(self.base_path, study_number)
             if not exam_path.exists():
@@ -1426,32 +1430,19 @@ class StorageManager:
                     session_id=result.session_id,
                     job_id=result.job_id,
                     job_status_url=result.job_status_url,
-                    status=result.status or ("uploaded" if result.ok else "failed"),
+                    status="uploaded" if result.ok else "failed",
                 )
 
             if result.ok:
-                image_count = await asyncio.to_thread(
-                    lambda: sum(
-                        1 for f in study_dir.rglob("*.dcm")
-                        if f.parent.name not in excluded
-                        and not any(part.endswith("_pre_deface") for part in f.parts)
-                    )
-                )
-                with self.lock:
-                    self.inc_counter('export', 'rhythm_studies')
-                    self.inc_counter('export', 'rhythm_images', image_count)
-                if first_export:
-                    assert sc is not None  # implied by first_export being True
-                    with self.lock:
-                        self.inc_counter('cleanup', 'studies')
-                        self.inc_counter('cleanup', 'images', image_count)
-                    await asyncio.to_thread(self._retain_or_delete_sync, study_dir)
-                    self.study_manager.mark_study_archived(
-                        sc.original_study_uid, via="rhythm"
-                    )
+                # upload_study returns once the chunks are assembled and an
+                # ingest job is queued — NOT once ingest passed. The
+                # retain-or-delete + mark_study_archived bookkeeping waits for
+                # a terminal COMPLETE, which reconcile_rhythm_jobs() observes
+                # from the completion loop. Study stays "ready" until then.
                 return {"ok": True,
-                        "message": f"uploaded to RHYTHM (batch {batch}, {location})",
-                        "batch": batch, "job_id": result.job_id, "status": result.status}
+                        "message": f"queued for RHYTHM ingest (batch {batch}, "
+                                   f"{location}) — processing",
+                        "batch": batch, "job_id": result.job_id, "status": "uploaded"}
 
             with self.lock:
                 self.inc_counter('export', 'errors')
@@ -1477,6 +1468,74 @@ class StorageManager:
             "batch": batch,
             "results": results,
         }
+
+    _RHYTHM_TERMINAL = frozenset({"COMPLETE", "PARTIAL", "FAILED"})
+
+    async def reconcile_rhythm_jobs(self) -> None:
+        """Poll RHYTHM once for every study whose ingest job is still in
+        flight, and act on a terminal result.
+
+        ``manual_upload_rhythm`` returns as soon as the chunks are assembled;
+        RHYTHM then re-validates and pushes to Orthanc asynchronously. This
+        runs from the completion loop: on ``COMPLETE`` it performs the
+        retain-or-delete + ``mark_study_archived(via="rhythm")`` bookkeeping
+        an inline export would have done; on ``PARTIAL`` / ``FAILED`` it just
+        records the state (study stays ``ready`` so the operator can retry).
+        """
+        if not self.rhythm_storage.enabled:
+            return
+        for sc in StudySidecar.load_all(self.base_path).values():
+            url = getattr(sc, "rhythm_job_status_url", None)
+            if not url or sc.rhythm_status in self._RHYTHM_TERMINAL:
+                continue
+            if sc.study_number in self._manual_actions_in_progress:
+                continue
+
+            result = await self.rhythm_storage.check_job(url)
+            if result.status not in self._RHYTHM_TERMINAL:
+                continue  # still pending, or a transient poll failure
+
+            self.study_manager.set_rhythm_job(
+                sc.original_study_uid, status=result.status
+            )
+            if result.status == "COMPLETE":
+                if sc.status != "archived":
+                    await self._finalize_rhythm_export(sc)
+            else:
+                logger.error(
+                    "RHYTHM ingest for study %04d ended %s: %s",
+                    sc.study_number, result.status, result.error_report,
+                )
+
+    async def _finalize_rhythm_export(self, sc: StudySidecar) -> None:
+        """Retain-or-delete + archive a study whose RHYTHM job reached
+        COMPLETE. Mirrors the first-successful-export bookkeeping of the
+        DICOM/HTTP paths."""
+        study_dir, _location = self.resolve_study_dir(sc.study_number)
+        if study_dir is None:
+            logger.warning(
+                "RHYTHM finalize: study %04d directory is gone — marking archived",
+                sc.study_number,
+            )
+            self.study_manager.mark_study_archived(sc.original_study_uid, via="rhythm")
+            return
+
+        excluded = await asyncio.to_thread(self._rhythm_excluded_series_sync, study_dir)
+        image_count = await asyncio.to_thread(
+            lambda: sum(
+                1 for f in study_dir.rglob("*.dcm")
+                if f.parent.name not in excluded
+                and not any(part.endswith("_pre_deface") for part in f.parts)
+            )
+        )
+        with self.lock:
+            self.inc_counter('export', 'rhythm_studies')
+            self.inc_counter('export', 'rhythm_images', image_count)
+            self.inc_counter('cleanup', 'studies')
+            self.inc_counter('cleanup', 'images', image_count)
+        await asyncio.to_thread(self._retain_or_delete_sync, study_dir)
+        self.study_manager.mark_study_archived(sc.original_study_uid, via="rhythm")
+        logger.info("RHYTHM export of study %04d finalized (COMPLETE)", sc.study_number)
 
     def _manual_reextract_sync(self, study_number: int, study_dir: Path) -> dict:
         exam_path = ExamSidecar.path_for(self.base_path, study_number)

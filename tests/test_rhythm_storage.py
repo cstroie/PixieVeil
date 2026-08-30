@@ -125,7 +125,6 @@ def happy_routes():
         "complete": [
             FakeResp(200, {"job_id": "job-9", "job_status_url": "/api/v1/uploads/job-9/"})
         ],
-        "job": [FakeResp(200, {"status": "COMPLETE", "error_report": None})],
     }
 
 
@@ -177,14 +176,15 @@ class TestGuards:
 
 
 class TestHappyPath:
-    def test_full_flow_returns_complete(self, tmp_path, monkeypatch):
+    def test_returns_after_complete_without_polling(self, tmp_path, monkeypatch):
         install(monkeypatch, happy_routes())
         r = asyncio.run(make_storage().upload_study(a_zip(tmp_path), ITEM, "batch-1"))
-        assert r.ok is True
-        assert r.status == "COMPLETE"
+        assert r.ok is True                 # chunks assembled, job queued
+        assert r.status is None             # not polled here — that's check_job
         assert r.session_id == "sess-1"
         assert r.job_id == "job-9"
         assert r.job_status_url == "/api/v1/uploads/job-9/"
+        assert not [c for c in FakeSession.last_instance.calls if c["method"] == "GET"]
 
     def test_init_payload_and_auth_header(self, tmp_path, monkeypatch):
         install(monkeypatch, happy_routes())
@@ -210,19 +210,6 @@ class TestHappyPath:
         complete_call = next(c for c in calls if "/complete/" in c["url"])
         assert init_call["json"]["file_hash"] == "cafef00d"
         assert complete_call["json"]["file_hash"] == "cafef00d"
-
-    def test_job_poll_waits_for_terminal_state(self, tmp_path, monkeypatch):
-        routes = happy_routes()
-        routes["job"] = [
-            FakeResp(200, {"status": "PENDING"}),
-            FakeResp(200, {"status": "PROCESSING"}),
-            FakeResp(200, {"status": "COMPLETE"}),
-        ]
-        install(monkeypatch, routes)
-        r = asyncio.run(make_storage().upload_study(a_zip(tmp_path), ITEM, "b"))
-        assert r.ok is True and r.status == "COMPLETE"
-        job_calls = [c for c in FakeSession.last_instance.calls if c["method"] == "GET"]
-        assert len(job_calls) == 3
 
     def test_multiple_chunks_all_sent_with_hashes(self, tmp_path, monkeypatch):
         routes = happy_routes()
@@ -295,34 +282,6 @@ class TestFailures:
         r = asyncio.run(make_storage().upload_study(a_zip(tmp_path), ITEM, "b"))
         assert r.ok is False and "complete failed" in r.error
 
-    def test_job_failed_is_not_success(self, tmp_path, monkeypatch):
-        routes = happy_routes()
-        routes["job"] = [
-            FakeResp(200, {"status": "FAILED",
-                           "error_report": [{"code": "gdpr", "message": "bad"}]})
-        ]
-        install(monkeypatch, routes)
-        r = asyncio.run(make_storage().upload_study(a_zip(tmp_path), ITEM, "b"))
-        assert r.ok is False
-        assert r.status == "FAILED"
-        assert r.error_report == [{"code": "gdpr", "message": "bad"}]
-        assert r.job_id == "job-9"
-
-    def test_job_partial_is_not_success(self, tmp_path, monkeypatch):
-        routes = happy_routes()
-        routes["job"] = [FakeResp(200, {"status": "PARTIAL", "error_report": ["x"]})]
-        install(monkeypatch, routes)
-        r = asyncio.run(make_storage().upload_study(a_zip(tmp_path), ITEM, "b"))
-        assert r.ok is False and r.status == "PARTIAL"
-
-    def test_job_poll_times_out(self, tmp_path, monkeypatch):
-        routes = happy_routes()
-        routes["job"] = [FakeResp(200, {"status": "PROCESSING"})]
-        install(monkeypatch, routes)
-        s = make_storage(poll_interval_s=0, poll_timeout_s=0)
-        r = asyncio.run(s.upload_study(a_zip(tmp_path), ITEM, "b"))
-        assert r.ok is False and "after" in r.error
-
     def test_unexpected_exception_is_reported_not_raised(self, tmp_path, monkeypatch):
         def boom(headers=None):
             raise RuntimeError("kaboom")
@@ -332,3 +291,44 @@ class TestFailures:
         )
         r = asyncio.run(make_storage().upload_study(a_zip(tmp_path), ITEM, "b"))
         assert r.ok is False and "kaboom" in r.error
+
+
+# -- job status polling (check_job) --------------------------------------
+
+
+class TestCheckJob:
+    def _check(self, monkeypatch, body, status=200):
+        install(monkeypatch, {"job": [FakeResp(status, body)]})
+        return asyncio.run(make_storage().check_job("/api/v1/uploads/job-9/"))
+
+    def test_complete_is_ok(self, monkeypatch):
+        r = self._check(monkeypatch, {"status": "COMPLETE", "error_report": None})
+        assert r.ok is True and r.status == "COMPLETE"
+
+    def test_failed_carries_report_and_is_not_ok(self, monkeypatch):
+        r = self._check(
+            monkeypatch,
+            {"status": "FAILED", "error_report": [{"code": "gdpr", "message": "bad"}]},
+        )
+        assert r.ok is False
+        assert r.status == "FAILED"
+        assert r.error == "job ended FAILED"
+        assert r.error_report == [{"code": "gdpr", "message": "bad"}]
+
+    def test_partial_is_not_ok(self, monkeypatch):
+        r = self._check(monkeypatch, {"status": "PARTIAL", "error_report": ["x"]})
+        assert r.ok is False and r.status == "PARTIAL"
+
+    def test_pending_is_not_ok_and_has_no_error(self, monkeypatch):
+        r = self._check(monkeypatch, {"status": "PROCESSING"})
+        assert r.ok is False
+        assert r.status == "PROCESSING"
+        assert r.error is None          # merely not done yet — caller re-polls
+
+    def test_non_200_is_a_transient_error(self, monkeypatch):
+        r = self._check(monkeypatch, {}, status=502)
+        assert r.ok is False and "HTTP 502" in r.error
+
+    def test_disabled_storage_short_circuits(self):
+        r = asyncio.run(RhythmStorage(Settings()).check_job("/x/"))
+        assert r.ok is False and "not configured" in r.error
