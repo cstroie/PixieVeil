@@ -43,7 +43,8 @@ See [INSTALL.md](INSTALL.md) for the full bootstrap/systemd/OpenRC flow.
 
 Unit tests live under `tests/`, run with `pytest` (config in `pyproject.toml`
 under `[tool.pytest.ini_options]`; `pip install -e ".[test]"` for `pytest`
-itself — note some fixtures additionally exercise code paths that only run
+plus `jsonschema` (the latter only used by the RHYTHM manifest-schema
+cross-check) — note some fixtures additionally exercise code paths that only run
 when the `[deface]` extra's heavy libs (torch/SimpleITK/nibabel/nnunetv2)
 happen to be installed too, skipping gracefully via `pytest.importorskip`
 when they aren't). `tests/conftest.py` holds shared fixtures: a
@@ -80,9 +81,14 @@ path against a small fake `aiohttp.ClientSession`/response substituted with
 machine and `check_job` polling against a scripted fake
 `aiohttp.ClientSession` keyed by endpoint; `StorageManager.manual_upload_rhythm`
 / `_batch` / `reconcile_rhythm_jobs` / `_rhythm_excluded_series_sync` against
-a fake `RhythmStorage`; and the dashboard's `upload_rhythm` action route +
+a fake `RhythmStorage`; the dashboard's `upload_rhythm` action route +
 `/api/studies/rhythm-batch` body validation + capability flags, via handler
-coroutines called directly with a fake request/StorageManager).
+coroutines called directly with a fake request/StorageManager; and — when the
+`reference/uploader` submodule is present and `jsonschema` installed — a
+cross-check that `build_manifest_item` / `build_batch_manifest` output
+validates against RHYTHM's *own* `MANIFEST_SCHEMA_V2` loaded straight from
+the vendored submodule, so a `git submodule update --remote` that moves the
+schema fails here rather than at upload time).
 
 Deliberately still out of scope: `dicom_to_nifti`, the pixel-array half of
 `nifti_to_dicom`, `run_nnunet_inference`, `_run_nnunet_and_apply_mask`, and
