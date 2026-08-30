@@ -1,0 +1,3 @@
+[submodule "reference/uploader"]
+	path = reference/uploader
+	url = https://github.com/jsfakian/rhythm
