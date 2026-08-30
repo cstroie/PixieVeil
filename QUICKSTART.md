@@ -136,16 +136,20 @@ storage:
     rhythm:
       base_url: "https://rhythm.your-domain"
       auth_token: "rhythm-upload-token"   # from `manage.py create_upload_token`, not a login
-      site_code: "S001"                   # your registered submitting-site code
+      site_code: "S014"                   # your institution's code, assigned by RHYTHM
       # chunk_size: 10485760              # optional, default 10 MiB
 ```
 
+**`site_code`** is assigned by RHYTHM when your institution registers — you can't pick your own. Find it on your RHYTHM profile page, ask the repository admin, or read it off an existing Repository Study ID (the `S###` segment of `RHY-S014-HEADTRAUMA-NC-PH-G4-000001`). All three keys must be set before `RhythmStorage.enabled` is true and the dashboard button activates.
+
 Requirements before a study can be sent to RHYTHM:
-- `anonymization.profile: gdpr` (the `research` profile keeps study dates / non-regenerated UIDs that RHYTHM rejects) — the dashboard button is disabled otherwise
+- `anonymization.profile: gdpr` (the `research` profile keeps study dates / non-regenerated UIDs that RHYTHM rejects) — the dashboard button is disabled otherwise. **This gate reads the *current* config, not what each study was anonymized with**: studies received under `research` and only later switched to `gdpr` will pass the button but be rejected by RHYTHM at ingest. Anonymization runs once, at receive time, and PixieVeil keeps only the anonymized copy — so re-send the original DICOM through PixieVeil after switching the profile rather than trying to re-export an old study.
 - a per-study **Image quality** value, set on the `/studies` page (extraction leaves it blank)
 - defacing completed (a `defacing_failed` study is blocked)
 
 The Dose Report screenshot and any RDSR object are excluded from the RHYTHM ZIP automatically — it carries CT images only.
+
+**Preview the manifest before uploading.** `GET /api/studies/{n}/rhythm-manifest` (or `?studies=1,2,3` for a batch) returns the exact v2 manifest PixieVeil would send, with a `blockers` key listing anything still missing; add `&download=1` for a clean `rhythm_manifest.json` to paste into RHYTHM's own `/json-validator` page or `POST /api/v1/uploads/validate-manifest/`. The `/studies` page has per-study and bulk "preview / download" links.
 
 If no transport is configured, archives stay local.
 
