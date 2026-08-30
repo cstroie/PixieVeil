@@ -24,16 +24,23 @@ from pathlib import Path
 from typing import Dict, Any, Optional, Tuple, List
 
 import pydicom
+from pydicom.uid import (
+    CTImageStorage,
+    EnhancedCTImageStorage,
+    LegacyConvertedEnhancedCTImageStorage,
+)
 
 from pixieveil.config import Settings
 from pixieveil.storage.remote_storage import RemoteStorage
 from pixieveil.storage.dicom_storage import DicomStorage
+from pixieveil.storage.rhythm_storage import RhythmStorage, sha256_file
 from pixieveil.storage.zip_manager import ZipManager
 from pixieveil.processing.anonymizer import Anonymizer
 from pixieveil.processing.series_filter import SeriesFilter
 from pixieveil.processing.defacer import Defacer
 from pixieveil.processing.exam_extractor import ExamExtractor
 from pixieveil.processing import exam_merge
+from pixieveil.processing import rhythm_manifest
 from pixieveil.storage.exam_sidecar import ExamSidecar
 from pixieveil.storage.study_sidecar import StudySidecar
 
@@ -103,6 +110,7 @@ class StorageManager:
         self.zip_manager = ZipManager(settings)
         self.remote_storage = RemoteStorage(settings)
         self.dicom_storage = DicomStorage(settings)
+        self.rhythm_storage = RhythmStorage(settings)
         self.exam_extractor = ExamExtractor()
         
         # Thread safety
@@ -155,6 +163,8 @@ class StorageManager:
                 'http_studies': 0,
                 'http_images': 0,
                 'http_bytes': 0,
+                'rhythm_studies': 0,
+                'rhythm_images': 0,
                 'errors': 0
             },
             'performance': {
@@ -1077,6 +1087,7 @@ class StorageManager:
     _STUDY_SIDECAR_FIELDS = (
         "study_number", "status", "archived_via",
         "received_at", "last_received_at", "anonymized_study_uid",
+        "rhythm_batch", "rhythm_job_id", "rhythm_job_status_url", "rhythm_status",
     )
 
     @classmethod
@@ -1257,6 +1268,215 @@ class StorageManager:
             self._manual_actions_in_progress.discard(study_number)
             with self.lock:
                 self._active_exporting -= 1
+
+    # -- RHYTHM export (third path; see rhythm_storage / rhythm_manifest) --
+
+    def _new_rhythm_batch_id(self) -> str:
+        """One batch id per dashboard action. ``site_code`` + a UTC timestamp;
+        no persisted sequence, since distinct actions are at least a second
+        apart and RHYTHM only uses ``batch`` to group sibling items."""
+        site = self.rhythm_storage.site_code or "SITE"
+        return f"{site}-{datetime.now(timezone.utc):%Y%m%d-%H%M%S}"
+
+    # RHYTHM ("DICOM CT only, no reports or screenshots") — the only SOP
+    # classes a series is allowed to carry into a RHYTHM upload. Anything
+    # else (Secondary Capture dose-report screenshots, native RDSR, ...) is
+    # dropped: an unrecognised class fails safe here rather than polluting
+    # the repository, and the "no CT image series" guard then surfaces it.
+    _RHYTHM_CT_SOP_CLASSES = frozenset({
+        str(CTImageStorage),
+        str(EnhancedCTImageStorage),
+        str(LegacyConvertedEnhancedCTImageStorage),
+    })
+
+    def _rhythm_excluded_series_sync(self, study_dir: Path) -> set:
+        """Series-folder names under *study_dir* to leave out of a RHYTHM
+        upload: every series whose representative object is not a CT image
+        (the rendered Dose Report Secondary Capture, a native RDSR, an
+        unreadable file, ...).
+        """
+        excluded: set = set()
+        for series_dir in study_dir.iterdir():
+            if not series_dir.is_dir() or not series_dir.name.isdigit():
+                continue
+            first_dcm = next(series_dir.glob("*.dcm"), None)
+            if first_dcm is None:
+                continue
+            try:
+                ds = pydicom.dcmread(str(first_dcm), stop_before_pixels=True, force=True)
+                sop_class = str(getattr(ds, "SOPClassUID", ""))
+            except Exception:
+                logger.warning(
+                    "RHYTHM: could not classify series %s (%s) — excluding it",
+                    series_dir.name, first_dcm, exc_info=True,
+                )
+                excluded.add(series_dir.name)
+                continue
+            if sop_class not in self._RHYTHM_CT_SOP_CLASSES:
+                excluded.add(series_dir.name)
+        return excluded
+
+    async def manual_upload_rhythm(self, study_number: int,
+                                   *, batch: Optional[str] = None) -> dict:
+        """Upload one ready study to the RHYTHM platform at the user's request.
+
+        One study is one manifest item; *batch* groups sibling items from the
+        same dashboard action and is generated here when not supplied.
+        Refuses (does not raise) when RHYTHM export is unconfigured, the
+        study is ``defacing_failed``, the anonymization profile is not
+        ``gdpr``, the exam sidecar is missing/unreadable, a RHYTHM-required
+        field is still unset (notably ``image_quality``), or the study holds
+        no CT image series. The first successful export also does the
+        retain-or-delete + ``mark_study_archived(via="rhythm")`` bookkeeping.
+        """
+        if study_number in self._manual_actions_in_progress:
+            return {"ok": False, "message": "action already in progress for this study"}
+        self._manual_actions_in_progress.add(study_number)
+        with self.lock:
+            self._active_exporting += 1
+        try:
+            study_dir, location = self.resolve_study_dir(study_number)
+            if study_dir is None:
+                return {"ok": False, "message": "study directory not found"}
+            if not self.rhythm_storage.enabled:
+                return {"ok": False, "message": "RHYTHM export is not configured"}
+
+            profile = self.settings.anonymization.get("profile", "research")
+            if profile != "gdpr":
+                return {"ok": False, "message":
+                        f"RHYTHM export requires the 'gdpr' anonymization profile "
+                        f"(current: '{profile}') — other profiles keep study dates "
+                        f"or non-regenerated UIDs that RHYTHM's GDPR validation rejects"}
+
+            sc = self.find_sidecar_by_number(study_number)
+            if sc is not None and sc.status == "defacing_failed":
+                return {"ok": False, "message":
+                        "defacing did not complete for this study (a head-scan series "
+                        "is still undefaced) — cannot export until that is resolved"}
+            first_export = sc is not None and sc.status != "archived"
+
+            exam_path = ExamSidecar.path_for(self.base_path, study_number)
+            if not exam_path.exists():
+                return {"ok": False, "message": "exam data has not been extracted yet"}
+            try:
+                exam_data = ExamSidecar.load(exam_path).data
+            except Exception:
+                logger.warning("Corrupt exam sidecar for %04d", study_number, exc_info=True)
+                return {"ok": False, "message": "exam sidecar is unreadable"}
+
+            # The on-disk exam sidecar's canonical values are already the
+            # effective ones (exam_merge.apply_manual writes manual edits into
+            # them at save time), so it feeds build_manifest_item directly.
+            item = rhythm_manifest.build_manifest_item(
+                exam_data,
+                study_number=study_number,
+                zip_filename=f"{study_number:04d}.zip",
+                site_code=self.rhythm_storage.site_code,
+            )
+            blockers = rhythm_manifest.manifest_item_blockers(item)
+            if blockers:
+                return {"ok": False, "message":
+                        "study is missing data RHYTHM requires: " + "; ".join(blockers)}
+
+            excluded = await asyncio.to_thread(
+                self._rhythm_excluded_series_sync, study_dir
+            )
+            all_series = {
+                d.name for d in study_dir.iterdir()
+                if d.is_dir() and d.name.isdigit()
+            }
+            if not (all_series - excluded):
+                return {"ok": False,
+                        "message": "no CT image series to upload (only non-CT objects found)"}
+
+            batch = batch or self._new_rhythm_batch_id()
+
+            zip_path = await self.zip_manager.create_zip(
+                f"{study_number:04d}", self.base_path, source_dir=study_dir,
+                exclude=lambda p: p.parent.name in excluded,
+            )
+            if not zip_path:
+                with self.lock:
+                    self.inc_counter('archive', 'errors')
+                    self.inc_counter('errors', 'total')
+                return {"ok": False, "message": "failed to create ZIP archive"}
+
+            # The manifest item's sha256/size_bytes are the ZIP's — RHYTHM
+            # verifies sha256 before it extracts the archive — so they can
+            # only be filled in now that the file exists.
+            zip_sha = await asyncio.to_thread(sha256_file, zip_path)
+            item["sha256"] = zip_sha
+            item["size_bytes"] = await asyncio.to_thread(
+                lambda: zip_path.stat().st_size
+            )
+
+            try:
+                result = await self.rhythm_storage.upload_study(
+                    zip_path, item, batch, file_hash=zip_sha
+                )
+            finally:
+                await asyncio.to_thread(zip_path.unlink, missing_ok=True)
+
+            # Persist whatever RHYTHM handed back — success or not — so the
+            # dashboard can show job state / the failure reason.
+            if sc is not None:
+                self.study_manager.set_rhythm_job(
+                    sc.original_study_uid,
+                    batch=batch,
+                    session_id=result.session_id,
+                    job_id=result.job_id,
+                    job_status_url=result.job_status_url,
+                    status=result.status or ("uploaded" if result.ok else "failed"),
+                )
+
+            if result.ok:
+                image_count = await asyncio.to_thread(
+                    lambda: sum(
+                        1 for f in study_dir.rglob("*.dcm")
+                        if f.parent.name not in excluded
+                        and not any(part.endswith("_pre_deface") for part in f.parts)
+                    )
+                )
+                with self.lock:
+                    self.inc_counter('export', 'rhythm_studies')
+                    self.inc_counter('export', 'rhythm_images', image_count)
+                if first_export:
+                    assert sc is not None  # implied by first_export being True
+                    with self.lock:
+                        self.inc_counter('cleanup', 'studies')
+                        self.inc_counter('cleanup', 'images', image_count)
+                    await asyncio.to_thread(self._retain_or_delete_sync, study_dir)
+                    self.study_manager.mark_study_archived(
+                        sc.original_study_uid, via="rhythm"
+                    )
+                return {"ok": True,
+                        "message": f"uploaded to RHYTHM (batch {batch}, {location})",
+                        "batch": batch, "job_id": result.job_id, "status": result.status}
+
+            with self.lock:
+                self.inc_counter('export', 'errors')
+                self.inc_counter('errors', 'total')
+            return {"ok": False, "batch": batch,
+                    "message": f"RHYTHM upload failed: {result.error}",
+                    "error_report": result.error_report}
+        finally:
+            self._manual_actions_in_progress.discard(study_number)
+            with self.lock:
+                self._active_exporting -= 1
+
+    async def manual_upload_rhythm_batch(self, study_numbers: List[int]) -> dict:
+        """Upload several ready studies as one RHYTHM batch (one dashboard
+        action). Each study is still validated and uploaded independently;
+        one failing does not stop the rest."""
+        batch = self._new_rhythm_batch_id()
+        results: dict = {}
+        for n in study_numbers:
+            results[str(n)] = await self.manual_upload_rhythm(n, batch=batch)
+        return {
+            "ok": bool(results) and all(r.get("ok") for r in results.values()),
+            "batch": batch,
+            "results": results,
+        }
 
     def _manual_reextract_sync(self, study_number: int, study_dir: Path) -> dict:
         exam_path = ExamSidecar.path_for(self.base_path, study_number)

@@ -200,6 +200,17 @@ class TestHappyPath:
         assert len(body["file_hash"]) == 64
         assert body["total_size"] == len(b"zip-bytes")
 
+    def test_provided_file_hash_is_used_without_rehashing(self, tmp_path, monkeypatch):
+        install(monkeypatch, happy_routes())
+        asyncio.run(
+            make_storage().upload_study(a_zip(tmp_path), ITEM, "b", file_hash="cafef00d")
+        )
+        calls = FakeSession.last_instance.calls
+        init_call = next(c for c in calls if "/chunked/init/" in c["url"])
+        complete_call = next(c for c in calls if "/complete/" in c["url"])
+        assert init_call["json"]["file_hash"] == "cafef00d"
+        assert complete_call["json"]["file_hash"] == "cafef00d"
+
     def test_job_poll_waits_for_terminal_state(self, tmp_path, monkeypatch):
         routes = happy_routes()
         routes["job"] = [

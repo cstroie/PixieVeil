@@ -347,8 +347,8 @@ class StudyManager:
                              via: Optional[str] = None) -> None:
         """Mark a study as fully processed and remove it from active tracking.
 
-        ``via`` should be ``"dicom"`` or ``"http"`` when the study was
-        exported remotely, or ``None`` when it is kept locally.
+        ``via`` should be ``"dicom"``, ``"http"`` or ``"rhythm"`` when the
+        study was exported remotely, or ``None`` when it is kept locally.
         """
         if self._base_path is not None:
             with self.lock:
@@ -367,6 +367,29 @@ class StudyManager:
             if sc is None:
                 return
             sc.status = status
+            sc.save(self._base_path)
+
+    _RHYTHM_JOB_FIELDS = frozenset(
+        {"batch", "session_id", "job_id", "job_status_url", "status"}
+    )
+
+    def set_rhythm_job(self, original_study_uid: str, **fields: Optional[str]) -> None:
+        """Persist RHYTHM upload job-tracking onto the study sidecar.
+
+        Accepts ``batch``/``session_id``/``job_id``/``job_status_url``/
+        ``status`` (written to the matching ``rhythm_*`` attribute); other
+        keys are ignored. A ``None`` value clears its field. No-op if the
+        sidecar is unknown or sidecar persistence is disabled.
+        """
+        if self._base_path is None:
+            return
+        with self.lock:
+            sc = self._sidecars.get(original_study_uid)
+            if sc is None:
+                return
+            for key, value in fields.items():
+                if key in self._RHYTHM_JOB_FIELDS:
+                    setattr(sc, f"rhythm_{key}", value)
             sc.save(self._base_path)
 
     # ------------------------------------------------------------------

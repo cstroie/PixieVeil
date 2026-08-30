@@ -93,9 +93,18 @@ class RhythmStorage:
     # -- public API --------------------------------------------------------
 
     async def upload_study(
-        self, zip_path: Path, manifest_item: dict[str, Any], batch: str
+        self,
+        zip_path: Path,
+        manifest_item: dict[str, Any],
+        batch: str,
+        *,
+        file_hash: str | None = None,
     ) -> RhythmUploadResult:
         """Upload *zip_path* as one item of *batch*, tagged with *manifest_item*.
+
+        *file_hash* is the SHA-256 of the whole ZIP; pass it if already
+        computed (the caller sets the same value on ``manifest_item['sha256']``)
+        to avoid hashing the file twice, otherwise it is computed here.
 
         Never raises for an expected failure (misconfig, missing file, HTTP
         error, rejected manifest item, job FAILED/PARTIAL) — those come back as
@@ -110,7 +119,8 @@ class RhythmStorage:
             return RhythmUploadResult(ok=False, error=f"file not found: {zip_path}")
 
         try:
-            file_hash = await asyncio.to_thread(_sha256_file, zip_path)
+            if file_hash is None:
+                file_hash = await asyncio.to_thread(sha256_file, zip_path)
             total_size = zip_path.stat().st_size
             headers = {"Authorization": f"Bearer {self.auth_token}"}
 
@@ -297,7 +307,7 @@ class RhythmStorage:
 # -- helpers -----------------------------------------------------------------
 
 
-def _sha256_file(path: Path) -> str:
+def sha256_file(path: Path) -> str:
     h = hashlib.sha256()
     with open(path, "rb") as fh:
         for block in iter(lambda: fh.read(1024 * 1024), b""):
