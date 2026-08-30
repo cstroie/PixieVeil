@@ -375,6 +375,64 @@ class TestBatch:
         assert batches == {r["batch"]}
 
 
+class TestManifestPreview:
+    def test_full_study_previews_clean_without_checksum_fields(self, tmp_path):
+        sm = _manager(tmp_path)
+        _ready_study(sm)
+
+        out = sm.build_rhythm_manifest_preview_sync([1])
+
+        m = out["manifest"]
+        assert m["type"] == "rhythm_server_assigned_upload_manifest"
+        assert m["site"] == "S001"
+        assert m["batch"].startswith("S001-")
+        assert len(m["items"]) == 1
+        item = m["items"][0]
+        assert item["ref"] == "ROW0001"
+        assert item["clinical_indication_code"] == "HEADTRAUMA"
+        # sha256/size_bytes come from the export ZIP at upload time
+        assert "sha256" not in item and "size_bytes" not in item
+        assert out["blockers"] == {}
+
+    def test_blockers_reported_but_item_still_included(self, tmp_path):
+        sm = _manager(tmp_path)
+        _ready_study(sm, with_exam=dict(EXAM_OK, image_quality=None))
+
+        out = sm.build_rhythm_manifest_preview_sync([1])
+
+        assert len(out["manifest"]["items"]) == 1
+        assert out["blockers"]["0001"] == ["image_quality is not set"]
+
+    def test_missing_exam_sidecar_is_a_blocker_not_an_item(self, tmp_path):
+        sm = _manager(tmp_path)
+        register_study(sm, 2, "ready")  # no exam sidecar written
+
+        out = sm.build_rhythm_manifest_preview_sync([2])
+
+        assert out["manifest"]["items"] == []
+        assert out["blockers"]["0002"] == ["exam data has not been extracted yet"]
+
+    def test_multi_study_shares_one_batch(self, tmp_path):
+        sm = _manager(tmp_path)
+        _ready_study(sm)
+        register_study(sm, 2, "ready")
+        from pixieveil.storage.exam_sidecar import ExamSidecar
+        ExamSidecar(2, dict(EXAM_OK, study_number=2)).save(sm.base_path)
+
+        out = sm.build_rhythm_manifest_preview_sync([1, 2])
+
+        assert [i["ref"] for i in out["manifest"]["items"]] == ["ROW0001", "ROW0002"]
+
+    def test_site_code_falls_back_when_rhythm_unconfigured(self, tmp_path):
+        sm = _manager(tmp_path, rhythm_configured=False)
+        _ready_study(sm)
+
+        out = sm.build_rhythm_manifest_preview_sync([1])
+
+        assert out["site_code"] == "SITE"
+        assert out["manifest"]["site"] == "SITE"
+
+
 class TestExcludedSeriesHelper:
     def test_only_ct_series_kept(self, tmp_path):
         sm = _manager(tmp_path)

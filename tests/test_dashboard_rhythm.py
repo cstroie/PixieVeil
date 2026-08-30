@@ -40,6 +40,16 @@ class FakeSM:
         return {"ok": True, "batch": "S001-x",
                 "results": {str(x): {"ok": True} for x in numbers}}
 
+    def build_rhythm_manifest_preview_sync(self, numbers):
+        self.calls.append(("preview", tuple(numbers)))
+        return {
+            "manifest": {"v": "1.0", "type": "rhythm_server_assigned_upload_manifest",
+                         "site": "S001", "batch": "S001-x",
+                         "items": [{"ref": f"ROW{n:04d}"} for n in numbers]},
+            "blockers": {},
+            "site_code": "S001",
+        }
+
     # unused by these tests but referenced in the action method map
     async def manual_send_dicom(self, n):
         return {"ok": False}
@@ -52,11 +62,12 @@ class FakeSM:
 
 
 class FakeRequest:
-    def __init__(self, sm, *, body=None, body_raises=False, match_info=None):
+    def __init__(self, sm, *, body=None, body_raises=False, match_info=None, query=None):
         self.app = {"storage_manager": sm}
         self._body = body
         self._body_raises = body_raises
         self.match_info = match_info or {}
+        self.query = query or {}
         self.headers = {}
         self.method = "POST"
 
@@ -127,6 +138,51 @@ class TestUploadRhythmAction:
         req = FakeRequest(sm, match_info={"n": "7", "action": "nope"})
         status, _ = _payload(asyncio.run(_dash(sm).handle_study_action(req)))
         assert status == 400
+
+
+class TestManifestPreviewEndpoint:
+    def test_studies_query_delegates_and_returns_wrapper(self):
+        sm = FakeSM()
+        req = FakeRequest(sm, query={"studies": "1,2,3"})
+        status, data = _payload(asyncio.run(_dash(sm).handle_rhythm_manifest(req)))
+        assert status == 200
+        assert data["site_code"] == "S001"
+        assert data["blockers"] == {}
+        assert [i["ref"] for i in data["manifest"]["items"]] == ["ROW0001", "ROW0002", "ROW0003"]
+        assert sm.calls == [("preview", (1, 2, 3))]
+
+    def test_empty_studies_is_400(self):
+        sm = FakeSM()
+        status, _ = _payload(
+            asyncio.run(_dash(sm).handle_rhythm_manifest(FakeRequest(sm, query={"studies": ""})))
+        )
+        assert status == 400
+        assert not sm.calls
+
+    def test_non_int_studies_is_400(self):
+        sm = FakeSM()
+        req = FakeRequest(sm, query={"studies": "1,x"})
+        status, _ = _payload(asyncio.run(_dash(sm).handle_rhythm_manifest(req)))
+        assert status == 400
+
+    def test_download_returns_bare_manifest_as_attachment(self):
+        sm = FakeSM()
+        req = FakeRequest(sm, query={"studies": "1", "download": "1"})
+        resp = asyncio.run(_dash(sm).handle_rhythm_manifest(req))
+        assert resp.status == 200
+        assert resp.content_type == "application/json"
+        assert "attachment" in resp.headers["Content-Disposition"]
+        body = json.loads(resp.text)
+        assert body["type"] == "rhythm_server_assigned_upload_manifest"
+        assert "blockers" not in body        # bare manifest, not the wrapper
+
+    def test_single_study_route_delegates_one(self):
+        sm = FakeSM()
+        req = FakeRequest(sm, match_info={"n": "7"})
+        status, data = _payload(asyncio.run(_dash(sm).handle_rhythm_manifest_one(req)))
+        assert status == 200
+        assert sm.calls == [("preview", (7,))]
+        assert data["manifest"]["items"][0]["ref"] == "ROW0007"
 
 
 class TestListCapabilities:

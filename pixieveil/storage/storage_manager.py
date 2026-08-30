@@ -1322,6 +1322,71 @@ class StorageManager:
                 excluded.add(series_dir.name)
         return excluded
 
+    def _rhythm_manifest_item_sync(
+        self, study_number: int
+    ) -> Tuple[Optional[dict], Optional[str]]:
+        """Build the RHYTHM v2 manifest item for one study from its effective
+        exam sidecar. Returns ``(item, None)`` or ``(None, reason)``.
+
+        ``sha256`` / ``size_bytes`` are not set here — they describe the
+        export ZIP, which doesn't exist yet; ``manual_upload_rhythm`` fills
+        them in after ``create_zip``. The on-disk exam sidecar's canonical
+        values are already the effective ones (``exam_merge.apply_manual``
+        writes manual edits into them at save time), so it feeds
+        ``build_manifest_item`` directly.
+        """
+        exam_path = ExamSidecar.path_for(self.base_path, study_number)
+        if not exam_path.exists():
+            return None, "exam data has not been extracted yet"
+        try:
+            exam_data = ExamSidecar.load(exam_path).data
+        except Exception:
+            logger.warning("Corrupt exam sidecar for %04d", study_number, exc_info=True)
+            return None, "exam sidecar is unreadable"
+        item = rhythm_manifest.build_manifest_item(
+            exam_data,
+            study_number=study_number,
+            zip_filename=f"{study_number:04d}.zip",
+            site_code=self.rhythm_storage.site_code,
+        )
+        return item, None
+
+    def build_rhythm_manifest_preview_sync(self, study_numbers: List[int]) -> dict:
+        """Build the RHYTHM v2 batch manifest for *study_numbers* without
+        uploading anything — for inspecting or pasting into RHYTHM's own
+        validate-manifest endpoint / json-validator page.
+
+        ``sha256`` / ``size_bytes`` are omitted (computed from the export ZIP
+        at upload time). Every item is still run through
+        ``manifest_item_blockers`` and anything that would stop a real
+        upload is reported under ``blockers`` keyed by 4-digit study number,
+        so the preview makes missing data obvious without hiding it.
+        """
+        site = self.rhythm_storage.site_code or "SITE"
+        items: list[dict] = []
+        blockers: dict[str, list[str]] = {}
+        for n in study_numbers:
+            item, err = self._rhythm_manifest_item_sync(n)
+            if err:
+                blockers[f"{n:04d}"] = [err]
+                continue
+            # When RHYTHM isn't configured yet, site_code comes back unset —
+            # use the same fallback the batch wrapper does so the preview is
+            # self-consistent (a real upload can't happen without it anyway).
+            if not item.get("site_code"):
+                item["site_code"] = site
+            items.append(item)
+            item_blockers = rhythm_manifest.manifest_item_blockers(item)
+            if item_blockers:
+                blockers[f"{n:04d}"] = item_blockers
+        manifest = rhythm_manifest.build_batch_manifest(
+            items,
+            batch=self._new_rhythm_batch_id(),
+            site_code=site,
+            note="preview — sha256/size_bytes are added from the export ZIP at upload time",
+        )
+        return {"manifest": manifest, "blockers": blockers, "site_code": site}
+
     async def manual_upload_rhythm(self, study_number: int,
                                    *, batch: Optional[str] = None) -> dict:
         """Upload one ready study to the RHYTHM platform at the user's request.
@@ -1360,24 +1425,9 @@ class StorageManager:
                         "defacing did not complete for this study (a head-scan series "
                         "is still undefaced) — cannot export until that is resolved"}
 
-            exam_path = ExamSidecar.path_for(self.base_path, study_number)
-            if not exam_path.exists():
-                return {"ok": False, "message": "exam data has not been extracted yet"}
-            try:
-                exam_data = ExamSidecar.load(exam_path).data
-            except Exception:
-                logger.warning("Corrupt exam sidecar for %04d", study_number, exc_info=True)
-                return {"ok": False, "message": "exam sidecar is unreadable"}
-
-            # The on-disk exam sidecar's canonical values are already the
-            # effective ones (exam_merge.apply_manual writes manual edits into
-            # them at save time), so it feeds build_manifest_item directly.
-            item = rhythm_manifest.build_manifest_item(
-                exam_data,
-                study_number=study_number,
-                zip_filename=f"{study_number:04d}.zip",
-                site_code=self.rhythm_storage.site_code,
-            )
+            item, item_err = self._rhythm_manifest_item_sync(study_number)
+            if item_err:
+                return {"ok": False, "message": item_err}
             blockers = rhythm_manifest.manifest_item_blockers(item)
             if blockers:
                 return {"ok": False, "message":

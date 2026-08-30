@@ -10,6 +10,7 @@ Classes:
 """
 
 import asyncio
+import json
 import logging
 import time
 from pathlib import Path
@@ -113,7 +114,11 @@ class Dashboard:
             web.get("/health", self.handle_health),
             web.get("/studies", self.handle_studies_page),
             web.get("/api/studies", self.handle_list_studies),
+            # Registered before /api/studies/{n} so "rhythm-manifest" isn't
+            # parsed as a study number.
+            web.get("/api/studies/rhythm-manifest", self.handle_rhythm_manifest),
             web.get("/api/studies/{n}", self.handle_get_study),
+            web.get("/api/studies/{n}/rhythm-manifest", self.handle_rhythm_manifest_one),
             web.put("/api/studies/{n}/exam", self.handle_save_exam),
             web.post("/api/studies/rhythm-batch", self.handle_rhythm_batch),
             web.post("/api/studies/{n}/actions/{action}", self.handle_study_action),
@@ -424,6 +429,48 @@ class Dashboard:
         message = result.get("message", "")
         status = 409 if "in progress" in message else 400
         return web.json_response(result, status=status)
+
+    async def _rhythm_manifest_response(
+        self, storage_manager: "StorageManager", numbers: list, request: web.Request
+    ) -> web.Response:
+        result = await asyncio.to_thread(
+            storage_manager.build_rhythm_manifest_preview_sync, numbers
+        )
+        if request.query.get("download"):
+            # Bare manifest, as a file — for pasting into RHYTHM's own
+            # validate-manifest endpoint / json-validator page.
+            return web.Response(
+                text=json.dumps(result["manifest"], indent=2),
+                content_type="application/json",
+                headers={
+                    "Content-Disposition": 'attachment; filename="rhythm_manifest.json"'
+                },
+            )
+        return web.json_response(result)
+
+    async def handle_rhythm_manifest(self, request: web.Request) -> web.Response:
+        """Preview/download the RHYTHM v2 batch manifest for the studies in
+        the ``?studies=1,2,3`` query (add ``&download=1`` for a file). Builds
+        the manifest without uploading; `blockers` in the JSON view names
+        anything that would stop a real upload."""
+        storage_manager: StorageManager = request.app['storage_manager']
+        raw = request.query.get("studies", "")
+        try:
+            numbers = [int(x) for x in raw.split(",") if x.strip()]
+        except ValueError:
+            return web.json_response(
+                {"error": "studies must be a comma-separated list of integers"},
+                status=400,
+            )
+        if not numbers:
+            return web.json_response({"error": "no study numbers given"}, status=400)
+        return await self._rhythm_manifest_response(storage_manager, numbers, request)
+
+    async def handle_rhythm_manifest_one(self, request: web.Request) -> web.Response:
+        """Same as handle_rhythm_manifest for a single study (a 1-item batch)."""
+        n = self._coerce_study_number(request)
+        storage_manager: StorageManager = request.app['storage_manager']
+        return await self._rhythm_manifest_response(storage_manager, [n], request)
 
     async def handle_rhythm_batch(self, request: web.Request) -> web.Response:
         """Upload several studies to RHYTHM as one batch (one dashboard

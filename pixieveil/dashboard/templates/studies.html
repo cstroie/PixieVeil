@@ -227,10 +227,16 @@
                 const rhythmOk = CAPABILITIES.rhythm && CAPABILITIES.anonymization_profile === 'gdpr';
                 const rhythmBtn = CAPABILITIES.rhythm
                     ? `<button type="button" id="bulk-rhythm-btn" class="secondary" ${rhythmOk ? '' : 'disabled'} title="${rhythmOk ? '' : "requires the 'gdpr' anonymization profile"}">Upload all to RHYTHM</button>` : '';
+                const pendingNums = pending.map(s => s.study_number).join(',');
+                const rhythmManifestLinks = CAPABILITIES.rhythm
+                    ? `<small class="status-line">batch manifest: ` +
+                      `<a href="/api/studies/rhythm-manifest?studies=${pendingNums}" target="_blank" rel="noopener">preview</a> · ` +
+                      `<a href="/api/studies/rhythm-manifest?studies=${pendingNums}&download=1">download</a></small>` : '';
                 bar.innerHTML = `
                     <article class="action-row">
                         <span class="badge badge-warn">${pending.length} awaiting export</span>
                         ${dicomBtn}${httpBtn}${rhythmBtn}
+                        ${rhythmManifestLinks}
                         <small id="bulk-status" class="status-line"></small>
                     </article>
                 `;
@@ -653,6 +659,11 @@
                     ? `<small class="status-line">RHYTHM job: ${esc(study.rhythm_status)}` +
                       `${study.rhythm_batch ? ' (batch ' + esc(study.rhythm_batch) + ')' : ''}</small>`
                     : '';
+                const manifestLinks = exam
+                    ? `<small class="status-line">RHYTHM manifest: ` +
+                      `<a href="/api/studies/${n}/rhythm-manifest" target="_blank" rel="noopener">preview</a> · ` +
+                      `<a href="/api/studies/${n}/rhythm-manifest?download=1">download</a></small>`
+                    : '';
 
                 return `
                     <article>
@@ -664,6 +675,7 @@
                             <button type="button" id="btn-rhythm-${n}" ${rhythmDisabled ? 'disabled' : ''} title="${rhythmTitle}" class="secondary">${rhythmLabel}</button>
                         </div>
                         ${rhythmLine}
+                        ${manifestLinks}
                         <small id="action-status-${n}" class="status-line"></small>
                     </article>
                 `;
