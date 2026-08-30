@@ -433,26 +433,29 @@ class Dashboard:
     async def _rhythm_manifest_response(
         self, storage_manager: "StorageManager", numbers: list, request: web.Request
     ) -> web.Response:
-        result = await asyncio.to_thread(
+        manifest = await asyncio.to_thread(
             storage_manager.build_rhythm_manifest_preview_sync, numbers
         )
         if request.query.get("download"):
-            # Bare manifest, as a file — for pasting into RHYTHM's own
+            # Pristine v2 manifest, as a file — strip the preview-only
+            # `blockers` key so it can go straight into RHYTHM's own
             # validate-manifest endpoint / json-validator page.
+            manifest = {k: v for k, v in manifest.items() if k != "blockers"}
             return web.Response(
-                text=json.dumps(result["manifest"], indent=2),
+                text=json.dumps(manifest, indent=2),
                 content_type="application/json",
                 headers={
                     "Content-Disposition": 'attachment; filename="rhythm_manifest.json"'
                 },
             )
-        return web.json_response(result)
+        return web.json_response(manifest)
 
     async def handle_rhythm_manifest(self, request: web.Request) -> web.Response:
         """Preview/download the RHYTHM v2 batch manifest for the studies in
         the ``?studies=1,2,3`` query (add ``&download=1`` for a file). Builds
-        the manifest without uploading; `blockers` in the JSON view names
-        anything that would stop a real upload."""
+        the manifest without uploading; the JSON view adds a top-level
+        `blockers` key naming anything that would stop a real upload (the
+        download omits it)."""
         storage_manager: StorageManager = request.app['storage_manager']
         raw = request.query.get("studies", "")
         try:

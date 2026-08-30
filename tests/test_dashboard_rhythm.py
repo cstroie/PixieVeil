@@ -42,13 +42,14 @@ class FakeSM:
 
     def build_rhythm_manifest_preview_sync(self, numbers):
         self.calls.append(("preview", tuple(numbers)))
-        return {
-            "manifest": {"v": "1.0", "type": "rhythm_server_assigned_upload_manifest",
-                         "site": "S001", "batch": "S001-x",
-                         "items": [{"ref": f"ROW{n:04d}"} for n in numbers]},
-            "blockers": {},
-            "site_code": "S001",
+        m = {
+            "v": "1.0", "type": "rhythm_server_assigned_upload_manifest",
+            "site": "S001", "batch": "S001-x",
+            "items": [{"ref": f"ROW{n:04d}"} for n in numbers],
         }
+        if any(n == 9 for n in numbers):     # study 9 stands in for "has a blocker"
+            m["blockers"] = {"0009": ["image_quality is not set"]}
+        return m
 
     # unused by these tests but referenced in the action method map
     async def manual_send_dicom(self, n):
@@ -141,15 +142,31 @@ class TestUploadRhythmAction:
 
 
 class TestManifestPreviewEndpoint:
-    def test_studies_query_delegates_and_returns_wrapper(self):
+    def test_studies_query_returns_the_v2_manifest_directly(self):
         sm = FakeSM()
         req = FakeRequest(sm, query={"studies": "1,2,3"})
         status, data = _payload(asyncio.run(_dash(sm).handle_rhythm_manifest(req)))
         assert status == 200
-        assert data["site_code"] == "S001"
-        assert data["blockers"] == {}
-        assert [i["ref"] for i in data["manifest"]["items"]] == ["ROW0001", "ROW0002", "ROW0003"]
+        # the manifest itself, not a wrapper — RHYTHM detects v2 by top-level type
+        assert data["type"] == "rhythm_server_assigned_upload_manifest"
+        assert [i["ref"] for i in data["items"]] == ["ROW0001", "ROW0002", "ROW0003"]
         assert sm.calls == [("preview", (1, 2, 3))]
+
+    def test_json_view_keeps_blockers_download_strips_them(self):
+        sm = FakeSM()
+        view = _payload(
+            asyncio.run(_dash(sm).handle_rhythm_manifest(
+                FakeRequest(sm, query={"studies": "9"})))
+        )[1]
+        assert view["blockers"] == {"0009": ["image_quality is not set"]}
+
+        resp = asyncio.run(_dash(sm).handle_rhythm_manifest(
+            FakeRequest(sm, query={"studies": "9", "download": "1"})))
+        assert resp.content_type == "application/json"
+        assert "attachment" in resp.headers["Content-Disposition"]
+        body = json.loads(resp.text)
+        assert body["type"] == "rhythm_server_assigned_upload_manifest"
+        assert "blockers" not in body
 
     def test_empty_studies_is_400(self):
         sm = FakeSM()
@@ -165,24 +182,13 @@ class TestManifestPreviewEndpoint:
         status, _ = _payload(asyncio.run(_dash(sm).handle_rhythm_manifest(req)))
         assert status == 400
 
-    def test_download_returns_bare_manifest_as_attachment(self):
-        sm = FakeSM()
-        req = FakeRequest(sm, query={"studies": "1", "download": "1"})
-        resp = asyncio.run(_dash(sm).handle_rhythm_manifest(req))
-        assert resp.status == 200
-        assert resp.content_type == "application/json"
-        assert "attachment" in resp.headers["Content-Disposition"]
-        body = json.loads(resp.text)
-        assert body["type"] == "rhythm_server_assigned_upload_manifest"
-        assert "blockers" not in body        # bare manifest, not the wrapper
-
     def test_single_study_route_delegates_one(self):
         sm = FakeSM()
         req = FakeRequest(sm, match_info={"n": "7"})
         status, data = _payload(asyncio.run(_dash(sm).handle_rhythm_manifest_one(req)))
         assert status == 200
         assert sm.calls == [("preview", (7,))]
-        assert data["manifest"]["items"][0]["ref"] == "ROW0007"
+        assert data["items"][0]["ref"] == "ROW0007"
 
 
 class TestListCapabilities:

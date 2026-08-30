@@ -1356,11 +1356,16 @@ class StorageManager:
         uploading anything — for inspecting or pasting into RHYTHM's own
         validate-manifest endpoint / json-validator page.
 
-        ``sha256`` / ``size_bytes`` are omitted (computed from the export ZIP
-        at upload time). Every item is still run through
-        ``manifest_item_blockers`` and anything that would stop a real
-        upload is reported under ``blockers`` keyed by 4-digit study number,
-        so the preview makes missing data obvious without hiding it.
+        Returns the manifest dict itself (top-level `type`/`items`/... so
+        RHYTHM detects it as v2). ``sha256`` / ``size_bytes`` are omitted
+        (computed from the export ZIP at upload time). Every item is still
+        run through ``manifest_item_blockers``; anything that would stop a
+        real upload is listed under an extra top-level ``blockers`` key
+        (keyed by 4-digit study number) — RHYTHM's v2 schema allows extra
+        properties, and the dashboard's download link strips it for a
+        pristine file. ``site_code`` stays null when RHYTHM isn't configured
+        and is reported as a blocker rather than back-filled with a
+        placeholder.
         """
         site = self.rhythm_storage.site_code or "SITE"
         items: list[dict] = []
@@ -1370,11 +1375,6 @@ class StorageManager:
             if err:
                 blockers[f"{n:04d}"] = [err]
                 continue
-            # When RHYTHM isn't configured yet, site_code comes back unset —
-            # use the same fallback the batch wrapper does so the preview is
-            # self-consistent (a real upload can't happen without it anyway).
-            if not item.get("site_code"):
-                item["site_code"] = site
             items.append(item)
             item_blockers = rhythm_manifest.manifest_item_blockers(item)
             if item_blockers:
@@ -1385,7 +1385,9 @@ class StorageManager:
             site_code=site,
             note="preview — sha256/size_bytes are added from the export ZIP at upload time",
         )
-        return {"manifest": manifest, "blockers": blockers, "site_code": site}
+        if blockers:
+            manifest["blockers"] = blockers
+        return manifest
 
     async def manual_upload_rhythm(self, study_number: int,
                                    *, batch: Optional[str] = None) -> dict:

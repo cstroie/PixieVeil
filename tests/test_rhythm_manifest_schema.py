@@ -104,6 +104,16 @@ class TestBatchAgainstSchema:
         )
         assert vendored.validate_manifest_v2(manifest) == []
 
+    def test_preview_blockers_key_does_not_break_v2_validation(self, vendored):
+        # The /rhythm-manifest JSON view adds a top-level `blockers` key;
+        # RHYTHM's v2 root schema is additionalProperties:true, so a file
+        # that still carries it must validate.
+        manifest = rm.build_batch_manifest(
+            [_full_item()], batch="b", site_code="S001"
+        )
+        manifest["blockers"] = {"0053": ["site_code is not set"]}
+        assert vendored.validate_manifest_v2(manifest) == []
+
     def test_batch_with_duplicate_ref_is_rejected(self, vendored):
         item = _full_item()
         manifest = rm.build_batch_manifest(
