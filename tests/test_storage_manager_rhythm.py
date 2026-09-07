@@ -8,6 +8,9 @@ the network.
 """
 
 import asyncio
+import json
+import os
+import time
 
 from pydicom.uid import (
     CTImageStorage,
@@ -70,11 +73,13 @@ class FakeRhythm:
         return self._job_result
 
 
-def _manager(tmp_path, *, profile="gdpr", rhythm_configured=True):
+def _manager(tmp_path, *, profile="gdpr", rhythm_configured=True, retain_days=None):
     storage = {
         "base_path": str(tmp_path / "data"),
         "temp_path": str(tmp_path / "tmp"),
     }
+    if retain_days is not None:
+        storage["retain_after_export_days"] = retain_days
     if rhythm_configured:
         storage["remote_storage"] = {
             "rhythm": {
@@ -453,3 +458,135 @@ class TestExcludedSeriesHelper:
     def test_batch_id_uses_site_code(self, tmp_path):
         sm = _manager(tmp_path)
         assert sm._new_rhythm_batch_id().startswith("S001-")
+
+
+class TestRetentionAsZip:
+    """retain_after_export_days set -> a RHYTHM-finalized study is kept as
+    retain_path/<NNNN>.zip + <NNNN>.json (the audit manifest), not a moved
+    directory tree."""
+
+    _COMPLETE = RhythmUploadResult(ok=True, status="COMPLETE")
+
+    def _upload_then_complete(self, sm):
+        _ready_study(sm)
+        assert asyncio.run(sm.manual_upload_rhythm(1))["ok"] is True
+        asyncio.run(sm.reconcile_rhythm_jobs())
+
+    def test_finalize_keeps_zip_and_manifest(self, tmp_path):
+        sm = _manager(tmp_path, retain_days=7)
+        sm.rhythm_storage = FakeRhythm(OK_RESULT, job_result=self._COMPLETE)
+        self._upload_then_complete(sm)
+
+        retained = sm.retained_path
+        zip_path = retained / "0001.zip"
+        json_path = retained / "0001.json"
+        assert zip_path.exists()
+        assert json_path.exists()
+        assert not (sm.base_path / "0001").exists()      # working copy gone
+        assert not (retained / "0001").is_dir()          # not the old shape
+
+        manifest = json.loads(json_path.read_text())
+        assert manifest["type"] == "rhythm_server_assigned_upload_manifest"
+        assert len(manifest["items"]) == 1
+        item = manifest["items"][0]
+        # the audit hash is the hash of the bytes actually on disk, and the
+        # same value RHYTHM was told to verify at upload
+        from pixieveil.storage.rhythm_storage import sha256_file
+        assert item["sha256"] == sha256_file(zip_path)
+        assert sm.rhythm_storage.calls[0]["file_hash"] == item["sha256"]
+        assert item["size_bytes"] == zip_path.stat().st_size
+
+        sc = sm.find_sidecar_by_number(1)
+        assert sc.status == "archived"
+        assert sc.archived_via == "rhythm"
+        assert sc.rhythm_zip_sha256 == item["sha256"]
+        assert sc.rhythm_zip_size == item["size_bytes"]
+
+    def test_no_retain_config_still_deletes(self, tmp_path):
+        sm = _manager(tmp_path)  # retain_days unset
+        sm.rhythm_storage = FakeRhythm(OK_RESULT, job_result=self._COMPLETE)
+        self._upload_then_complete(sm)
+
+        assert not (sm.base_path / "0001").exists()
+        assert not (sm.retained_path / "0001.zip").exists()
+        assert sm.find_sidecar_by_number(1).rhythm_zip_sha256 is None
+
+    def test_failed_upload_does_not_stash_zip(self, tmp_path):
+        sm = _manager(tmp_path, retain_days=7)
+        sm.rhythm_storage = FakeRhythm(RhythmUploadResult(ok=False, error="boom"))
+        _ready_study(sm)
+
+        asyncio.run(sm.manual_upload_rhythm(1))
+
+        assert not (sm.retained_path / "0001.zip").exists()
+        assert sm.find_sidecar_by_number(1).rhythm_zip_sha256 is None
+
+    def test_dashboard_serves_retained_manifest_verbatim(self, tmp_path):
+        sm = _manager(tmp_path, retain_days=7)
+        sm.rhythm_storage = FakeRhythm(OK_RESULT, job_result=self._COMPLETE)
+        self._upload_then_complete(sm)
+
+        on_disk = json.loads((sm.retained_path / "0001.json").read_text())
+        assert sm.load_retained_rhythm_manifest_sync(1) == on_disk
+        assert sm.load_retained_rhythm_manifest_sync(2) is None
+
+    def test_purge_removes_zip_and_manifest_pair(self, tmp_path):
+        sm = _manager(tmp_path, retain_days=7)
+        sm.rhythm_storage = FakeRhythm(OK_RESULT, job_result=self._COMPLETE)
+        self._upload_then_complete(sm)
+        zip_path = sm.retained_path / "0001.zip"
+        json_path = sm.retained_path / "0001.json"
+
+        old = time.time() - 8 * 86400      # past the 7-day window
+        os.utime(json_path, (old, old))
+        sm.enforce_retention_purge_sync()
+
+        assert not zip_path.exists()
+        assert not json_path.exists()
+
+    def test_purge_keeps_pair_within_window(self, tmp_path):
+        sm = _manager(tmp_path, retain_days=7)
+        sm.rhythm_storage = FakeRhythm(OK_RESULT, job_result=self._COMPLETE)
+        self._upload_then_complete(sm)
+
+        sm.enforce_retention_purge_sync()
+
+        assert (sm.retained_path / "0001.zip").exists()
+        assert (sm.retained_path / "0001.json").exists()
+
+    def test_retained_zip_pair_is_not_re_sendable(self, tmp_path):
+        """resolve_study_dir only finds directories, so a RHYTHM-retained
+        study (flat zip+json, no dir) can't be re-sent by any path."""
+        sm = _manager(tmp_path, retain_days=7)
+        sm.rhythm_storage = FakeRhythm(OK_RESULT, job_result=self._COMPLETE)
+        self._upload_then_complete(sm)
+        assert (sm.retained_path / "0001.zip").exists()
+
+        r = asyncio.run(sm.manual_upload_rhythm(1))
+        assert r == {"ok": False, "message": "study directory not found"}
+
+    def test_purge_ages_off_stray_manifest_without_zip(self, tmp_path):
+        sm = _manager(tmp_path, retain_days=7)
+        sm.retained_path.mkdir(parents=True, exist_ok=True)
+        stray = sm.retained_path / "0007.json"
+        stray.write_text("{}")
+        old = time.time() - 9 * 86400
+        os.utime(stray, (old, old))
+
+        sm.enforce_retention_purge_sync()
+
+        assert not stray.exists()
+
+    def test_purge_falls_back_to_zip_mtime_for_orphan(self, tmp_path):
+        """A ZIP stashed by an upload whose job never reached COMPLETE has no
+        manifest beside it; purge must still age it out on its own mtime."""
+        sm = _manager(tmp_path, retain_days=7)
+        sm.retained_path.mkdir(parents=True, exist_ok=True)
+        orphan = sm.retained_path / "0042.zip"
+        orphan.write_bytes(b"PK\x05\x06" + b"\x00" * 18)
+        old = time.time() - 9 * 86400
+        os.utime(orphan, (old, old))
+
+        sm.enforce_retention_purge_sync()
+
+        assert not orphan.exists()

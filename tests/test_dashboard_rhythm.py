@@ -40,6 +40,12 @@ class FakeSM:
         return {"ok": True, "batch": "S001-x",
                 "results": {str(x): {"ok": True} for x in numbers}}
 
+    def load_retained_rhythm_manifest_sync(self, n):
+        # No study is retained in these tests -> always fall through to the
+        # preview builder. (Retained-verbatim serving is covered in
+        # test_storage_manager_rhythm.py::TestRetentionAsZip.)
+        return None
+
     def build_rhythm_manifest_preview_sync(self, numbers):
         self.calls.append(("preview", tuple(numbers)))
         m = {

@@ -370,16 +370,18 @@ class StudyManager:
             sc.save(self._base_path)
 
     _RHYTHM_JOB_FIELDS = frozenset(
-        {"batch", "session_id", "job_id", "job_status_url", "status"}
+        {"batch", "session_id", "job_id", "job_status_url", "status",
+         "zip_sha256", "zip_size"}
     )
 
-    def set_rhythm_job(self, original_study_uid: str, **fields: Optional[str]) -> None:
+    def set_rhythm_job(self, original_study_uid: str, **fields: object) -> None:
         """Persist RHYTHM upload job-tracking onto the study sidecar.
 
         Accepts ``batch``/``session_id``/``job_id``/``job_status_url``/
-        ``status`` (written to the matching ``rhythm_*`` attribute); other
-        keys are ignored. A ``None`` value clears its field. No-op if the
-        sidecar is unknown or sidecar persistence is disabled.
+        ``status``/``zip_sha256``/``zip_size`` (written to the matching
+        ``rhythm_*`` attribute); other keys are ignored. A ``None`` value
+        clears its field. ``zip_size`` is an int, the rest are strings.
+        No-op if the sidecar is unknown or sidecar persistence is disabled.
         """
         if self._base_path is None:
             return

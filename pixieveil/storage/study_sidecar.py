@@ -97,6 +97,12 @@ class StudySidecar:
     rhythm_job_id: Optional[str] = None
     rhythm_job_status_url: Optional[str] = None
     rhythm_status: Optional[str] = None
+    # Set once the uploaded export ZIP has been stashed under retain_path
+    # (retain_after_export_days configured): the sha256/size RHYTHM verified,
+    # reused verbatim in the retained <NNNN>.json audit manifest so it stays
+    # truthful without re-zipping.
+    rhythm_zip_sha256: Optional[str] = None
+    rhythm_zip_size: Optional[int] = None
 
     # ------------------------------------------------------------------
     # Construction helpers

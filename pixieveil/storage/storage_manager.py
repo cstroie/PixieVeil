@@ -942,31 +942,66 @@ class StorageManager:
             return
 
         cutoff = time.time() - (retain_days * 86400)
-        for study_dir in self.retained_path.iterdir():
-            if not study_dir.is_dir():
+        for entry in self.retained_path.iterdir():
+            if entry.is_file() and entry.suffix in (".zip", ".json") and entry.stem.isdigit():
+                # RHYTHM retention shape: <NNNN>.zip + <NNNN>.json (manifest).
+                # The manifest is written at finalize time, so its mtime is
+                # the retention clock; fall back to the ZIP's own for an
+                # orphan ZIP (a job that never reached COMPLETE). Purge the
+                # pair together, and only from the .zip side so a pair is
+                # never handled twice in one pass (a stray .json with no .zip
+                # still gets aged off on its own mtime).
+                zip_path = entry.with_suffix(".zip")
+                manifest = entry.with_suffix(".json")
+                if entry.suffix == ".json" and zip_path.exists():
+                    continue  # handled (or will be) via the .zip entry
+                clock_src = manifest if manifest.exists() else zip_path
+                try:
+                    retained_at = clock_src.stat().st_mtime
+                except OSError:
+                    continue
+                if retained_at < cutoff:
+                    try:
+                        zip_path.unlink(missing_ok=True)
+                        manifest.unlink(missing_ok=True)
+                        logger.info(
+                            "Retention: purged %s + manifest (older than "
+                            "retain_after_export_days=%s)", zip_path.name, retain_days,
+                        )
+                    except OSError:
+                        logger.warning(
+                            "Retention: failed to purge %s / its manifest "
+                            "(older than retain_after_export_days=%s)",
+                            zip_path.name, retain_days, exc_info=True,
+                        )
                 continue
-            marker = study_dir / ".retained_at"
+            if not entry.is_dir():
+                continue
+            marker = entry / ".retained_at"
             try:
-                retained_at = float(marker.read_text()) if marker.exists() else study_dir.stat().st_mtime
+                retained_at = (
+                    float(marker.read_text())
+                    if marker.exists() else entry.stat().st_mtime
+                )
             except (OSError, ValueError):
-                retained_at = study_dir.stat().st_mtime
+                retained_at = entry.stat().st_mtime
             if retained_at < cutoff:
                 # ignore_errors=True so one bad file doesn't stop the rest
                 # of this loop's purges — but that also means rmtree can
                 # leave the directory partially intact without raising, so
                 # the log line must check reality instead of assuming
                 # success.
-                shutil.rmtree(study_dir, ignore_errors=True)
-                if study_dir.exists():
+                shutil.rmtree(entry, ignore_errors=True)
+                if entry.exists():
                     logger.warning(
                         "Retention: failed to fully purge %s (older than "
                         "retain_after_export_days=%s) — some files may remain",
-                        study_dir.name, retain_days,
+                        entry.name, retain_days,
                     )
                 else:
                     logger.info(
                         "Retention: purged %s (older than retain_after_export_days=%s)",
-                        study_dir.name, retain_days,
+                        entry.name, retain_days,
                     )
 
     async def enforce_retention_purge(self) -> None:
@@ -1467,24 +1502,42 @@ class StorageManager:
                 lambda: zip_path.stat().st_size
             )
 
+            stashed = False
             try:
                 result = await self.rhythm_storage.upload_study(
                     zip_path, item, batch, file_hash=zip_sha
                 )
+                if (result.ok
+                        and self.settings.storage.get("retain_after_export_days")
+                        and (sc is None or sc.status != "archived")):
+                    # Keep the exact ZIP RHYTHM verified so the retained
+                    # audit copy's manifest sha256/size stay truthful with no
+                    # re-zip. The <NNNN>.json manifest is written beside it by
+                    # _finalize_rhythm_export once the job reaches COMPLETE.
+                    # (Skipped for a re-send of an already-archived study —
+                    # its retained pair is already in place.)
+                    await asyncio.to_thread(
+                        self._stash_rhythm_zip_sync, zip_path, study_number
+                    )
+                    stashed = True
             finally:
-                await asyncio.to_thread(zip_path.unlink, missing_ok=True)
+                if not stashed:
+                    await asyncio.to_thread(zip_path.unlink, missing_ok=True)
 
             # Persist whatever RHYTHM handed back — success or not — so the
             # dashboard can show job state / the failure reason.
             if sc is not None:
-                self.study_manager.set_rhythm_job(
-                    sc.original_study_uid,
+                job_fields: dict = dict(
                     batch=batch,
                     session_id=result.session_id,
                     job_id=result.job_id,
                     job_status_url=result.job_status_url,
                     status="uploaded" if result.ok else "failed",
                 )
+                if stashed:
+                    job_fields["zip_sha256"] = zip_sha
+                    job_fields["zip_size"] = item["size_bytes"]
+                self.study_manager.set_rhythm_job(sc.original_study_uid, **job_fields)
 
             if result.ok:
                 # upload_study returns once the chunks are assembled and an
@@ -1586,9 +1639,72 @@ class StorageManager:
             self.inc_counter('export', 'rhythm_images', image_count)
             self.inc_counter('cleanup', 'studies')
             self.inc_counter('cleanup', 'images', image_count)
-        await asyncio.to_thread(self._retain_or_delete_sync, study_dir)
+
+        if self.settings.storage.get("retain_after_export_days") and sc.rhythm_zip_sha256:
+            # The uploaded ZIP was already moved to retain_path/<NNNN>.zip at
+            # upload time; write the audit manifest beside it and drop the
+            # working copy. (No zip_sha256 → stash failed / pre-dates this;
+            # fall back to the shared move-the-directory retention.)
+            await asyncio.to_thread(self._retain_rhythm_audit_sync, sc)
+            await asyncio.to_thread(shutil.rmtree, study_dir)
+        else:
+            await asyncio.to_thread(self._retain_or_delete_sync, study_dir)
         self.study_manager.mark_study_archived(sc.original_study_uid, via="rhythm")
         logger.info("RHYTHM export of study %04d finalized (COMPLETE)", sc.study_number)
+
+    def _stash_rhythm_zip_sync(self, zip_path: Path, study_number: int) -> None:
+        """Move a just-uploaded RHYTHM export ZIP into ``retain_path`` as
+        ``<NNNN>.zip`` (latest upload attempt wins). Its audit manifest
+        ``<NNNN>.json`` is written next to it by ``_finalize_rhythm_export``
+        once the ingest job reaches COMPLETE."""
+        self.retained_path.mkdir(parents=True, exist_ok=True)
+        dest = self.retained_path / f"{study_number:04d}.zip"
+        shutil.move(str(zip_path), str(dest))
+        logger.debug("RHYTHM: stashed export ZIP for retention at %s", dest)
+
+    def _retain_rhythm_audit_sync(self, sc: StudySidecar) -> None:
+        """Write ``retain_path/<NNNN>.json`` — the RHYTHM v2 batch manifest
+        for the ZIP that was ingested (already stashed as ``<NNNN>.zip``),
+        carrying the real ``sha256``/``size_bytes`` RHYTHM verified. Its
+        mtime is the retention clock ``enforce_retention_purge`` reads."""
+        n = sc.study_number
+        item, err = self._rhythm_manifest_item_sync(n)
+        if item is None:
+            logger.warning(
+                "RHYTHM retain: no audit manifest written for %04d (%s)", n, err
+            )
+            return
+        item["sha256"] = sc.rhythm_zip_sha256
+        if sc.rhythm_zip_size is not None:
+            item["size_bytes"] = sc.rhythm_zip_size
+        manifest = rhythm_manifest.build_batch_manifest(
+            [item],
+            batch=sc.rhythm_batch or "unknown",
+            site_code=self.rhythm_storage.site_code or "SITE",
+            note="retained audit copy of the batch RHYTHM ingested",
+        )
+        self.retained_path.mkdir(parents=True, exist_ok=True)
+        dest = self.retained_path / f"{n:04d}.json"
+        tmp = dest.with_name(dest.name + ".tmp")
+        tmp.write_text(json.dumps(manifest, indent=2))
+        tmp.replace(dest)
+        logger.info("RHYTHM: wrote retained audit manifest %s", dest)
+
+    def load_retained_rhythm_manifest_sync(self, study_number: int) -> Optional[dict]:
+        """The audit manifest written beside a RHYTHM-retained study
+        (``retain_path/<NNNN>.json``), or ``None`` if there isn't one / it
+        is unreadable. The dashboard serves this verbatim for an archived
+        study instead of rebuilding a preview."""
+        path = self.retained_path / f"{study_number:04d}.json"
+        if not path.exists():
+            return None
+        try:
+            return json.loads(path.read_text())
+        except (OSError, ValueError):
+            logger.warning(
+                "Unreadable retained RHYTHM manifest: %s", path, exc_info=True
+            )
+            return None
 
     def _manual_reextract_sync(self, study_number: int, study_dir: Path) -> dict:
         exam_path = ExamSidecar.path_for(self.base_path, study_number)
