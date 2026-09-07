@@ -62,6 +62,11 @@ class ZipManager:
                 # Skip pre-deface backups
                 if any(part.endswith("_pre_deface") for part in file_path.parts):
                     continue
+                # Never ship the internal pre-anonymization extraction hints
+                # (Manufacturer / StationName / descriptions — exactly the
+                # values the rhythm profile strips from the .dcm files).
+                if file_path.name == ".exam_hints.json":
+                    continue
                 if exclude is not None and exclude(file_path):
                     continue
                 arcname = file_path.relative_to(study_dir)

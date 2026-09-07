@@ -119,6 +119,15 @@ class StorageManager:
         # Per-study accumulated byte counts for new studies received this session.
         # Existing studies (loaded from disk on startup) are not tracked here.
         self.study_size_bytes: Dict[str, int] = {}
+
+        # Per-study pre-anonymization extraction hints (Manufacturer / model /
+        # ProtocolName / StudyDescription / per-series SeriesDescription),
+        # captured from each raw image before anonymize() strips them. Kept in
+        # memory as the most complete view and flushed to
+        # <study_dir>/.exam_hints.json once per series, so ExamExtractor can
+        # still resolve the scanner/indication after the study completes even
+        # under the 'rhythm' profile. "first non-empty wins" per field.
+        self._exam_hints: Dict[str, Dict[str, Any]] = {}
         
         # Statistics counters. Dict[str, Any], not something more precise
         # like Dict[str, Dict[str, Any]] or a TypedDict per category —
@@ -621,6 +630,19 @@ class StorageManager:
                         self.inc_counter('processing', 'filtered_images')
                     return
 
+            # Capture the handful of non-PHI technical fields ExamExtractor
+            # needs for the scanner/indication lookup *before* anonymize()
+            # runs — the 'rhythm' profile strips Manufacturer / model /
+            # ProtocolName / StudyDescription / SeriesDescription outright, so
+            # by the time extraction reads the completed study they're gone.
+            pre_anon_hints = {
+                "manufacturer": str(getattr(ds, "Manufacturer", "") or "").strip(),
+                "model": str(getattr(ds, "ManufacturerModelName", "") or "").strip(),
+                "protocol_name": str(getattr(ds, "ProtocolName", "") or "").strip(),
+                "study_description": str(getattr(ds, "StudyDescription", "") or "").strip(),
+                "series_description": str(getattr(ds, "SeriesDescription", "") or "").strip(),
+            }
+
             # Anonymize the DICOM dataset
             logger.debug(f"Starting anonymization of image {image_id}")
             try:
@@ -640,10 +662,17 @@ class StorageManager:
             # Assign study/series/image numbers using StudyManager
             study_number, series_number, image_number, is_new_series = self.study_manager.add_image_to_study(study_uid, series_uid)
 
+            # Accumulate the pre-anon extraction hints (first non-empty value
+            # per field wins), and flush to disk once per series so a crash
+            # mid-study doesn't lose them.
+            self._merge_exam_hints_mem(study_uid, series_number, pre_anon_hints)
+
             # Update storage counters and persist sidecar for new study/series
             if is_new_series:
                 base_path = self.base_path
                 study_dir = base_path / f"{study_number:04d}"
+                study_dir.mkdir(exist_ok=True)
+                self._flush_exam_hints_sync(study_dir, self._exam_hints.get(study_uid))
                 if not study_dir.exists():
                     with self.lock:
                         self.inc_counter('storage', 'studies')
@@ -846,6 +875,8 @@ class StorageManager:
             logger.exception("Unexpected error processing study %s", study_uid)
         finally:
             self._processing_studies.discard(study_uid)
+            # The .exam_hints.json on disk is the record from here on.
+            self._exam_hints.pop(study_uid, None)
 
     def _write_exam_sidecar(self, study_uid: str, study_number: int, study_dir: Path) -> None:
         """
@@ -855,8 +886,65 @@ class StorageManager:
         """
         sc = self.study_manager.get_sidecar_by_uid(study_uid)
         anonymized_study_uid = sc.anonymized_study_uid if sc is not None else ""
-        data = self.exam_extractor.extract(study_dir, study_number, anonymized_study_uid)
+        # In-memory hints are the most complete view; fall back to the
+        # on-disk .exam_hints.json for a study re-queued after a restart.
+        # Persist the winning view so a *later* restart + re-extract sees it
+        # (the per-series flush during receive can lag by a series' images).
+        hints = self._exam_hints.get(study_uid) or self._load_exam_hints_sync(study_dir)
+        self._flush_exam_hints_sync(study_dir, hints)
+        data = self.exam_extractor.extract(
+            study_dir, study_number, anonymized_study_uid, hints=hints
+        )
         ExamSidecar(study_number, data).save(self.base_path)
+
+    # -- pre-anonymization extraction hints --------------------------------
+    #
+    # ExamExtractor runs on the completed, already-anonymized study. Under the
+    # 'rhythm' profile that means Manufacturer / ManufacturerModelName /
+    # ProtocolName / StudyDescription / SeriesDescription are gone by then, so
+    # the scanner_lookup / indication_lookup matches would all miss. These
+    # helpers stash those five fields from each raw image before anonymize()
+    # and hand them back to extract() as a fallback.
+
+    _EXAM_HINT_STUDY_KEYS = ("manufacturer", "model", "protocol_name", "study_description")
+
+    def _merge_exam_hints_mem(self, study_uid: str, series_number: int,
+                              raw: Dict[str, str]) -> None:
+        """First-non-empty merge of one image's *raw* hints into the in-memory
+        per-study accumulator."""
+        h = self._exam_hints.setdefault(study_uid, {"study": {}, "series": {}})
+        for k in self._EXAM_HINT_STUDY_KEYS:
+            if raw.get(k) and not h["study"].get(k):
+                h["study"][k] = raw[k]
+        sd = raw.get("series_description")
+        skey = str(series_number)
+        if sd and not h["series"].get(skey):
+            h["series"][skey] = {"series_description": sd}
+
+    @staticmethod
+    def _flush_exam_hints_sync(study_dir: Path, hints: Optional[dict]) -> None:
+        """Atomically write *hints* to <study_dir>/.exam_hints.json (no-op if
+        empty). Excluded from every export ZIP by ZipManager."""
+        if not hints:
+            return
+        dest = study_dir / ".exam_hints.json"
+        tmp = dest.with_name(dest.name + ".tmp")
+        try:
+            tmp.write_text(json.dumps(hints, indent=2))
+            tmp.replace(dest)
+        except OSError:
+            logger.warning("Could not write %s", dest, exc_info=True)
+
+    @staticmethod
+    def _load_exam_hints_sync(study_dir: Path) -> Optional[dict]:
+        path = study_dir / ".exam_hints.json"
+        if not path.exists():
+            return None
+        try:
+            return json.loads(path.read_text())
+        except (OSError, ValueError):
+            logger.warning("Unreadable %s — ignoring", path, exc_info=True)
+            return None
 
     def _deface_study(self, study_uid: str, study_number: int, study_dir: Path) -> None:
         """
@@ -919,6 +1007,12 @@ class StorageManager:
         can remove it once the window elapses. Otherwise deletes it right
         away, matching the original always-delete behavior.
         """
+        # The pre-anon extraction hints have served their purpose once the
+        # exam sidecar exists; don't let them linger in the retained copy
+        # (they hold Manufacturer/StudyDescription/ProtocolName — the values
+        # the rhythm profile deliberately strips from the DICOM beside them).
+        (study_dir / ".exam_hints.json").unlink(missing_ok=True)
+
         retain_days = self.settings.storage.get("retain_after_export_days")
         if not retain_days:
             shutil.rmtree(study_dir)
@@ -1744,7 +1838,11 @@ class StorageManager:
         sc = self.find_sidecar_by_number(study_number)
         anonymized_study_uid = sc.anonymized_study_uid if sc is not None else ""
 
-        fresh = self.exam_extractor.extract(study_dir, study_number, anonymized_study_uid)
+        # study is long past receive by now, so the hints only live on disk
+        hints = self._load_exam_hints_sync(study_dir)
+        fresh = self.exam_extractor.extract(
+            study_dir, study_number, anonymized_study_uid, hints=hints
+        )
         merged = exam_merge.merge_extracted(fresh, previous)
         ExamSidecar(study_number, merged).save(self.base_path)
         return merged

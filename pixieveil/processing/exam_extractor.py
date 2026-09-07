@@ -351,11 +351,21 @@ class ExamExtractor:
 
     # ------------------------------------------------------------------
 
-    def _scan_dicom_files(self, study_dir: Path) -> Dict[str, Any]:
+    def _scan_dicom_files(
+        self, study_dir: Path, hints: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
         """
         Read every anonymized .dcm under study_dir once, accumulating the raw
         study-level headers, patient age/weight, RDSR content, and per-series
         technique records that extract() turns into the exam-data dict.
+
+        *hints* is the optional ``{"study": {...}, "series": {"<n>": {...}}}``
+        dict StorageManager captured from the raw images before anonymization
+        — it seeds ``manufacturer`` / ``model`` / ``protocol_name`` /
+        ``study_description`` and per-series ``series_description`` so the
+        scanner/indication lookups still resolve under the ``rhythm``
+        anonymization profile, which strips those tags from the stored files.
+        A real header value still wins over a hint when both are present.
 
         Keyed by DICOM SeriesNumber. NOT the same thing as an "irradiation
         event"/RDSR acquisition — one acquisition can be reconstructed into
@@ -467,6 +477,20 @@ class ExamExtractor:
             )
             _first_float(rec, "spiral_pitch_factor", getattr(ds, "SpiralPitchFactor", None))
 
+        # Fill anything the (possibly rhythm-anonymized) headers left blank
+        # from the pre-anonymization hints — a real header value always wins.
+        study_hints = (hints or {}).get("study", {})
+        manufacturer = manufacturer or (study_hints.get("manufacturer") or None)
+        model = model or (study_hints.get("model") or None)
+        protocol_name = protocol_name or study_hints.get("protocol_name", "")
+        study_description = study_description or study_hints.get("study_description", "")
+        series_hints = (hints or {}).get("series", {})
+        for skey, rec in series_records.items():
+            if not rec["series_description"]:
+                rec["series_description"] = (
+                    series_hints.get(skey, {}).get("series_description", "")
+                )
+
         return {
             "dcm_files": dcm_files,
             "manufacturer": manufacturer,
@@ -517,11 +541,17 @@ class ExamExtractor:
         return series_list, any_estimated_dlp
 
     def extract(self, study_dir: Path, study_number: int,
-                anonymized_study_uid: str) -> Dict[str, Any]:
-        """Read every .dcm in study_dir and build the exam-data dict."""
+                anonymized_study_uid: str,
+                hints: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Read every .dcm in study_dir and build the exam-data dict.
+
+        *hints* — see ``_scan_dicom_files``; the pre-anonymization
+        scanner/description values, needed when the study was anonymized
+        under the ``rhythm`` profile.
+        """
         notes: List[str] = []
 
-        scanned = self._scan_dicom_files(study_dir)
+        scanned = self._scan_dicom_files(study_dir, hints)
         manufacturer = scanned["manufacturer"]
         model = scanned["model"]
         protocol_name = scanned["protocol_name"]

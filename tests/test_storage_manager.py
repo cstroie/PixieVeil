@@ -339,6 +339,113 @@ class TestSaveExamWriteback:
         assert "1 DICOM file" in result["message"]
 
 
+class TestExamHints:
+    """Pre-anonymization extraction hints — captured from raw images before
+    anonymize() strips Manufacturer/model/descriptions under the 'rhythm'
+    profile, handed back to ExamExtractor."""
+
+    def test_merge_mem_first_non_empty_wins_across_images_and_series(self, storage_manager):
+        sm = storage_manager
+        uid = "s-uid"
+        # series 1, image 1: no Manufacturer
+        sm._merge_exam_hints_mem(uid, 1, {"manufacturer": "", "model": "",
+                                          "protocol_name": "P1",
+                                          "study_description": "",
+                                          "series_description": "S1"})
+        # series 1, image 2: Manufacturer now present — tops up the study block
+        sm._merge_exam_hints_mem(uid, 1, {"manufacturer": "SIEMENS", "model": "Emotion 16",
+                                          "protocol_name": "P1-later",
+                                          "study_description": "SD",
+                                          "series_description": "S1-later"})
+        # series 2, image 1
+        sm._merge_exam_hints_mem(uid, 2, {"manufacturer": "IGNORED", "model": "",
+                                          "protocol_name": "", "study_description": "",
+                                          "series_description": "S2"})
+
+        h = sm._exam_hints[uid]
+        assert h["study"] == {"manufacturer": "SIEMENS", "model": "Emotion 16",
+                              "protocol_name": "P1", "study_description": "SD"}
+        assert h["series"] == {"1": {"series_description": "S1"},
+                               "2": {"series_description": "S2"}}
+
+    def test_flush_and_load_round_trip(self, storage_manager, tmp_path):
+        study_dir = tmp_path / "0001"
+        study_dir.mkdir()
+        hints = {"study": {"manufacturer": "SIEMENS"}, "series": {}}
+        storage_manager._flush_exam_hints_sync(study_dir, hints)
+        assert (study_dir / ".exam_hints.json").exists()
+        assert storage_manager._load_exam_hints_sync(study_dir) == hints
+
+    def test_flush_noop_on_empty(self, storage_manager, tmp_path):
+        study_dir = tmp_path / "0001"
+        study_dir.mkdir()
+        storage_manager._flush_exam_hints_sync(study_dir, None)
+        storage_manager._flush_exam_hints_sync(study_dir, {})
+        assert not (study_dir / ".exam_hints.json").exists()
+        assert storage_manager._load_exam_hints_sync(study_dir) is None
+
+    def test_write_exam_sidecar_uses_hints_when_headers_blank(self, storage_manager):
+        sm = storage_manager
+        study_dir = sm.base_path / "0001"
+        write_minimal_dicom(study_dir / "0001" / "img1.dcm", Modality="CT", SeriesNumber=1)
+        register_study(sm, 1, "complete")
+        sm._exam_hints["study-uid-1"] = {
+            "study": {"manufacturer": "SIEMENS", "model": "Emotion 16"},
+            "series": {},
+        }
+
+        sm._write_exam_sidecar("study-uid-1", 1, study_dir)
+
+        data = ExamSidecar.load(ExamSidecar.path_for(sm.base_path, 1)).data
+        assert data["scanner"]["manufacturer"] == "SIEMENS"
+        assert data["scanner"]["model"] == "Emotion 16"
+
+    def test_reextract_reads_hints_from_disk(self, storage_manager):
+        sm = storage_manager
+        study_dir = sm.base_path / "0001"
+        write_minimal_dicom(study_dir / "0001" / "img1.dcm", Modality="CT", SeriesNumber=1)
+        register_study(sm, 1, "ready")
+        (study_dir / ".exam_hints.json").write_text(
+            '{"study": {"manufacturer": "SIEMENS", "model": "Emotion 16"}, "series": {}}'
+        )
+
+        result = asyncio.run(sm.manual_reextract(1))
+
+        assert result["ok"] is True
+        assert result["data"]["scanner"]["manufacturer"] == "SIEMENS"
+
+    def test_write_exam_sidecar_persists_the_winning_hints_view(self, storage_manager):
+        sm = storage_manager
+        study_dir = sm.base_path / "0001"
+        write_minimal_dicom(study_dir / "0001" / "img1.dcm", Modality="CT", SeriesNumber=1)
+        register_study(sm, 1, "complete")
+        sm._exam_hints["study-uid-1"] = {"study": {"manufacturer": "SIEMENS"}, "series": {}}
+
+        sm._write_exam_sidecar("study-uid-1", 1, study_dir)
+
+        # in-memory view flushed to disk so a later restart + re-extract sees it
+        assert sm._load_exam_hints_sync(study_dir) == {
+            "study": {"manufacturer": "SIEMENS"}, "series": {}
+        }
+
+    def test_retain_or_delete_drops_the_hints_file(self, tmp_path):
+        from .conftest import make_settings
+        sm = StorageManager(make_settings(tmp_path, storage={
+            "base_path": str(tmp_path / "data"),
+            "temp_path": str(tmp_path / "tmp"),
+            "retain_after_export_days": 7,
+        }))
+        study_dir = sm.base_path / "0001"
+        write_minimal_dicom(study_dir / "0001" / "img1.dcm")
+        (study_dir / ".exam_hints.json").write_text('{"study": {"manufacturer": "SIEMENS"}}')
+
+        sm._retain_or_delete_sync(study_dir)
+
+        retained = sm.retained_path / "0001"
+        assert retained.exists()
+        assert not (retained / ".exam_hints.json").exists()
+
+
 class TestManualReextract:
     def _setup_study(self, storage_manager, study_number=1):
         study_dir = storage_manager.base_path / f"{study_number:04d}"
