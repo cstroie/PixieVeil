@@ -20,10 +20,14 @@ from pydicom.uid import (
 
 from pixieveil.storage.storage_manager import StorageManager
 from pixieveil.storage.rhythm_storage import RhythmUploadResult
+from pixieveil.processing.rhythm_protocols import ProtocolMap, ProtocolEntry
 
 from .conftest import make_settings, write_minimal_dicom
 from .test_storage_manager import register_study
 
+
+PROTOCOL_KEY = "head-trauma-routine"
+PROTOCOL_UUID = "7076d1dc-100a-4bcd-a8d7-2ef3672b1e3f"
 
 EXAM_OK = {
     "study_number": 1,
@@ -36,11 +40,19 @@ EXAM_OK = {
     "examination_group": "Group 4 - Childhood",
     "scanner": {"rhythm_scanner_id": "scanner-1"},
     "protocol_used_hint": {"protocol_name": "HeadRoutine"},
+    "rhythm": {"protocol_key": PROTOCOL_KEY},
     "patient": {"age_years": 6, "weight_kg": 20.0},
     "rdsr": None,
     "series": [],
     "image_quality": "Acceptable",
 }
+
+
+def _protocol_map(*, site_code="S001"):
+    return ProtocolMap(
+        [ProtocolEntry(id=PROTOCOL_KEY, uuid=PROTOCOL_UUID, name="Head trauma")],
+        site_code=site_code,
+    )
 
 
 class FakeRhythm:
@@ -49,6 +61,7 @@ class FakeRhythm:
                  enabled=True, site_code="S001"):
         self.enabled = enabled
         self.site_code = site_code
+        self.protocol_map = _protocol_map(site_code=site_code)
         self._result = result or RhythmUploadResult(
             ok=True, session_id="sess-1", job_id="job-1",
             job_status_url="/api/v1/uploads/job-1/",
@@ -81,11 +94,20 @@ def _manager(tmp_path, *, profile="gdpr", rhythm_configured=True, retain_days=No
     if retain_days is not None:
         storage["retain_after_export_days"] = retain_days
     if rhythm_configured:
+        proto_map = tmp_path / "rhythm_protocols.yaml"
+        proto_map.write_text(
+            "site_code: S001\n"
+            "protocols:\n"
+            f"  - id: {PROTOCOL_KEY}\n"
+            f"    name: Head trauma\n"
+            f"    uuid: {PROTOCOL_UUID}\n"
+        )
         storage["remote_storage"] = {
             "rhythm": {
                 "base_url": "https://rhythm.example",
                 "auth_token": "tok",
                 "site_code": "S001",
+                "protocol_map": str(proto_map),
             }
         }
     return StorageManager(
@@ -219,8 +241,8 @@ class TestHappyPath:
 
         call = fake.calls[0]
         assert call["zip_exists"] is True
-        assert call["item"]["clinical_indication_code"] == "HEADTRAUMA"
-        assert call["item"]["patient_group_code"] == "PH-G4"
+        assert call["item"]["protocol_id"] == PROTOCOL_UUID
+        assert "clinical_indication_code" not in call["item"]
         assert call["item"]["image_quality"] == "Acceptable"
         assert call["item"]["filename"] == "0001.zip"
         # sha256/size_bytes are filled in from the real ZIP before upload —
@@ -394,7 +416,7 @@ class TestManifestPreview:
         assert "blockers" not in m           # nothing missing -> no blockers key
         item = m["items"][0]
         assert item["ref"] == "ROW0001"
-        assert item["clinical_indication_code"] == "HEADTRAUMA"
+        assert item["protocol_id"] == PROTOCOL_UUID
         # sha256/size_bytes come from the export ZIP at upload time
         assert "sha256" not in item and "size_bytes" not in item
 
@@ -436,6 +458,9 @@ class TestManifestPreview:
         assert m["site"] == "SITE"                       # batch-level placeholder
         assert m["items"][0]["site_code"] is None        # NOT back-filled
         assert "site_code is not set" in m["blockers"]["0001"]
+        # no protocol map either -> protocol_id unresolved, flagged not errored
+        assert m["items"][0]["protocol_id"] is None
+        assert "protocol_id is not set" in m["blockers"]["0001"]
 
 
 class TestExcludedSeriesHelper:

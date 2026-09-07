@@ -137,14 +137,18 @@ storage:
       base_url: "https://rhythm.your-domain"
       auth_token: "rhythm-upload-token"   # from `manage.py create_upload_token`, not a login
       site_code: "S014"                   # your institution's code, assigned by RHYTHM
+      # protocol_map: "config/rhythm_protocols.yaml"   # optional, this is the default
       # chunk_size: 10485760              # optional, default 10 MiB
 ```
 
 **`site_code`** is assigned by RHYTHM when your institution registers — you can't pick your own. Find it on your RHYTHM profile page, ask the repository admin, or read it off an existing Repository Study ID (the `S###` segment of `RHY-S014-HEADTRAUMA-NC-PH-G4-000001`). All three keys must be set before `RhythmStorage.enabled` is true and the dashboard button activates.
 
+**Protocol map.** RHYTHM v2 manifest items name one `protocol_id` — the UUID of a `CTProtocol` you've registered on RHYTHM's Protocol Records page (`<base_url>/protocols/records/`); RHYTHM derives anatomical region, clinical indication, contrast, protocol type, examination group and scanner from it. Copy `config/rhythm_protocols.example.yaml` → `config/rhythm_protocols.yaml` and add one entry per registered protocol (`id` = your own short key, `uuid` = the one from Protocol Records). Each study picks a protocol from the "RHYTHM protocol" dropdown on the `/studies` page. The human-facing definition of what to register upstream lives in `integrations/rhythm/*_protocol.yaml`. If the map file sets a top-level `site_code` it must match the one in `settings.yaml` or PixieVeil won't start.
+
 Requirements before a study can be sent to RHYTHM:
 - `anonymization.profile: gdpr` (the `research` profile keeps study dates / non-regenerated UIDs that RHYTHM rejects) — the dashboard button is disabled otherwise. **This gate reads the *current* config, not what each study was anonymized with**: studies received under `research` and only later switched to `gdpr` will pass the button but be rejected by RHYTHM at ingest. Anonymization runs once, at receive time, and PixieVeil keeps only the anonymized copy — so re-send the original DICOM through PixieVeil after switching the profile rather than trying to re-export an old study.
 - a per-study **Image quality** value, set on the `/studies` page (extraction leaves it blank)
+- a per-study **RHYTHM protocol** selected on the `/studies` page (its UUID becomes the manifest's `protocol_id`)
 - defacing completed (a `defacing_failed` study is blocked)
 
 The Dose Report screenshot and any RDSR object are excluded from the RHYTHM ZIP automatically — it carries CT images only.

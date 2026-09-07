@@ -34,6 +34,7 @@ from typing import Any
 import aiohttp
 
 from pixieveil.config import Settings
+from pixieveil.processing import rhythm_protocols
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +86,27 @@ class RhythmStorage:
         # A usable config needs all three: where to send, how to authenticate,
         # and the site code that every manifest item is stamped with.
         self.enabled: bool = bool(self.base_url and self.auth_token and self.site_code)
+
+        # Local CT-protocol -> RHYTHM CTProtocol UUID map. Loaded here (not in
+        # StorageManager) so all RHYTHM config resolution — including the
+        # protocol-map/settings site_code cross-check — lives in one place.
+        # A missing map is an empty map (every RHYTHM export then blocked
+        # until it exists). A *malformed* map (bad UUID, duplicate key,
+        # site_code disagreeing with settings) disables RHYTHM export
+        # entirely with a loud ERROR — it must not stop the DICOM SCP or
+        # dashboard from starting.
+        map_path = cfg.get("protocol_map") or rhythm_protocols.DEFAULT_PATH
+        try:
+            self.protocol_map = rhythm_protocols.ProtocolMap.load(
+                map_path, expected_site_code=self.site_code
+            )
+        except rhythm_protocols.ProtocolMapError:
+            logger.error(
+                "RHYTHM protocol map %s is invalid — RHYTHM export disabled",
+                map_path, exc_info=True,
+            )
+            self.protocol_map = rhythm_protocols.ProtocolMap([])
+            self.enabled = False
 
     # -- public API --------------------------------------------------------
 

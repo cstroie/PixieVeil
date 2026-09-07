@@ -1,6 +1,6 @@
 """Validate our built RHYTHM manifest items/documents against RHYTHM's own
 JSON Schema, loaded from the vendored `reference/uploader` submodule
-(`ct_upload_platform/uploads/manifest_schema.py`, pinned at fac5c52).
+(`ct_upload_platform/uploads/manifest_schema.py`, pinned at f4120f5).
 
 This is the check that makes vendoring that submodule pay off: if a later
 `git submodule update --remote reference/uploader` changes RHYTHM's schema
@@ -37,12 +37,16 @@ def vendored():
     return mod
 
 
+_PROTOCOL_UUID = "7076d1dc-100a-4bcd-a8d7-2ef3672b1e3f"
+
+
 def _full_item():
     return rm.build_manifest_item(
         _effective_sidecar(),
         study_number=42,
         zip_filename="0042.zip",
         site_code="S001",
+        protocol_id=_PROTOCOL_UUID,
         sha256="a" * 64,
         size_bytes=180_000,
     )
@@ -63,19 +67,21 @@ class TestItemAgainstSchema:
     def test_full_item_is_schema_valid(self, vendored):
         assert vendored.validate_manifest_v2_item(_full_item()) == []
 
-    def test_item_without_optional_strings_is_valid(self, vendored):
-        sidecar = _effective_sidecar()
-        sidecar["scanner"]["rhythm_scanner_id"] = None
-        sidecar["protocol_used_hint"]["protocol_name"] = None
+    def test_item_without_optional_dose_or_patient_data_is_valid(self, vendored):
+        sidecar = _effective_sidecar(rdsr=None)
+        sidecar["series"] = []
+        sidecar["patient"] = {}
         item = rm.build_manifest_item(
-            sidecar, study_number=1, zip_filename="x.zip", site_code="S001"
+            sidecar, study_number=1, zip_filename="x.zip",
+            site_code="S001", protocol_id=_PROTOCOL_UUID,
         )
         assert vendored.validate_manifest_v2_item(item) == []
 
     def test_null_required_field_is_rejected_by_schema(self, vendored):
         item = rm.build_manifest_item(
             _effective_sidecar(image_quality=None),
-            study_number=1, zip_filename="x.zip", site_code="S001",
+            study_number=1, zip_filename="x.zip",
+            site_code="S001", protocol_id=_PROTOCOL_UUID,
         )
         errors = vendored.validate_manifest_v2_item(item)
         assert any("image_quality" in e["field"] for e in errors)
@@ -91,7 +97,8 @@ class TestItemAgainstSchema:
         sidecar["series"] = []
         sidecar["patient"] = {"age_years": None, "weight_kg": None}
         item = rm.build_manifest_item(
-            sidecar, study_number=1, zip_filename="x.zip", site_code="S001"
+            sidecar, study_number=1, zip_filename="x.zip",
+            site_code="S001", protocol_id=_PROTOCOL_UUID,
         )
         assert vendored.validate_manifest_v2_item(item) == []
 

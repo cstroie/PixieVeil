@@ -150,6 +150,37 @@ class TestConfig:
         assert make_storage(chunk_size=4096).chunk_size == 4096
         assert make_storage().base_url == "https://rhythm.example"  # trailing / stripped
 
+    def test_missing_protocol_map_is_empty_not_fatal(self, tmp_path):
+        s = make_storage(protocol_map=str(tmp_path / "nope.yaml"))
+        assert s.enabled is True
+        assert s.protocol_map.entries == []
+
+    def test_valid_protocol_map_loads(self, tmp_path):
+        p = tmp_path / "protos.yaml"
+        p.write_text(
+            "site_code: S001\nprotocols:\n  - id: head\n"
+            "    uuid: 7076d1dc-100a-4bcd-a8d7-2ef3672b1e3f\n"
+        )
+        s = make_storage(protocol_map=str(p))
+        assert s.enabled is True
+        assert s.protocol_map.uuid_for("head") == "7076d1dc-100a-4bcd-a8d7-2ef3672b1e3f"
+
+    def test_malformed_protocol_map_disables_rhythm_but_does_not_raise(self, tmp_path):
+        p = tmp_path / "protos.yaml"
+        p.write_text("protocols:\n  - id: head\n    uuid: not-a-uuid\n")
+        s = make_storage(protocol_map=str(p))          # must NOT raise
+        assert s.enabled is False
+        assert s.protocol_map.entries == []
+
+    def test_protocol_map_site_code_mismatch_disables_rhythm(self, tmp_path):
+        p = tmp_path / "protos.yaml"
+        p.write_text(
+            "site_code: S999\nprotocols:\n  - id: head\n"
+            "    uuid: 7076d1dc-100a-4bcd-a8d7-2ef3672b1e3f\n"
+        )
+        s = make_storage(protocol_map=str(p))          # site_code is S001
+        assert s.enabled is False
+
 
 # -- guard rails -------------------------------------------------------
 

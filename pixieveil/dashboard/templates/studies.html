@@ -152,7 +152,10 @@
                 { region: "Abdomen", indication: "Acute abdomen", contrast: "Contrast-enhanced" },
                 { region: "Neck-Chest-Abdomen", indication: "Lymphoma", contrast: "Contrast-enhanced" },
             ];
-            const IMAGE_QUALITY_OPTIONS = ["Diagnostic", "Suboptimal", "Non-diagnostic"];
+            // RHYTHM's CTExamination.IMAGE_QUALITY_CHOICES — sent verbatim as
+            // the manifest item's image_quality; anything outside this set is
+            // silently coerced to "Moderate" server-side (tasks._normalize_image_quality).
+            const IMAGE_QUALITY_OPTIONS = ["Excellent", "Good", "Moderate", "Poor"];
 
             function authToken() {
                 return localStorage.getItem(AUTH_KEY) || '';
@@ -447,6 +450,20 @@
                     })
                 ).join('');
 
+                // RHYTHM protocol dropdown: local keys from
+                // config/rhythm_protocols.yaml (capabilities.rhythm_protocols).
+                // Its UUID becomes the manifest item's protocol_id; RHYTHM
+                // derives region/indication/contrast/type/group/scanner from
+                // the registered protocol.
+                const currentProtoKey = get(exam, 'rhythm.protocol_key') || '';
+                const rhythmProtocolOptions = ['<option value="">—</option>'].concat(
+                    (CAPABILITIES.rhythm_protocols || []).map(p => {
+                        const selected = currentProtoKey === p.id ? 'selected' : '';
+                        const label = esc(p.name || p.id);
+                        return `<option value="${esc(p.id)}" ${selected}>${label}</option>`;
+                    })
+                ).join('');
+
                 // exam.series lists DICOM series (reconstructions) — NOT the
                 // same thing as an irradiation event. One RDSR acquisition
                 // (one real dose event) can be reconstructed into several
@@ -565,12 +582,16 @@
                                 <input type="text" data-path="protocol_used_hint.protocol_name"
                                     class="${isManual(exam, 'protocol_used_hint.protocol_name') ? 'manual-set' : ''}"
                                     value="${esc(get(exam, 'protocol_used_hint.protocol_name') || '')}">
+                                <span class="field-hint">informational only</span>
                             </label>
-                            <label>Scanner ID
-                                <input type="text" data-path="scanner.rhythm_scanner_id"
-                                    class="${isManual(exam, 'scanner.rhythm_scanner_id') ? 'manual-set' : ''}"
-                                    value="${esc(get(exam, 'scanner.rhythm_scanner_id') || '')}">
-                                <span class="field-hint">RHYTHM UUID</span>
+                            <label>RHYTHM protocol
+                                <select data-path="rhythm.protocol_key"
+                                    class="${isManual(exam, 'rhythm.protocol_key') ? 'manual-set' : ''}">
+                                    ${rhythmProtocolOptions}
+                                </select>
+                                <span class="field-hint">required for RHYTHM upload — its
+                                    UUID goes in the manifest; region/indication/contrast/
+                                    scanner are derived from it upstream</span>
                             </label>
                         </div>
                         ${seriesFields}
@@ -652,6 +673,8 @@
                     rhythmTitle = 'defacing did not complete for this study';
                 else if (!exam || !exam.image_quality)
                     rhythmTitle = 'set Image quality before uploading to RHYTHM';
+                else if (!exam.rhythm || !exam.rhythm.protocol_key)
+                    rhythmTitle = 'select a RHYTHM protocol before uploading';
                 const rhythmDisabled = !!rhythmTitle;
                 const rhythmLabel = study.rhythm_status && study.rhythm_status !== 'failed'
                     ? 'Re-upload to RHYTHM' : 'Upload to RHYTHM';

@@ -46,7 +46,12 @@ MANUAL_EDITABLE_PATHS = {
     "indication.iv_contrast",
     "image_quality",
     "protocol_used_hint.protocol_name",
+    # retained so old sidecar overlays still load; no longer on the wire and
+    # no longer shown in the exam form — RHYTHM derives the scanner from the
+    # registered protocol behind rhythm.protocol_key
     "scanner.rhythm_scanner_id",
+    # local protocol key -> RHYTHM CTProtocol UUID via config/rhythm_protocols.yaml
+    "rhythm.protocol_key",
     "series.<N>.dlp_mgy_cm",
     "series.<N>.ctdi_vol_mgy",
     "series.<N>.slice_thickness_mm",

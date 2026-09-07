@@ -20,3 +20,10 @@
 [x] rename data/pixieveil to data/dicom
 [ ] add support for filling dicom tags after aquisition (e.g. patient weight or size)
 [x] update the statistics with deface and remote dicom store
+[x] RHYTHM auto-uploader: v2 chunked batch upload, manual per-study trigger
+[x] RHYTHM v2 protocol_id: define protocols in config/rhythm_protocols.yaml
+    (local key -> registered CTProtocol UUID), pick per study on /studies
+[ ] RHYTHM: fetch the protocol list from RHYTHM's API instead of hand-maintaining
+    config/rhythm_protocols.yaml
+[x] check the reference/uploader: we need a protocol_id field in json manifest. this id is defined upstream, need a map
+[ ] need a new anonymization profile, named 'rhythm', to pass the uploader check (see reference/anon_rhythm.json)

@@ -1,0 +1,39 @@
+# RHYTHM protocol map — local protocol key -> registered CTProtocol UUID
+#
+# Copy to config/rhythm_protocols.yaml and fill in one entry per CT protocol
+# you have registered in the RHYTHM app.
+#
+# RHYTHM v2 manifest items no longer carry coded indication/contrast/patient-
+# group/scanner fields. Each item names one `protocol_id` — the UUID of a
+# CTProtocol registered on the RHYTHM "Protocol Records" page
+# (<base_url>/protocols/records/). RHYTHM derives anatomical region, clinical
+# indication, contrast, protocol type, examination group and scanner from
+# that protocol.
+#
+# For each study, the operator picks one of these protocols on the /studies
+# page (the "RHYTHM protocol" dropdown, populated from this file's `id`s);
+# its `uuid` becomes the manifest item's `protocol_id`.
+#
+# The human-facing definition of each protocol — what to enter into RHYTHM's
+# Protocol GUI to register it — lives in integrations/rhythm/*_protocol.yaml.
+
+# Optional. If set, it MUST equal storage.remote_storage.rhythm.site_code in
+# settings.yaml (case-insensitive) or PixieVeil refuses to start. It is not
+# used as the manifest's site_code (settings is authoritative for that) — it
+# is only a guard against pairing this map with the wrong site's config.
+site_code: S014
+
+protocols:
+  - id: head-trauma-pediatric
+    name: "Paediatric head — trauma"
+    description: >-
+      Non-contrast head CT, trauma indication, PEDIATRIC_HEAD.
+      See integrations/rhythm/head_trauma_protocol.yaml.
+    uuid: "00000000-0000-0000-0000-000000000000"   # <- from Protocol Records
+
+  - id: chest-hrct-ild
+    name: "Chest HRCT — interstitial lung disease"
+    description: >-
+      High-resolution chest, inspiration/expiration, ILD indication.
+      See integrations/rhythm/chest_hrct_protocol.yaml.
+    uuid: "00000000-0000-0000-0000-000000000000"

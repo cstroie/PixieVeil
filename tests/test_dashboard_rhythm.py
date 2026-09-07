@@ -15,9 +15,14 @@ from pixieveil.config import Settings
 from pixieveil.dashboard.server import Dashboard
 
 
+class _ProtocolMap:
+    entries: list = []
+
+
 class _Cap:
     def __init__(self, enabled):
         self.enabled = enabled
+        self.protocol_map = _ProtocolMap()
 
 
 class FakeSM:

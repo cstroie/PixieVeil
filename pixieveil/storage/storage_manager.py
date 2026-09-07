@@ -1369,6 +1369,11 @@ class StorageManager:
         values are already the effective ones (``exam_merge.apply_manual``
         writes manual edits into them at save time), so it feeds
         ``build_manifest_item`` directly.
+
+        ``protocol_id`` is resolved from ``config/rhythm_protocols.yaml``
+        using the local protocol key the operator picked for the study
+        (``rhythm.protocol_key`` in the exam sidecar); an unset key, or one
+        the map doesn't know, leaves ``protocol_id`` null — a blocker.
         """
         exam_path = ExamSidecar.path_for(self.base_path, study_number)
         if not exam_path.exists():
@@ -1378,11 +1383,23 @@ class StorageManager:
         except Exception:
             logger.warning("Corrupt exam sidecar for %04d", study_number, exc_info=True)
             return None, "exam sidecar is unreadable"
+
+        protocol_key = (exam_data.get("rhythm") or {}).get("protocol_key")
+        pmap = self.rhythm_storage.protocol_map
+        protocol_id = pmap.uuid_for(protocol_key)
+        if protocol_key and protocol_id is None and pmap.entries:
+            # Map is populated but doesn't know this key — a real
+            # misconfiguration, not just "protocol not picked yet".
+            return None, (
+                f"protocol '{protocol_key}' is not in config/rhythm_protocols.yaml"
+            )
+
         item = rhythm_manifest.build_manifest_item(
             exam_data,
             study_number=study_number,
             zip_filename=f"{study_number:04d}.zip",
             site_code=self.rhythm_storage.site_code,
+            protocol_id=protocol_id,
         )
         return item, None
 
