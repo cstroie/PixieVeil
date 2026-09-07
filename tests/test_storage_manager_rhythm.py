@@ -86,7 +86,7 @@ class FakeRhythm:
         return self._job_result
 
 
-def _manager(tmp_path, *, profile="gdpr", rhythm_configured=True, retain_days=None):
+def _manager(tmp_path, *, profile="rhythm", rhythm_configured=True, retain_days=None):
     storage = {
         "base_path": str(tmp_path / "data"),
         "temp_path": str(tmp_path / "tmp"),
@@ -116,7 +116,8 @@ def _manager(tmp_path, *, profile="gdpr", rhythm_configured=True, retain_days=No
             storage=storage,
             # Anonymizer validates profile against profiles{} at construction;
             # the bodies don't matter here, only which name is selected.
-            anonymization={"profile": profile, "profiles": {"gdpr": {}, "research": {}}},
+            anonymization={"profile": profile,
+                           "profiles": {"rhythm": {}, "gdpr": {}, "research": {}}},
         )
     )
 
@@ -161,12 +162,12 @@ class TestGuards:
         assert r["ok"] is False and "not configured" in r["message"]
 
     def test_wrong_profile_refused(self, tmp_path):
-        sm = _manager(tmp_path, profile="research")
+        sm = _manager(tmp_path, profile="gdpr")
         sm.rhythm_storage = FakeRhythm(OK_RESULT)
         (sm.base_path / "0001").mkdir(parents=True)
         r = asyncio.run(sm.manual_upload_rhythm(1))
         assert r["ok"] is False
-        assert "requires the 'gdpr'" in r["message"]
+        assert "requires the 'rhythm'" in r["message"]
 
     def test_defacing_failed_refused(self, tmp_path):
         sm = _manager(tmp_path)

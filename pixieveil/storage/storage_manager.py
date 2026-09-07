@@ -1467,11 +1467,16 @@ class StorageManager:
                 return {"ok": False, "message": "RHYTHM export is not configured"}
 
             profile = self.settings.anonymization.get("profile", "research")
-            if profile != "gdpr":
+            if profile != "rhythm":
                 return {"ok": False, "message":
-                        f"RHYTHM export requires the 'gdpr' anonymization profile "
-                        f"(current: '{profile}') — other profiles keep study dates "
-                        f"or non-regenerated UIDs that RHYTHM's GDPR validation rejects"}
+                        f"RHYTHM export requires the 'rhythm' anonymization profile "
+                        f"(current: '{profile}') — other profiles leave tags "
+                        f"(dates, device identity, descriptions, PatientID) that "
+                        f"RHYTHM's GDPR-strict ingest validator rejects. This gate "
+                        f"reads the current profile, not what each study was "
+                        f"anonymized with; anonymization is one-shot at receive "
+                        f"time, so re-send the source DICOM under 'rhythm' rather "
+                        f"than re-exporting a study received under another profile"}
 
             sc = self.find_sidecar_by_number(study_number)
             if sc is not None and sc.status == "defacing_failed":

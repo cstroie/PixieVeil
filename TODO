@@ -26,4 +26,4 @@
 [ ] RHYTHM: fetch the protocol list from RHYTHM's API instead of hand-maintaining
     config/rhythm_protocols.yaml
 [x] check the reference/uploader: we need a protocol_id field in json manifest. this id is defined upstream, need a map
-[ ] need a new anonymization profile, named 'rhythm', to pass the uploader check (see reference/anon_rhythm.json)
+[x] need a new anonymization profile, named 'rhythm', to pass the uploader check (see reference/anon_rhythm.json)

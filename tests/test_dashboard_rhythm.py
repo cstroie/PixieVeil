@@ -26,7 +26,7 @@ class _Cap:
 
 
 class FakeSM:
-    def __init__(self, *, rhythm=True, profile="gdpr"):
+    def __init__(self, *, rhythm=True, profile="rhythm"):
         self.dicom_storage = _Cap(False)
         self.remote_storage = _Cap(False)
         self.rhythm_storage = _Cap(rhythm)
@@ -204,12 +204,12 @@ class TestManifestPreviewEndpoint:
 
 class TestListCapabilities:
     def test_rhythm_flag_and_profile_exposed(self):
-        sm = FakeSM(rhythm=True, profile="gdpr")
+        sm = FakeSM(rhythm=True, profile="rhythm")
         req = FakeRequest(sm)
         status, data = _payload(asyncio.run(_dash(sm).handle_list_studies(req)))
         assert status == 200
         assert data["capabilities"]["rhythm"] is True
-        assert data["capabilities"]["anonymization_profile"] == "gdpr"
+        assert data["capabilities"]["anonymization_profile"] == "rhythm"
 
     def test_rhythm_disabled_and_non_gdpr_profile(self):
         sm = FakeSM(rhythm=False, profile="research")

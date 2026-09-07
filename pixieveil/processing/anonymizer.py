@@ -255,6 +255,10 @@ class Anonymizer:
         self.handle_private_tags(ds)
         self.remove_overlays(ds)
         self.handle_pixel_blackout(ds)
+        # Final pass: delete every tag the profile lists for outright removal.
+        # Runs last so it wins over anonymize_dates()'s date substitution —
+        # the rhythm profile needs StudyDate/etc. *absent*, not replaced.
+        self.strip_tags(ds)
         
         # Burned In Annotation
         if "BurnedInAnnotation" in ds:
@@ -333,9 +337,14 @@ class Anonymizer:
             else:
                 del ds.FrameOfReferenceUID
         
-        # SOPInstanceUID - always generate new
+        # SOPInstanceUID - always generate new, and keep the file-meta copy
+        # in sync (pydicom's save_as does not; otherwise the saved file's
+        # MediaStorageSOPInstanceUID leaks the original SOP Instance UID).
         if "SOPInstanceUID" in ds:
             ds.SOPInstanceUID = self.generate_new_uid()
+            file_meta = getattr(ds, "file_meta", None)
+            if file_meta is not None and "MediaStorageSOPInstanceUID" in file_meta:
+                file_meta.MediaStorageSOPInstanceUID = ds.SOPInstanceUID
         
         # StudyID
         if "StudyID" in ds:
@@ -437,11 +446,36 @@ class Anonymizer:
             ds.remove_private_tags()
     
     def remove_overlays(self, ds: pydicom.Dataset) -> None:
-        """Remove overlay data (60xx groups)."""
-        for overlay_group in range(0x6000, 0x6020, 0x2):
-            tags_to_delete = [tag for tag in ds.keys() if tag.group == overlay_group]
-            for tag in tags_to_delete:
-                del ds[tag]
+        """Remove overlay (60xx), curve (50xx) and waveform/audio (54xx) group
+        data.
+
+        None of these belong in a de-identified research CT — overlay planes
+        in particular are a known burned-in-PHI vector — and RHYTHM's
+        GDPR-strict validator rejects any of them unconditionally. Covers the
+        full 60xx/50xx repeating-group ranges, not just the first few.
+        """
+        doomed = [
+            tag for tag in ds.keys()
+            if 0x6000 <= tag.group <= 0x60FF          # overlays
+            or 0x5000 <= tag.group <= 0x50FF          # curves
+            or tag.group in (0x5400, 0x5402, 0x5409)  # waveform / audio
+        ]
+        for tag in doomed:
+            del ds[tag]
+
+    def strip_tags(self, ds: pydicom.Dataset) -> None:
+        """Delete every DICOM keyword listed in the profile's ``RemoveTags``.
+
+        Missing tags are skipped. Runs as the last step of ``anonymize()`` so
+        it overrides any earlier substitution — the ``rhythm`` profile relies
+        on this to leave RHYTHM's GDPR-strict "must be removed" tags genuinely
+        absent rather than replaced with a placeholder date/value.
+        """
+        for keyword in self.profile.RemoveTags:
+            # hasattr rather than `in`: a bogus keyword in the config raises
+            # cleanly here instead of spamming a pydicom warning per file.
+            if hasattr(ds, keyword):
+                delattr(ds, keyword)
     
     def handle_pixel_blackout(self, ds: pydicom.Dataset) -> None:
         """Blackout pixel data if configured.

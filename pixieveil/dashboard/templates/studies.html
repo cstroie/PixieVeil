@@ -227,9 +227,9 @@
                     ? `<button type="button" id="bulk-dicom-btn">Send all to DICOM</button>` : '';
                 const httpBtn = CAPABILITIES.http
                     ? `<button type="button" id="bulk-http-btn" class="secondary">Upload all to HTTP</button>` : '';
-                const rhythmOk = CAPABILITIES.rhythm && CAPABILITIES.anonymization_profile === 'gdpr';
+                const rhythmOk = CAPABILITIES.rhythm && CAPABILITIES.anonymization_profile === 'rhythm';
                 const rhythmBtn = CAPABILITIES.rhythm
-                    ? `<button type="button" id="bulk-rhythm-btn" class="secondary" ${rhythmOk ? '' : 'disabled'} title="${rhythmOk ? '' : "requires the 'gdpr' anonymization profile"}">Upload all to RHYTHM</button>` : '';
+                    ? `<button type="button" id="bulk-rhythm-btn" class="secondary" ${rhythmOk ? '' : 'disabled'} title="${rhythmOk ? '' : "requires the 'rhythm' anonymization profile"}">Upload all to RHYTHM</button>` : '';
                 const pendingNums = pending.map(s => s.study_number).join(',');
                 const rhythmManifestLinks = CAPABILITIES.rhythm
                     ? `<small class="status-line">batch manifest: ` +
@@ -661,13 +661,13 @@
                     (!CAPABILITIES.http ? 'HTTP export is not configured' : '');
                 const reextractTitle = absent ? 'study directory not found' : '';
 
-                // RHYTHM is gated on config + the gdpr profile + defacing
+                // RHYTHM is gated on config + the rhythm profile + defacing
                 // having completed + image quality being filled in (the
                 // manifest requires it). The reason goes in the button title.
                 let rhythmTitle = '';
                 if (!CAPABILITIES.rhythm) rhythmTitle = 'RHYTHM export is not configured';
-                else if (CAPABILITIES.anonymization_profile !== 'gdpr')
-                    rhythmTitle = "RHYTHM export requires the 'gdpr' anonymization profile";
+                else if (CAPABILITIES.anonymization_profile !== 'rhythm')
+                    rhythmTitle = "RHYTHM export requires the 'rhythm' anonymization profile";
                 else if (absent) rhythmTitle = 'study directory not found';
                 else if (study.status === 'defacing_failed')
                     rhythmTitle = 'defacing did not complete for this study';
