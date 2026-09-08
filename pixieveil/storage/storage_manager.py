@@ -1709,6 +1709,14 @@ class StorageManager:
             )
         except OSError:
             return False
+        # Self-heal manifests written by the pre-fix build (placeholder
+        # "prepared" batch, no real site_code): force a rebuild so external
+        # tooling never ships the sentinel.
+        try:
+            if json.loads(json_path.read_text()).get("batch") == "prepared":
+                return False
+        except (OSError, ValueError):
+            return False
         study_dir = self.base_path / f"{study_number:04d}"
         inputs = list(study_dir.rglob("*.dcm")) if study_dir.is_dir() else []
         exam_path = ExamSidecar.path_for(self.base_path, study_number)
