@@ -11,4 +11,5 @@ examples*
 *.egg-info
 __pycache__
 settings.yaml
+config/rhythm_protocols.yaml
 UNINSTALL.md

@@ -1451,6 +1451,42 @@ class StorageManager:
                 excluded.add(series_dir.name)
         return excluded
 
+    def _maybe_register_rhythm_protocol_stub(
+        self, study_number: int
+    ) -> Optional[str]:
+        """When a RHYTHM upload is blocked only because no protocol resolves
+        (empty map / no key picked), append a placeholder entry to
+        ``config/rhythm_protocols.yaml`` derived from this study's DICOM
+        ``ProtocolName`` (the ``protocol_used_hint.protocol_name`` the
+        extractor captured pre-anonymization), so the operator just pastes
+        the real ``CTProtocol`` UUID rather than authoring the whole block.
+
+        Returns the new local key, or ``None`` (no ProtocolName to slug, key
+        already present, sidecar unreadable). Idempotent via
+        ``rhythm_protocols.append_stub``.
+        """
+        try:
+            exam_path = ExamSidecar.path_for(self.base_path, study_number)
+            if not exam_path.exists():
+                return None
+            exam_data = ExamSidecar.load(exam_path).data
+        except Exception:
+            logger.warning(
+                "Could not read exam sidecar %04d for protocol-stub hint",
+                study_number, exc_info=True,
+            )
+            return None
+        name = (exam_data.get("protocol_used_hint") or {}).get("protocol_name")
+        if not name or not str(name).strip():
+            return None
+        region = (exam_data.get("indication") or {}).get("region") or ""
+        desc = (f"{region} — " if region else "") + (
+            f"auto-added from study {study_number:04d}"
+        )
+        return self.rhythm_storage.register_pending_protocol(
+            str(name), description=desc
+        )
+
     def _rhythm_manifest_item_sync(
         self, study_number: int
     ) -> Tuple[Optional[dict], Optional[str]]:
@@ -1482,8 +1518,15 @@ class StorageManager:
         pmap = self.rhythm_storage.protocol_map
         protocol_id = pmap.uuid_for(protocol_key)
         if protocol_key and protocol_id is None and pmap.entries:
-            # Map is populated but doesn't know this key — a real
-            # misconfiguration, not just "protocol not picked yet".
+            # Map is populated but this key doesn't resolve to a real UUID —
+            # a misconfiguration, not just "protocol not picked yet".
+            entry = pmap.get(protocol_key)
+            if entry is not None and entry.uuid_pending:
+                return None, (
+                    f"protocol '{protocol_key}' has no UUID yet — paste the "
+                    f"CTProtocol UUID from RHYTHM's Protocol Records page into "
+                    f"config/rhythm_protocols.yaml"
+                )
             return None, (
                 f"protocol '{protocol_key}' is not in config/rhythm_protocols.yaml"
             )
@@ -1583,8 +1626,17 @@ class StorageManager:
                 return {"ok": False, "message": item_err}
             blockers = rhythm_manifest.manifest_item_blockers(item)
             if blockers:
-                return {"ok": False, "message":
-                        "study is missing data RHYTHM requires: " + "; ".join(blockers)}
+                msg = "study is missing data RHYTHM requires: " + "; ".join(blockers)
+                if any("protocol_id" in b for b in blockers):
+                    stub = self._maybe_register_rhythm_protocol_stub(study_number)
+                    if stub:
+                        msg += (
+                            f" — added placeholder protocol '{stub}' to "
+                            f"config/rhythm_protocols.yaml from this study's "
+                            f"ProtocolName; paste its CTProtocol UUID and pick "
+                            f"it for the study"
+                        )
+                return {"ok": False, "message": msg}
 
             excluded = await asyncio.to_thread(
                 self._rhythm_excluded_series_sync, study_dir

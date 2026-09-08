@@ -16,6 +16,13 @@
 #
 # The human-facing definition of each protocol — what to enter into RHYTHM's
 # Protocol GUI to register it — lives in integrations/rhythm/*_protocol.yaml.
+#
+# The all-zeros uuid below is a placeholder: an entry keeps that value loads
+# fine but is treated as "UUID still needed" — the study stays blocked from
+# RHYTHM upload until you replace it with the real one from Protocol Records.
+# PixieVeil auto-appends such placeholder entries (keyed by the study's
+# ProtocolName) when an upload is blocked only because no protocol is
+# registered yet — you just fill in the uuid.
 
 # Optional. If set, it MUST equal storage.remote_storage.rhythm.site_code in
 # settings.yaml (case-insensitive) or PixieVeil refuses to start. It is not

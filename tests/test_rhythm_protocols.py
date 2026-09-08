@@ -2,7 +2,13 @@
 
 import pytest
 
-from pixieveil.processing.rhythm_protocols import ProtocolMap, ProtocolMapError
+from pixieveil.processing.rhythm_protocols import (
+    NIL_UUID,
+    ProtocolMap,
+    ProtocolMapError,
+    append_stub,
+    slugify_protocol_name,
+)
 
 
 _UUID = "7076d1dc-100a-4bcd-a8d7-2ef3672b1e3f"
@@ -93,3 +99,80 @@ class TestLoad:
         p = _write(tmp_path, "")
         m = ProtocolMap.load(p)
         assert m.entries == []
+
+
+class TestNilUuid:
+    def test_nil_uuid_loads_but_resolves_to_none(self, tmp_path):
+        p = _write(tmp_path, f"protocols:\n  - id: a\n    uuid: \"{NIL_UUID}\"\n")
+        m = ProtocolMap.load(p)
+        assert m.get("a") is not None          # entry is present (dropdown)
+        assert m.get("a").uuid_pending is True
+        assert m.uuid_for("a") is None         # ...but blocks the manifest
+
+    def test_real_uuid_is_not_pending(self, tmp_path):
+        p = _write(tmp_path, f"protocols:\n  - id: a\n    uuid: {_UUID}\n")
+        m = ProtocolMap.load(p)
+        assert m.get("a").uuid_pending is False
+        assert m.uuid_for("a") == _UUID
+
+
+class TestSlugify:
+    @pytest.mark.parametrize("raw,slug", [
+        ("Head trauma routine", "head-trauma-routine"),
+        ("  CHEST/HRCT (ILD) ", "chest-hrct-ild"),
+        ("Thorax_1.0_B31f", "thorax-1-0-b31f"),
+        ("", ""),
+        ("///", ""),
+    ])
+    def test_slugify(self, raw, slug):
+        assert slugify_protocol_name(raw) == slug
+
+
+class TestAppendStub:
+    def test_creates_missing_file(self, tmp_path):
+        p = tmp_path / "rhythm_protocols.yaml"
+        slug = append_stub(p, protocol_name="Head trauma")
+        assert slug == "head-trauma"
+        m = ProtocolMap.load(p)
+        assert m.get("head-trauma").uuid_pending is True
+        assert m.get("head-trauma").name == "Head trauma"
+
+    def test_appends_and_keeps_existing_entries(self, tmp_path):
+        p = _write(tmp_path, (
+            "site_code: S014\n"
+            "protocols:\n"
+            "  - id: head-trauma\n"
+            f"    uuid: {_UUID}\n"
+        ))
+        slug = append_stub(p, protocol_name="Chest HRCT", description="ILD")
+        assert slug == "chest-hrct"
+        m = ProtocolMap.load(p)                 # whole file still valid
+        assert [e.id for e in m.entries] == ["head-trauma", "chest-hrct"]
+        assert m.uuid_for("head-trauma") == _UUID          # untouched
+        assert m.uuid_for("chest-hrct") is None            # pending
+        assert m.get("chest-hrct").description == "ILD"
+        assert "site_code: S014" in p.read_text()          # comment/keys kept
+
+    def test_appends_when_protocols_key_absent(self, tmp_path):
+        p = _write(tmp_path, "site_code: S014\n")
+        slug = append_stub(p, protocol_name="Head trauma")
+        assert slug == "head-trauma"
+        assert ProtocolMap.load(p).get("head-trauma") is not None
+
+    def test_idempotent(self, tmp_path):
+        p = tmp_path / "rhythm_protocols.yaml"
+        assert append_stub(p, protocol_name="Head Trauma") == "head-trauma"
+        first = p.read_text()
+        assert append_stub(p, protocol_name="head trauma") is None   # same slug
+        assert p.read_text() == first
+
+    def test_unusable_name_returns_none(self, tmp_path):
+        p = tmp_path / "rhythm_protocols.yaml"
+        assert append_stub(p, protocol_name="   ") is None
+        assert append_stub(p, protocol_name="///") is None
+        assert not p.exists()
+
+    def test_malformed_file_is_left_alone(self, tmp_path):
+        p = _write(tmp_path, "protocols: oops\n")
+        assert append_stub(p, protocol_name="Head trauma") is None
+        assert p.read_text() == "protocols: oops\n"

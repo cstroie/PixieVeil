@@ -375,7 +375,8 @@ class Dashboard:
                 # local protocol keys from config/rhythm_protocols.yaml, for
                 # the exam panel's "RHYTHM protocol" dropdown
                 "rhythm_protocols": [
-                    {"id": e.id, "name": e.name, "description": e.description}
+                    {"id": e.id, "name": e.name, "description": e.description,
+                     "uuid_pending": e.uuid_pending}
                     for e in storage_manager.rhythm_storage.protocol_map.entries
                 ],
             },

@@ -95,18 +95,52 @@ class RhythmStorage:
         # site_code disagreeing with settings) disables RHYTHM export
         # entirely with a loud ERROR — it must not stop the DICOM SCP or
         # dashboard from starting.
-        map_path = cfg.get("protocol_map") or rhythm_protocols.DEFAULT_PATH
+        self.protocol_map_path = Path(
+            cfg.get("protocol_map") or rhythm_protocols.DEFAULT_PATH
+        )
         try:
             self.protocol_map = rhythm_protocols.ProtocolMap.load(
-                map_path, expected_site_code=self.site_code
+                self.protocol_map_path, expected_site_code=self.site_code
             )
         except rhythm_protocols.ProtocolMapError:
             logger.error(
                 "RHYTHM protocol map %s is invalid — RHYTHM export disabled",
-                map_path, exc_info=True,
+                self.protocol_map_path, exc_info=True,
             )
             self.protocol_map = rhythm_protocols.ProtocolMap([])
             self.enabled = False
+
+    def register_pending_protocol(
+        self, protocol_name: str, *, description: str = ""
+    ) -> str | None:
+        """Append a placeholder entry for *protocol_name* to the protocol map
+        file and reload the map so the new key appears in the dashboard's
+        RHYTHM-protocol dropdown.
+
+        Returns the new local key, or ``None`` when nothing was added
+        (unusable name, key already present, unparseable file). The operator
+        still has to paste the real ``CTProtocol`` UUID into the file — until
+        then the stub resolves to no ``protocol_id`` and the study stays
+        blocked. The reload never flips ``enabled``: on a reload error the
+        previously loaded map is kept.
+        """
+        slug = rhythm_protocols.append_stub(
+            self.protocol_map_path,
+            protocol_name=protocol_name,
+            description=description,
+        )
+        if slug is None:
+            return None
+        try:
+            self.protocol_map = rhythm_protocols.ProtocolMap.load(
+                self.protocol_map_path, expected_site_code=self.site_code
+            )
+        except rhythm_protocols.ProtocolMapError:
+            logger.error(
+                "Protocol map %s did not reload cleanly after appending '%s'",
+                self.protocol_map_path, slug, exc_info=True,
+            )
+        return slug
 
     # -- public API --------------------------------------------------------
 

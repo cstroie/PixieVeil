@@ -85,6 +85,10 @@ class FakeRhythm:
         self.job_checks.append(job_status_url)
         return self._job_result
 
+    def register_pending_protocol(self, protocol_name, *, description=""):
+        self.registered_stub = (protocol_name, description)
+        return "stub-key"
+
 
 def _manager(tmp_path, *, profile="rhythm", rhythm_configured=True, retain_days=None):
     storage = {
@@ -616,3 +620,56 @@ class TestRetentionAsZip:
         sm.enforce_retention_purge_sync()
 
         assert not orphan.exists()
+
+
+class TestProtocolStubAutoAppend:
+    """When a RHYTHM upload is blocked only because no protocol resolves,
+    manual_upload_rhythm appends a placeholder entry to the protocol map
+    derived from the study's ProtocolName."""
+
+    def _empty_map_manager(self, tmp_path):
+        from pixieveil.storage.rhythm_storage import RhythmStorage
+
+        sm = _manager(tmp_path)
+        sm.rhythm_storage.protocol_map_path.write_text(
+            "site_code: S001\nprotocols: []\n"
+        )
+        sm.rhythm_storage = RhythmStorage(sm.settings)
+        assert sm.rhythm_storage.protocol_map.entries == []
+        return sm
+
+    def test_stub_appended_from_protocol_name(self, tmp_path):
+        sm = self._empty_map_manager(tmp_path)
+        _ready_study(sm, with_exam=dict(EXAM_OK, rhythm={}))
+
+        r = asyncio.run(sm.manual_upload_rhythm(1))
+        assert r["ok"] is False
+        assert "protocol_id is not set" in r["message"]
+        assert "headroutine" in r["message"]
+
+        text = sm.rhythm_storage.protocol_map_path.read_text()
+        assert "id: headroutine" in text
+        assert "00000000-0000-0000-0000-000000000000" in text
+        entry = sm.rhythm_storage.protocol_map.get("headroutine")
+        assert entry is not None and entry.uuid_pending is True
+
+    def test_second_attempt_is_idempotent(self, tmp_path):
+        sm = self._empty_map_manager(tmp_path)
+        _ready_study(sm, with_exam=dict(EXAM_OK, rhythm={}))
+
+        asyncio.run(sm.manual_upload_rhythm(1))
+        after_first = sm.rhythm_storage.protocol_map_path.read_text()
+        r2 = asyncio.run(sm.manual_upload_rhythm(1))
+        assert r2["ok"] is False
+        assert "added placeholder protocol" not in r2["message"]
+        assert sm.rhythm_storage.protocol_map_path.read_text() == after_first
+
+    def test_no_protocol_name_no_stub(self, tmp_path):
+        sm = self._empty_map_manager(tmp_path)
+        exam = dict(EXAM_OK, rhythm={}, protocol_used_hint={"protocol_name": None})
+        _ready_study(sm, with_exam=exam)
+
+        r = asyncio.run(sm.manual_upload_rhythm(1))
+        assert r["ok"] is False
+        assert "added placeholder protocol" not in r["message"]
+        assert "protocols: []" in sm.rhythm_storage.protocol_map_path.read_text()

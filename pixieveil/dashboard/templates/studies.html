@@ -459,7 +459,7 @@
                 const rhythmProtocolOptions = ['<option value="">—</option>'].concat(
                     (CAPABILITIES.rhythm_protocols || []).map(p => {
                         const selected = currentProtoKey === p.id ? 'selected' : '';
-                        const label = esc(p.name || p.id);
+                        const label = esc((p.name || p.id) + (p.uuid_pending ? ' (UUID pending)' : ''));
                         return `<option value="${esc(p.id)}" ${selected}>${label}</option>`;
                     })
                 ).join('');
