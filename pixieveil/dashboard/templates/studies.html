@@ -6,6 +6,21 @@
         <title>PixieVeil Studies</title>
         <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
         <style>
+            /* Compact admin UI — override Pico's root custom properties.
+               --pico-font-size is the % applied to <html>, so dropping it
+               shrinks every rem-based size (type, form controls, the
+               spacing that keys off rem) proportionally. */
+            :root {
+                --pico-font-size: 87.5%;                  /* 16px -> 14px base */
+                --pico-line-height: 1.45;
+                --pico-typography-spacing-vertical: 0.75rem;
+                --pico-block-spacing-vertical: calc(var(--pico-spacing) * 0.75);
+                --pico-form-element-spacing-vertical: 0.5rem;
+                /* single knobs for the secondary text sprinkled through the page */
+                --pv-font-size-sm: 0.8125rem;
+                --pv-font-size-xs: 0.75rem;
+                --pv-gap: calc(var(--pico-spacing) * 0.75);
+            }
             article {
                 margin-bottom: var(--pico-spacing);
             }
@@ -20,7 +35,7 @@
                 background-color: var(--pico-table-row-stripe-background-color);
             }
             .badge {
-                font-size: 0.75rem;
+                font-size: var(--pv-font-size-xs);
                 font-weight: var(--pico-font-weight);
                 text-transform: uppercase;
                 letter-spacing: 0.02em;
@@ -33,8 +48,8 @@
                 border: 1px solid var(--pico-form-element-valid-focus-color);
             }
             .badge-warn {
-                color: var(--pico-del-color, #c00);
-                border: 1px solid var(--pico-del-color, #c00);
+                color: var(--pico-del-color);
+                border: 1px solid var(--pico-del-color);
             }
             .badge-muted {
                 color: var(--pico-muted-color);
@@ -63,31 +78,31 @@
                 margin-bottom: var(--pico-spacing);
             }
             .field-hint {
-                font-size: 0.75rem;
+                font-size: var(--pv-font-size-xs);
                 color: var(--pico-muted-color);
             }
             .hint-box {
-                font-size: 0.85rem;
+                font-size: var(--pv-font-size-sm);
                 color: var(--pico-muted-color);
                 border-left: 3px solid var(--pico-muted-border-color);
-                padding-left: 0.75rem;
-                margin: 0.5rem 0 1rem;
+                padding-left: var(--pv-gap);
+                margin: calc(var(--pico-spacing) * 0.5) 0 var(--pico-spacing);
             }
             .notes-list {
-                font-size: 0.85rem;
+                font-size: var(--pv-font-size-sm);
             }
             .action-row {
                 display: flex;
-                gap: 0.75rem;
+                gap: var(--pv-gap);
                 flex-wrap: wrap;
                 align-items: center;
             }
             .status-line {
-                font-size: 0.85rem;
+                font-size: var(--pv-font-size-sm);
             }
             .token-bar {
                 display: flex;
-                gap: 0.5rem;
+                gap: calc(var(--pico-spacing) * 0.5);
                 align-items: center;
                 margin-bottom: var(--pico-spacing);
             }
@@ -585,16 +600,16 @@
                                 <input type="text" data-path="protocol_used_hint.protocol_name"
                                     class="${isManual(exam, 'protocol_used_hint.protocol_name') ? 'manual-set' : ''}"
                                     value="${esc(get(exam, 'protocol_used_hint.protocol_name') || '')}">
-                                <span class="field-hint">informational only</span>
+                                <small>informational only</small>
                             </label>
                             <label>RHYTHM protocol
                                 <select data-path="rhythm.protocol_key"
                                     class="${isManual(exam, 'rhythm.protocol_key') ? 'manual-set' : ''}">
                                     ${rhythmProtocolOptions}
                                 </select>
-                                <span class="field-hint">required for RHYTHM upload — its
+                                <small>required for RHYTHM upload — its
                                     UUID goes in the manifest; region/indication/contrast/
-                                    scanner are derived from it upstream</span>
+                                    scanner are derived from it upstream</small>
                             </label>
                         </div>
                         ${seriesFields}

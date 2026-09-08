@@ -6,6 +6,21 @@
         <title>PixieVeil Dashboard</title>
         <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
         <style>
+            /* Compact admin UI — override Pico's root custom properties.
+               --pico-font-size is the % applied to <html>, so dropping it
+               shrinks every rem-based size (type, form controls, the
+               spacing that keys off rem) proportionally. */
+            :root {
+                --pico-font-size: 87.5%;                  /* 16px -> 14px base */
+                --pico-line-height: 1.45;
+                --pico-typography-spacing-vertical: 0.75rem;
+                --pico-block-spacing-vertical: calc(var(--pico-spacing) * 0.75);
+                /* single knobs for the secondary text sprinkled through the page */
+                --pv-font-size-sm: 0.8125rem;
+                --pv-font-size-xs: 0.75rem;
+                --pv-font-size-metric: 1.75rem;
+                --pv-gap: calc(var(--pico-spacing) * 0.75);
+            }
             article {
                 margin-bottom: var(--pico-spacing);
             }
@@ -17,7 +32,7 @@
             }
             .metrics article {
                 text-align: center;
-                padding: 1.25rem 1rem;
+                padding: var(--pico-spacing) calc(var(--pico-spacing) * 0.75);
                 margin-bottom: 0;
                 transition: border-color 0.2s;
                 display: flex;
@@ -29,7 +44,7 @@
             }
             .metrics article strong {
                 display: block;
-                font-size: 0.8rem;
+                font-size: var(--pv-font-size-xs);
                 font-weight: var(--pico-font-weight);
                 text-transform: uppercase;
                 letter-spacing: 0.03em;
@@ -42,14 +57,14 @@
                 gap: 0.35rem;
             }
             .metrics article span {
-                font-size: 2rem;
+                font-size: var(--pv-font-size-metric);
                 line-height: 1;
                 font-weight: bold;
                 color: var(--pico-primary);
                 font-variant-numeric: tabular-nums;
             }
             .metrics article .unit {
-                font-size: 0.8rem;
+                font-size: var(--pv-font-size-xs);
                 font-weight: normal;
                 color: var(--pico-muted-color);
             }
@@ -59,7 +74,7 @@
             }
             .sub-value {
                 color: var(--pico-muted-color);
-                font-size: 0.8rem;
+                font-size: var(--pv-font-size-xs);
             }
             .defacing-disabled {
                 color: var(--pico-muted-color);
@@ -68,14 +83,14 @@
             .section-title {
                 display: flex;
                 align-items: baseline;
-                gap: 0.75rem;
+                gap: var(--pv-gap);
                 margin-bottom: calc(var(--pico-spacing) * 0.5);
             }
             .section-title h3 {
                 margin: 0;
             }
             .badge {
-                font-size: 0.75rem;
+                font-size: var(--pv-font-size-xs);
                 font-weight: var(--pico-font-weight);
                 text-transform: uppercase;
                 letter-spacing: 0.02em;
@@ -93,19 +108,19 @@
             .status-bar {
                 display: flex;
                 flex-wrap: wrap;
-                gap: 0.75rem 1.25rem;
+                gap: var(--pv-gap) calc(var(--pico-spacing) * 1.25);
                 align-items: center;
             }
             .led {
                 display: inline-flex;
                 align-items: center;
                 gap: 0.4rem;
-                font-size: 0.9rem;
+                font-size: var(--pv-font-size-sm);
             }
             .led-dot {
                 display: inline-block;
-                width: 12px;
-                height: 12px;
+                width: 0.75rem;
+                height: 0.75rem;
                 border-radius: 50%;
                 background-color: var(--pico-muted-border-color);
                 flex-shrink: 0;
@@ -120,7 +135,7 @@
                 box-shadow: 0 0 6px var(--pico-form-element-invalid-focus-color);
             }
             .last-updated {
-                font-size: 0.75rem;
+                font-size: var(--pv-font-size-xs);
                 color: var(--pico-muted-color);
                 margin: 0 0 0 auto;
             }
