@@ -9,6 +9,8 @@ the network.
 
 import asyncio
 import json
+import os
+import time
 
 from pydicom.uid import (
     CTImageStorage,
@@ -693,3 +695,83 @@ class TestProtocolStubAutoAppend:
         assert r["ok"] is False
         assert "added placeholder protocol" not in r["message"]
         assert "protocols: []" in sm.rhythm_storage.protocol_map_path.read_text()
+
+
+class TestPrepareExportArtifacts:
+    """export_path/<NNNN>.{zip,json} are built as soon as a study is `ready`
+    and every data blocker (protocol_id, image_quality, CT series) is
+    cleared — no upload button, no RHYTHM/HTTP config required."""
+
+    def test_ready_and_clean_study_gets_artifacts(self, tmp_path):
+        sm = _manager(tmp_path)
+        _ready_study(sm)
+
+        assert sm._prepare_export_artifacts_sync(1) is True
+
+        zip_path = sm.export_path / "0001.zip"
+        json_path = sm.export_path / "0001.json"
+        assert zip_path.exists() and json_path.exists()
+
+        from pixieveil.storage.rhythm_storage import sha256_file
+        manifest = json.loads(json_path.read_text())
+        assert manifest["type"] == "rhythm_server_assigned_upload_manifest"
+        assert manifest["batch"] == "prepared"
+        item = manifest["items"][0]
+        assert item["sha256"] == sha256_file(zip_path)
+        assert item["size_bytes"] == zip_path.stat().st_size
+        assert item["protocol_id"] == PROTOCOL_UUID
+
+    def test_blocked_on_image_quality_builds_nothing(self, tmp_path):
+        sm = _manager(tmp_path)
+        _ready_study(sm, with_exam=dict(EXAM_OK, image_quality=None))
+
+        assert sm._prepare_export_artifacts_sync(1) is False
+        assert not (sm.export_path / "0001.zip").exists()
+
+    def test_blocked_on_protocol_builds_nothing(self, tmp_path):
+        sm = _manager(tmp_path)
+        _ready_study(sm, with_exam=dict(EXAM_OK, rhythm={}))
+
+        assert sm._prepare_export_artifacts_sync(1) is False
+        assert not (sm.export_path / "0001.json").exists()
+
+    def test_stale_artifacts_removed_when_study_stops_qualifying(self, tmp_path):
+        sm = _manager(tmp_path)
+        _ready_study(sm)
+        sm._prepare_export_artifacts_sync(1)
+        assert (sm.export_path / "0001.zip").exists()
+
+        # image quality gets cleared on a later edit
+        from pixieveil.storage.exam_sidecar import ExamSidecar
+        ExamSidecar(1, dict(EXAM_OK, image_quality=None)).save(sm.base_path)
+
+        assert sm._prepare_export_artifacts_sync(1) is False
+        assert not (sm.export_path / "0001.zip").exists()
+        assert not (sm.export_path / "0001.json").exists()
+
+    def test_rebuild_only_when_inputs_change(self, tmp_path):
+        sm = _manager(tmp_path)
+        _ready_study(sm)
+        sm._prepare_export_artifacts_sync(1)
+        first_mtime = (sm.export_path / "0001.zip").stat().st_mtime
+
+        # no change -> not rebuilt
+        assert sm._export_artifacts_current_sync(1) is True
+        sm._prepare_export_artifacts_sync(1)
+        assert (sm.export_path / "0001.zip").stat().st_mtime == first_mtime
+
+        # a newer .dcm -> rebuilt
+        newer = time.time() + 10
+        dcm = sm.base_path / "0001" / "0001" / "img1.dcm"
+        os.utime(dcm, (newer, newer))
+        assert sm._export_artifacts_current_sync(1) is False
+
+    def test_prepare_ready_exports_covers_all_ready_studies(self, tmp_path):
+        sm = _manager(tmp_path)
+        _ready_study(sm)                       # study 1: ready + clean
+        register_study(sm, 2, "complete")     # not ready -> skipped
+
+        asyncio.run(sm.prepare_ready_exports())
+
+        assert (sm.export_path / "0001.zip").exists()
+        assert not (sm.export_path / "0002.zip").exists()

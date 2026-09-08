@@ -303,6 +303,11 @@ class StorageManager:
                 logger.error("Unexpected error in RHYTHM job reconciliation: %s", exc)
 
             try:
+                await self.prepare_ready_exports()
+            except Exception as exc:
+                logger.error("Unexpected error preparing export artifacts: %s", exc)
+
+            try:
                 await asyncio.wait_for(self._stop_event.wait(), timeout=interval)
             except asyncio.TimeoutError:
                 pass
@@ -876,6 +881,13 @@ class StorageManager:
                 self.study_manager.mark_study_defacing_failed(study_uid)
             else:
                 self.study_manager.mark_study_ready(study_uid)
+                # If nothing is left to fill in (protocol picked, image
+                # quality set, ...), the export ZIP + manifest are built now;
+                # otherwise prepare_ready_exports() picks it up once the
+                # operator clears the blockers on /studies.
+                await asyncio.to_thread(
+                    self._prepare_export_artifacts_sync, study_number
+                )
         except Exception:
             logger.exception("Unexpected error processing study %s", study_uid)
         finally:
@@ -1608,6 +1620,139 @@ class StorageManager:
             manifest["blockers"] = blockers
         return manifest
 
+    # -- Proactive export artifacts (built when a study becomes export-ready,
+    #    not when an upload button is clicked) -----------------------------
+
+    def _export_data_blockers_sync(
+        self, study_number: int
+    ) -> Tuple[Optional[dict], list]:
+        """``(item, blockers)`` for a study's RHYTHM manifest item, where
+        *blockers* lists only the **study-data** problems that must be fixed
+        before export artifacts can be built: study not ``ready``, missing
+        ``protocol_id`` / ``image_quality``, unreadable exam sidecar, no CT
+        series. ``site_code`` is deliberately *not* counted — it is a
+        destination-config value finalised at upload time, so a study can be
+        packaged before RHYTHM/HTTP is configured."""
+        sc = self.find_sidecar_by_number(study_number)
+        if sc is None or sc.status != "ready":
+            status = "unknown" if sc is None else sc.status
+            return None, [f"study is not ready (status={status})"]
+
+        item, err = self._rhythm_manifest_item_sync(study_number)
+        if err:
+            return None, [err]
+
+        blockers = [
+            b for b in rhythm_manifest.manifest_item_blockers(item)
+            if not b.startswith("site_code")
+        ]
+        study_dir = self.base_path / f"{study_number:04d}"
+        if study_dir.is_dir():
+            excluded = self._rhythm_excluded_series_sync(study_dir)
+            ct = {
+                d.name for d in study_dir.iterdir()
+                if d.is_dir() and d.name.isdigit()
+            } - excluded
+            if not ct:
+                blockers.append("no CT image series")
+        return item, blockers
+
+    def _export_artifacts_current_sync(self, study_number: int) -> bool:
+        """True when ``export_path/<NNNN>.{zip,json}`` both exist and are at
+        least as new as every input (the study's ``.dcm`` files and its exam
+        sidecar) — i.e. no rebuild is needed."""
+        zip_path = self.export_path / f"{study_number:04d}.zip"
+        json_path = self.export_path / f"{study_number:04d}.json"
+        if not zip_path.exists() or not json_path.exists():
+            return False
+        try:
+            artifact_mtime = min(
+                zip_path.stat().st_mtime, json_path.stat().st_mtime
+            )
+        except OSError:
+            return False
+        study_dir = self.base_path / f"{study_number:04d}"
+        inputs = list(study_dir.rglob("*.dcm")) if study_dir.is_dir() else []
+        exam_path = ExamSidecar.path_for(self.base_path, study_number)
+        if exam_path.exists():
+            inputs.append(exam_path)
+        try:
+            newest_input = max((p.stat().st_mtime for p in inputs), default=0.0)
+        except OSError:
+            return False
+        return artifact_mtime >= newest_input
+
+    def _prepare_export_artifacts_sync(self, study_number: int) -> bool:
+        """(Re)build ``export_path/<NNNN>.zip`` + ``<NNNN>.json`` for a study
+        that is ``ready`` with every data blocker cleared. Rebuilds when the
+        study directory or exam sidecar changed since the last build; removes
+        the artifacts if the study no longer qualifies. Returns True when
+        current artifacts are present afterwards."""
+        zip_path = self.export_path / f"{study_number:04d}.zip"
+        json_path = self.export_path / f"{study_number:04d}.json"
+
+        item, blockers = self._export_data_blockers_sync(study_number)
+        if blockers:
+            removed = False
+            for p in (zip_path, json_path):
+                if p.exists():
+                    p.unlink(missing_ok=True)
+                    removed = True
+            if removed:
+                logger.info(
+                    "Export: removed now-stale artifacts for %04d (%s)",
+                    study_number, "; ".join(blockers),
+                )
+            return False
+
+        if self._export_artifacts_current_sync(study_number):
+            return True
+
+        study_dir = self.base_path / f"{study_number:04d}"
+        excluded = self._rhythm_excluded_series_sync(study_dir)
+        self.export_path.mkdir(parents=True, exist_ok=True)
+        built = self.zip_manager.create_zip_sync(
+            f"{study_number:04d}", self.export_path, source_dir=study_dir,
+            exclude=lambda p: p.parent.name in excluded,
+        )
+        if built is None:
+            logger.warning("Export: failed to build ZIP for study %04d", study_number)
+            return False
+
+        assert item is not None  # implied by empty blockers
+        item["sha256"] = sha256_file(built)
+        item["size_bytes"] = built.stat().st_size
+        manifest = rhythm_manifest.build_batch_manifest(
+            [item],
+            batch="prepared",
+            site_code=self.rhythm_storage.site_code or "SITE",
+            note=("prepared when the study became export-ready; batch and "
+                  "site_code are finalised at upload time"),
+        )
+        tmp = json_path.with_name(json_path.name + ".tmp")
+        tmp.write_text(json.dumps(manifest, indent=2))
+        tmp.replace(json_path)
+        logger.info("Export: prepared artifacts for study %04d", study_number)
+        return True
+
+    async def prepare_ready_exports(self) -> None:
+        """Completion-loop tick: (re)build export artifacts for every
+        ``ready`` study whose data blockers are cleared, and drop artifacts
+        for any that no longer qualify. Self-healing — covers studies made
+        ready before this existed and edits that changed the manifest."""
+        def _run() -> None:
+            for sc in StudySidecar.load_all(self.base_path).values():
+                if (sc.status == "ready"
+                        and sc.study_number not in self._manual_actions_in_progress):
+                    try:
+                        self._prepare_export_artifacts_sync(sc.study_number)
+                    except Exception:
+                        logger.warning(
+                            "Export: prep failed for study %04d",
+                            sc.study_number, exc_info=True,
+                        )
+        await asyncio.to_thread(_run)
+
     async def manual_upload_rhythm(self, study_number: int,
                                    *, batch: Optional[str] = None) -> dict:
         """Upload one ready study to the RHYTHM platform at the user's request.
@@ -2042,6 +2187,12 @@ class StorageManager:
             if result is None:
                 return {"ok": False, "message": "exam sidecar not found"}
             data, failed_paths = result
+            # A manual edit may have cleared the last blocker (or changed a
+            # value that's now baked into the DICOM) — refresh the export
+            # artifacts to match.
+            await asyncio.to_thread(
+                self._prepare_export_artifacts_sync, study_number
+            )
             if failed_paths:
                 # The sidecar itself saved fine — data isn't lost — but the
                 # correction didn't reach every DICOM file, so this must not
