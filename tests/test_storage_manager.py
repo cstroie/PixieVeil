@@ -5,7 +5,6 @@ conftest.make_settings), so nothing here touches the network or a GPU.
 """
 
 import asyncio
-import time
 
 from pixieveil.processing.exam_extractor import _parse_dicom_age
 from pixieveil.processing.study_manager import StudyState
@@ -14,6 +13,18 @@ from pixieveil.storage.storage_manager import StorageManager
 from pixieveil.storage.study_sidecar import StudySidecar
 
 from .conftest import read_dicom, write_minimal_dicom
+
+
+def _iso_ago(seconds: float) -> str:
+    """ISO-8601 timestamp `seconds` in the past — for StudySidecar.exported_at."""
+    from datetime import datetime, timezone, timedelta
+    return (datetime.now(timezone.utc).astimezone()
+            - timedelta(seconds=seconds)).isoformat(timespec="microseconds")
+
+
+def _json_load(path):
+    import json
+    return json.loads(path.read_text())
 
 
 def register_study(sm: StorageManager, study_number: int, status: str,
@@ -51,20 +62,13 @@ class TestResolveStudyDir:
         assert path == study_dir
         assert location == "base"
 
-    def test_found_under_retained_path_when_not_in_base(self, storage_manager):
-        retained_dir = storage_manager.retained_path / "0002"
-        retained_dir.mkdir(parents=True)
+    def test_only_base_path_is_checked(self, storage_manager):
+        # Exported studies now stay in base_path until purged; there is no
+        # separate retained directory to fall through to.
+        (storage_manager.export_path / "0002").mkdir(parents=True)
         path, location = storage_manager.resolve_study_dir(2)
-        assert path == retained_dir
-        assert location == "retained"
-
-    def test_base_path_takes_priority_over_retained(self, storage_manager):
-        base_dir = storage_manager.base_path / "0003"
-        base_dir.mkdir(parents=True)
-        (storage_manager.retained_path / "0003").mkdir(parents=True)
-        path, location = storage_manager.resolve_study_dir(3)
-        assert path == base_dir
-        assert location == "base"
+        assert path is None
+        assert location == "absent"
 
 
 class TestFindSidecarByNumber:
@@ -178,59 +182,150 @@ class TestEnforceRetentionPurge:
             "retain_after_export_days": retain_days,
         }))
 
-    def _retained_study(self, sm, retained_at):
-        retained_dir = sm.retained_path / "0001"
-        (retained_dir / "0001").mkdir(parents=True)
-        (retained_dir / "0001" / "img.dcm").write_bytes(b"x")
-        (retained_dir / ".retained_at").write_text(str(retained_at))
-        return retained_dir
+    def _exported_study(self, sm, exported_at, *, n=1):
+        """An archived study still on disk: study dir + export pair +
+        deface scratch, with exported_at stamped `exported_at` seconds ago."""
+        sc = register_study(sm, n, "archived", archived_via="rhythm")
+        write_minimal_dicom(sm.base_path / f"{n:04d}" / "0001" / "img.dcm")
+        sm.export_path.mkdir(parents=True, exist_ok=True)
+        (sm.export_path / f"{n:04d}.zip").write_bytes(b"PK\x05\x06" + b"\0" * 18)
+        (sm.export_path / f"{n:04d}.json").write_text("{}")
+        scratch = sm.temp_path / f"pixieveil_deface_{n:04d}_0001"
+        (scratch / "nifti_in").mkdir(parents=True)
+        sc.exported_at = _iso_ago(exported_at)
+        sc.save(sm.base_path)
+        return sc
 
-    def test_expired_study_is_purged(self, tmp_path):
+    def test_expired_study_is_purged_but_record_kept(self, tmp_path):
         sm = self._manager_with_retention(tmp_path, retain_days=1)
-        retained_dir = self._retained_study(sm, retained_at=time.time() - 999999)
+        self._exported_study(sm, exported_at=999999)
 
         sm.enforce_retention_purge_sync()
 
-        assert not retained_dir.exists()
+        assert not (sm.base_path / "0001").exists()
+        assert not (sm.export_path / "0001.zip").exists()
+        assert not (sm.export_path / "0001.json").exists()
+        assert not (sm.temp_path / "pixieveil_deface_0001_0001").exists()
+        # record survives, marked purged
+        reloaded = StudySidecar.load(StudySidecar.path_for(sm.base_path, 1))
+        assert reloaded.purged_at is not None
 
     def test_not_yet_expired_study_is_kept(self, tmp_path):
         sm = self._manager_with_retention(tmp_path, retain_days=14)
-        retained_dir = self._retained_study(sm, retained_at=time.time())
+        self._exported_study(sm, exported_at=60)
 
         sm.enforce_retention_purge_sync()
 
-        assert retained_dir.exists()
+        assert (sm.base_path / "0001").exists()
+        assert (sm.export_path / "0001.zip").exists()
+
+    def test_unexported_archived_study_is_not_purged(self, tmp_path):
+        sm = self._manager_with_retention(tmp_path, retain_days=1)
+        # archived (e.g. kept locally) but exported_at never set
+        register_study(sm, 1, "archived")
+        write_minimal_dicom(sm.base_path / "0001" / "0001" / "img.dcm")
+
+        sm.enforce_retention_purge_sync()
+
+        assert (sm.base_path / "0001").exists()
 
     def test_no_op_when_retention_not_configured(self, tmp_path):
         from .conftest import make_settings
         sm = StorageManager(make_settings(tmp_path))
-        retained_dir = sm.retained_path / "0001"
-        (retained_dir / "0001").mkdir(parents=True)
-        (retained_dir / ".retained_at").write_text(str(time.time() - 999999))
+        register_study(sm, 1, "archived", archived_via="dicom")
+        write_minimal_dicom(sm.base_path / "0001" / "0001" / "img.dcm")
+        sc = sm.find_sidecar_by_number(1)
+        sc.exported_at = _iso_ago(999999)
+        sc.save(sm.base_path)
 
         sm.enforce_retention_purge_sync()
 
-        assert retained_dir.exists()
+        assert (sm.base_path / "0001").exists()
 
-    def test_failed_purge_is_logged_as_a_warning_not_a_success(self, tmp_path, monkeypatch, caplog):
-        # Regression: shutil.rmtree(ignore_errors=True) can silently leave a
-        # directory intact, but the "purged" log used to fire unconditionally
-        # right after it regardless of whether that actually happened.
-        import pixieveil.storage.storage_manager as storage_manager_module
 
-        sm = self._manager_with_retention(tmp_path, retain_days=1)
-        retained_dir = self._retained_study(sm, retained_at=time.time() - 999999)
+class TestHttpExportArtifacts:
+    def _sm(self, tmp_path, **extra_storage):
+        from .conftest import make_settings
+        storage = {
+            "base_path": str(tmp_path / "data"),
+            "temp_path": str(tmp_path / "tmp"),
+            "remote_storage": {"http": {"base_url": "https://storage.example"}},
+        }
+        storage.update(extra_storage)
+        sm = StorageManager(make_settings(tmp_path, storage=storage))
 
-        monkeypatch.setattr(
-            storage_manager_module.shutil, "rmtree", lambda *a, **k: None
-        )  # simulates every error inside rmtree being swallowed, dir untouched
+        async def _ok(zip_path, name):
+            _ok.sent = (zip_path, name)
+            return True
+        sm.remote_storage.upload_file = _ok
+        sm.remote_storage.enabled = True
+        return sm
 
-        with caplog.at_level("WARNING"):
-            sm.enforce_retention_purge_sync()
+    def test_http_writes_export_pair_and_keeps_it_with_retention(self, tmp_path):
+        sm = self._sm(tmp_path, retain_after_export_days=7)
+        register_study(sm, 1, "ready")
+        write_minimal_dicom(sm.base_path / "0001" / "0001" / "img.dcm")
 
-        assert retained_dir.exists()
-        assert any("failed to fully purge" in r.message for r in caplog.records)
-        assert not any("Retention: purged" in r.message for r in caplog.records)
+        r = asyncio.run(sm.manual_upload_http(1))
+        assert r["ok"] is True
+
+        assert (sm.export_path / "0001.zip").exists()
+        desc = _json_load(sm.export_path / "0001.json")
+        assert desc["exported_via"] == "http"
+        assert desc["status"] == "sent"
+        assert desc["zip"]["sha256"]
+        sc = sm.find_sidecar_by_number(1)
+        assert sc.status == "archived" and sc.archived_via == "http"
+        assert sc.exported_at is not None and sc.purged_at is None
+        assert (sm.base_path / "0001").exists()
+
+    def test_http_no_retention_purges_pair_and_dir_immediately(self, tmp_path):
+        sm = self._sm(tmp_path)
+        register_study(sm, 1, "ready")
+        write_minimal_dicom(sm.base_path / "0001" / "0001" / "img.dcm")
+
+        asyncio.run(sm.manual_upload_http(1))
+
+        assert not (sm.base_path / "0001").exists()
+        assert not (sm.export_path / "0001.zip").exists()
+        sc = sm.find_sidecar_by_number(1)
+        assert sc.exported_at is not None and sc.purged_at is not None
+
+    def test_export_clears_deface_scratch(self, tmp_path):
+        sm = self._sm(tmp_path, retain_after_export_days=7)
+        register_study(sm, 1, "ready")
+        write_minimal_dicom(sm.base_path / "0001" / "0001" / "img.dcm")
+        (sm.temp_path / "pixieveil_deface_0001_0001").mkdir(parents=True)
+
+        asyncio.run(sm.manual_upload_http(1))
+
+        # retention keeps the study dir but the NIfTI scratch is gone
+        assert (sm.base_path / "0001").exists()
+        assert not (sm.temp_path / "pixieveil_deface_0001_0001").exists()
+
+
+class TestOrphanDefaceScratchSweep:
+    def test_startup_sweeps_only_archived_and_absent_studies(self, tmp_path):
+        from .conftest import make_settings
+        settings = make_settings(tmp_path)
+        # First manager instance: lay down state, then build scratch dirs.
+        sm = StorageManager(settings)
+        register_study(sm, 1, "archived", archived_via="dicom")
+        for n, status in [(2, "ready"), (3, "defacing_failed"), (4, "receiving")]:
+            register_study(sm, n, status)
+            write_minimal_dicom(sm.base_path / f"{n:04d}" / "0001" / "img.dcm")
+        for n in (1, 2, 3, 4, 9):
+            (sm.temp_path / f"pixieveil_deface_{n:04d}_0001").mkdir(parents=True)
+
+        # A fresh manager runs the sweep in __init__.
+        sm2 = StorageManager(settings)
+
+        assert not (sm2.temp_path / "pixieveil_deface_0001_0001").exists()  # archived
+        assert not (sm2.temp_path / "pixieveil_deface_0009_0001").exists()  # no study
+        # everything not archived keeps its scratch for manual inspection
+        assert (sm2.temp_path / "pixieveil_deface_0002_0001").exists()      # ready
+        assert (sm2.temp_path / "pixieveil_deface_0003_0001").exists()      # defacing_failed
+        assert (sm2.temp_path / "pixieveil_deface_0004_0001").exists()      # receiving
 
 
 class TestWritebackPatientFields:
@@ -428,22 +523,26 @@ class TestExamHints:
             "study": {"manufacturer": "SIEMENS"}, "series": {}
         }
 
-    def test_retain_or_delete_drops_the_hints_file(self, tmp_path):
+    def test_purge_study_artifacts_removes_dir_export_pair_and_scratch(self, tmp_path):
         from .conftest import make_settings
         sm = StorageManager(make_settings(tmp_path, storage={
             "base_path": str(tmp_path / "data"),
             "temp_path": str(tmp_path / "tmp"),
-            "retain_after_export_days": 7,
         }))
         study_dir = sm.base_path / "0001"
         write_minimal_dicom(study_dir / "0001" / "img1.dcm")
-        (study_dir / ".exam_hints.json").write_text('{"study": {"manufacturer": "SIEMENS"}}')
+        (study_dir / ".exam_hints.json").write_text('{"study": {}}')
+        sm.export_path.mkdir(parents=True, exist_ok=True)
+        (sm.export_path / "0001.zip").write_bytes(b"z")
+        (sm.export_path / "0001.json").write_text("{}")
+        (sm.temp_path / "pixieveil_deface_0001_0002").mkdir(parents=True)
 
-        sm._retain_or_delete_sync(study_dir)
+        sm._purge_study_artifacts_sync(1)
 
-        retained = sm.retained_path / "0001"
-        assert retained.exists()
-        assert not (retained / ".exam_hints.json").exists()
+        assert not study_dir.exists()
+        assert not (sm.export_path / "0001.zip").exists()
+        assert not (sm.export_path / "0001.json").exists()
+        assert not (sm.temp_path / "pixieveil_deface_0001_0002").exists()
 
 
 class TestManualReextract:

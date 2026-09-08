@@ -42,7 +42,7 @@ from pixieveil.processing.exam_extractor import ExamExtractor
 from pixieveil.processing import exam_merge
 from pixieveil.processing import rhythm_manifest
 from pixieveil.storage.exam_sidecar import ExamSidecar
-from pixieveil.storage.study_sidecar import StudySidecar
+from pixieveil.storage.study_sidecar import StudySidecar, _now_iso
 
 logger = logging.getLogger(__name__)
 
@@ -93,8 +93,12 @@ class StorageManager:
         self.temp_path = Path(settings.storage["temp_path"])
         self.temp_path.mkdir(parents=True, exist_ok=True)
         logger.debug(f"Created temp directory: {self.temp_path}")
-        self.retained_path = Path(
-            settings.storage.get("retain_path", str(self.base_path.parent / "retained"))
+        # Holds <NNNN>.zip + <NNNN>.json for HTTP/RHYTHM exports — written
+        # before the upload, kept as the retry source / audit copy. Purged
+        # together with the study directory once the retention window
+        # elapses (see enforce_retention_purge_sync).
+        self.export_path = Path(
+            settings.storage.get("export_path", str(self.base_path.parent / "export"))
         )
         self.anontrail_path = Path(settings.logging.get("anontrail", "anontrail.jsonl"))
         self.anontrail_path.parent.mkdir(parents=True, exist_ok=True)
@@ -198,6 +202,7 @@ class StorageManager:
             }
         }
         self._init_counters_from_sidecars()
+        self._sweep_orphan_deface_temp_sync()
         logger.debug("StorageManager initialization complete")
 
         # -----------------------------------------------------------------
@@ -997,106 +1002,108 @@ class StorageManager:
                         study_uid, orig_series_uid, is_head=False, is_topogram=False
                     )
     
-    def _retain_or_delete_sync(self, study_dir: Path) -> None:
-        """
-        Called after a successful export in place of an unconditional delete.
+    def _clear_deface_temp_sync(self, study_number: int) -> None:
+        """Remove the persistent ``pixieveil_deface_<NNNN>_<SSSS>`` NIfTI
+        scratch directories the Defacer keeps for manual inspection. Called
+        once a study is exported (the scratch is intermediate working data
+        with no audit value) or purged, so they don't accumulate."""
+        for d in self.temp_path.glob(f"pixieveil_deface_{study_number:04d}_*"):
+            shutil.rmtree(d, ignore_errors=True)
 
-        If storage.retain_after_export_days is configured, moves the
-        (already anonymized) study directory into retained_path with a
-        timestamp marker instead of deleting it, so enforce_retention_purge
-        can remove it once the window elapses. Otherwise deletes it right
-        away, matching the original always-delete behavior.
-        """
-        # The pre-anon extraction hints have served their purpose once the
-        # exam sidecar exists; don't let them linger in the retained copy
-        # (they hold Manufacturer/StudyDescription/ProtocolName — the values
-        # the rhythm profile deliberately strips from the DICOM beside them).
-        (study_dir / ".exam_hints.json").unlink(missing_ok=True)
-
-        retain_days = self.settings.storage.get("retain_after_export_days")
-        if not retain_days:
-            shutil.rmtree(study_dir)
+    def _sweep_orphan_deface_temp_sync(self) -> None:
+        """Startup sweep: drop any ``pixieveil_deface_<NNNN>_*`` scratch dir
+        whose study is already archived or no longer on disk. Newer code
+        clears these at export time, but a study exported before this
+        existed — or a crash between export and cleanup — leaves them behind.
+        Scratch for a study still ``ready`` / ``defacing_failed`` /
+        in-progress is kept for manual inspection."""
+        if not self.temp_path.exists():
             return
+        swept = 0
+        for d in self.temp_path.glob("pixieveil_deface_????_*"):
+            if not d.is_dir():
+                continue
+            name = d.name[len("pixieveil_deface_"):]
+            num_str = name.split("_", 1)[0]
+            if not num_str.isdigit():
+                continue
+            study_number = int(num_str)
+            sc = self.study_manager.get_sidecar_by_number(study_number)
+            study_dir = self.base_path / f"{study_number:04d}"
+            if sc is None or sc.status == "archived" or not study_dir.exists():
+                shutil.rmtree(d, ignore_errors=True)
+                swept += 1
+        if swept:
+            logger.info("Swept %d orphaned deface scratch dir(s) from %s",
+                        swept, self.temp_path)
 
-        self.retained_path.mkdir(parents=True, exist_ok=True)
-        dest = self.retained_path / study_dir.name
-        if dest.exists():
-            dest = self.retained_path / f"{study_dir.name}_{int(time.time())}"
-        shutil.move(str(study_dir), str(dest))
-        (dest / ".retained_at").write_text(str(time.time()))
-        logger.debug("Retention: kept %s under %s", study_dir.name, self.retained_path)
+    def _purge_study_artifacts_sync(self, study_number: int) -> None:
+        """Delete everything bulky for a study but keep its records: the
+        study directory, the ``export_path/<NNNN>.{zip,json}`` pair and the
+        deface scratch dirs. The ``<NNNN>.state.json`` / ``<NNNN>.exam.json``
+        sidecars are left in place as the permanent audit trail."""
+        study_dir = self.base_path / f"{study_number:04d}"
+        if study_dir.exists():
+            shutil.rmtree(study_dir, ignore_errors=True)
+        for suffix in (".zip", ".json"):
+            (self.export_path / f"{study_number:04d}{suffix}").unlink(missing_ok=True)
+        self._clear_deface_temp_sync(study_number)
+
+    def _finish_export_sync(self, original_study_uid: str, study_number: int) -> None:
+        """Bookkeeping after a study's first successful export by any method:
+        stamp ``exported_at`` (the retention clock) and, when
+        ``retain_after_export_days`` is not configured, purge the bulky
+        artifacts immediately (prior always-delete behaviour). Otherwise the
+        study directory + ``export_path`` pair sit until
+        ``enforce_retention_purge`` ages them off. Mutations go through
+        StudyManager so the in-memory sidecar cache stays consistent.
+
+        The deface NIfTI scratch is intermediate working data with no audit
+        value, so it is cleared now regardless of the retention window."""
+        self.study_manager.mark_study_exported(original_study_uid, _now_iso())
+        self._clear_deface_temp_sync(study_number)
+        if not self.settings.storage.get("retain_after_export_days"):
+            self._purge_study_artifacts_sync(study_number)
+            self.study_manager.mark_study_purged(original_study_uid, _now_iso())
 
     def enforce_retention_purge_sync(self) -> None:
         """
-        Synchronous purge of retained studies whose retention window has
-        elapsed. No-op if storage.retain_after_export_days is not configured.
+        Purge exported studies whose retention window has elapsed: remove the
+        study directory, the ``export_path/<NNNN>.{zip,json}`` pair and the
+        deface scratch, keeping the ``.state.json`` / ``.exam.json`` records.
+        No-op if ``storage.retain_after_export_days`` is not configured (the
+        artifacts are then deleted at export time, not here).
+
+        The retention clock is ``StudySidecar.exported_at`` (set on first
+        successful export; for RHYTHM, when the ingest job reached COMPLETE).
+        A study that was uploaded to RHYTHM but never reached COMPLETE has no
+        ``exported_at`` — its ``export_path`` pair is the retry source and is
+        kept indefinitely.
         """
         retain_days = self.settings.storage.get("retain_after_export_days")
-        if not retain_days or not self.retained_path.exists():
+        if not retain_days:
             return
 
-        cutoff = time.time() - (retain_days * 86400)
-        for entry in self.retained_path.iterdir():
-            if entry.is_file() and entry.suffix in (".zip", ".json") and entry.stem.isdigit():
-                # RHYTHM retention shape: <NNNN>.zip + <NNNN>.json (manifest).
-                # The manifest is written at finalize time, so its mtime is
-                # the retention clock; fall back to the ZIP's own for an
-                # orphan ZIP (a job that never reached COMPLETE). Purge the
-                # pair together, and only from the .zip side so a pair is
-                # never handled twice in one pass (a stray .json with no .zip
-                # still gets aged off on its own mtime).
-                zip_path = entry.with_suffix(".zip")
-                manifest = entry.with_suffix(".json")
-                if entry.suffix == ".json" and zip_path.exists():
-                    continue  # handled (or will be) via the .zip entry
-                clock_src = manifest if manifest.exists() else zip_path
-                try:
-                    retained_at = clock_src.stat().st_mtime
-                except OSError:
-                    continue
-                if retained_at < cutoff:
-                    try:
-                        zip_path.unlink(missing_ok=True)
-                        manifest.unlink(missing_ok=True)
-                        logger.info(
-                            "Retention: purged %s + manifest (older than "
-                            "retain_after_export_days=%s)", zip_path.name, retain_days,
-                        )
-                    except OSError:
-                        logger.warning(
-                            "Retention: failed to purge %s / its manifest "
-                            "(older than retain_after_export_days=%s)",
-                            zip_path.name, retain_days, exc_info=True,
-                        )
+        cutoff = datetime.now(timezone.utc).timestamp() - (retain_days * 86400)
+        for sc in StudySidecar.load_all(self.base_path).values():
+            # No exported_at → never purge: either a RHYTHM job that hasn't
+            # confirmed COMPLETE (keep the retry source), or a study archived
+            # before this field existed (its dir, if any, stays put).
+            if sc.status != "archived" or sc.purged_at or not sc.exported_at:
                 continue
-            if not entry.is_dir():
-                continue
-            marker = entry / ".retained_at"
             try:
-                retained_at = (
-                    float(marker.read_text())
-                    if marker.exists() else entry.stat().st_mtime
-                )
-            except (OSError, ValueError):
-                retained_at = entry.stat().st_mtime
-            if retained_at < cutoff:
-                # ignore_errors=True so one bad file doesn't stop the rest
-                # of this loop's purges — but that also means rmtree can
-                # leave the directory partially intact without raising, so
-                # the log line must check reality instead of assuming
-                # success.
-                shutil.rmtree(entry, ignore_errors=True)
-                if entry.exists():
-                    logger.warning(
-                        "Retention: failed to fully purge %s (older than "
-                        "retain_after_export_days=%s) — some files may remain",
-                        entry.name, retain_days,
-                    )
-                else:
-                    logger.info(
-                        "Retention: purged %s (older than retain_after_export_days=%s)",
-                        entry.name, retain_days,
-                    )
+                exported_ts = datetime.fromisoformat(sc.exported_at).timestamp()
+            except ValueError:
+                continue
+            if exported_ts >= cutoff:
+                continue
+            self._purge_study_artifacts_sync(sc.study_number)
+            self.study_manager.mark_study_purged(sc.original_study_uid, _now_iso())
+            logger.info(
+                "Retention: purged study %04d artifacts (exported %s, older "
+                "than retain_after_export_days=%s) — records kept",
+                sc.study_number, sc.exported_at, retain_days,
+            )
 
     async def enforce_retention_purge(self) -> None:
         """Offload retention purge to a thread so the event loop stays responsive."""
@@ -1151,15 +1158,15 @@ class StorageManager:
                 continue
 
             dir_size = sum(f.stat().st_size for f in study_dir.rglob("*") if f.is_file())
-            shutil.rmtree(study_dir)
+            # Also drop the export pair + deface scratch — same as a
+            # retention purge, just triggered by disk pressure instead of age.
+            self._purge_study_artifacts_sync(study_number)
             used_bytes -= dir_size
-            logger.info(f"Quota: removed study {study_dir.name} ({dir_size / (1024 ** 2):.1f} MB)")
-
-            zip_path = self.base_path / f"{study_dir.name}.zip"
-            if zip_path.exists():
-                zip_size = zip_path.stat().st_size
-                zip_path.unlink()
-                used_bytes -= zip_size
+            self.study_manager.mark_study_purged(sc.original_study_uid, _now_iso())
+            logger.info(
+                f"Quota: removed study {study_dir.name} "
+                f"({dir_size / (1024 ** 2):.1f} MB) — record kept"
+            )
 
             with self.lock:
                 self.inc_counter('cleanup', 'studies')
@@ -1194,21 +1201,20 @@ class StorageManager:
     #
     # Exports are user-triggered only — StorageManager never sends a study
     # to a DICOM node or HTTP endpoint on its own. The first successful
-    # manual send/upload for a study also performs the same
-    # retain-or-delete + mark_study_archived bookkeeping _export_via_dicom /
-    # _export_via_http_zip used to do automatically. A later manual re-send
-    # of an already-archived study must NOT move or delete files that are
-    # already in their resting place, so that step is skipped then.
+    # manual send/upload for a study marks it archived and stamps
+    # exported_at (the retention clock); if retain_after_export_days is not
+    # set, the study directory + export pair + deface scratch are removed
+    # right then. A later manual re-send of an already-archived study just
+    # re-sends — the "first export" bookkeeping is skipped.
     # -----------------------------------------------------------------
 
     def resolve_study_dir(self, study_number: int) -> tuple[Optional[Path], str]:
-        """Locate a study's directory, checking base_path then retained_path."""
+        """Locate a study's directory. Exported studies now stay in
+        ``base_path`` until the retention window purges them, so there is
+        only one place to look."""
         base_dir = self.base_path / f"{study_number:04d}"
         if base_dir.exists():
             return base_dir, "base"
-        retained_dir = self.retained_path / f"{study_number:04d}"
-        if retained_dir.exists():
-            return retained_dir, "retained"
         return None, "absent"
 
     def find_sidecar_by_number(self, study_number: int) -> Optional[StudySidecar]:
@@ -1326,8 +1332,12 @@ class StorageManager:
                     with self.lock:
                         self.inc_counter('cleanup', 'studies')
                         self.inc_counter('cleanup', 'images', image_count)
-                    await asyncio.to_thread(self._retain_or_delete_sync, study_dir)
-                    self.study_manager.mark_study_archived(sc.original_study_uid, via="dicom")
+                    self.study_manager.mark_study_archived(
+                        sc.original_study_uid, via="dicom"
+                    )
+                    await asyncio.to_thread(
+                        self._finish_export_sync, sc.original_study_uid, study_number
+                    )
                 return {"ok": True, "message": f"sent to DICOM node ({location})"}
 
             with self.lock:
@@ -1360,8 +1370,16 @@ class StorageManager:
                         "is still undefaced) — cannot export until that is resolved"}
             first_export = sc is not None and sc.status != "archived"
 
+            # Build the ZIP into export_path (same shape RHYTHM uses). It
+            # stays there: as the audit copy after a successful send, or a
+            # record of the last attempt after a failed one (a retry
+            # overwrites). Purged with the study directory once the retention
+            # window elapses.
+            await asyncio.to_thread(
+                self.export_path.mkdir, parents=True, exist_ok=True
+            )
             zip_path = await self.zip_manager.create_zip(
-                f"{study_number:04d}", self.base_path, source_dir=study_dir
+                f"{study_number:04d}", self.export_path, source_dir=study_dir
             )
             if not zip_path:
                 with self.lock:
@@ -1370,10 +1388,18 @@ class StorageManager:
                 return {"ok": False, "message": "failed to create ZIP archive"}
 
             zip_size = await asyncio.to_thread(lambda: zip_path.stat().st_size)
-            try:
-                success = await self.remote_storage.upload_file(zip_path, zip_path.name)
-            finally:
-                await asyncio.to_thread(zip_path.unlink, missing_ok=True)
+            zip_sha = await asyncio.to_thread(sha256_file, zip_path)
+            await asyncio.to_thread(
+                self._write_http_export_descriptor_sync,
+                study_number, zip_sha, zip_size, "attempted",
+            )
+
+            success = await self.remote_storage.upload_file(zip_path, zip_path.name)
+            if success:
+                await asyncio.to_thread(
+                    self._write_http_export_descriptor_sync,
+                    study_number, zip_sha, zip_size, "sent",
+                )
 
             if success:
                 image_count = await asyncio.to_thread(
@@ -1391,8 +1417,12 @@ class StorageManager:
                     with self.lock:
                         self.inc_counter('cleanup', 'studies')
                         self.inc_counter('cleanup', 'images', image_count)
-                    await asyncio.to_thread(self._retain_or_delete_sync, study_dir)
-                    self.study_manager.mark_study_archived(sc.original_study_uid, via="http")
+                    self.study_manager.mark_study_archived(
+                        sc.original_study_uid, via="http"
+                    )
+                    await asyncio.to_thread(
+                        self._finish_export_sync, sc.original_study_uid, study_number
+                    )
                 return {"ok": True, "message": f"uploaded to HTTP storage ({location})"}
 
             with self.lock:
@@ -1651,8 +1681,16 @@ class StorageManager:
 
             batch = batch or self._new_rhythm_batch_id()
 
+            # Build the export ZIP + manifest into export_path BEFORE the
+            # upload. They stay there as the audit copy / retry source: on a
+            # failed or never-COMPLETE job they persist indefinitely; a
+            # successful job's pair is aged off with the study directory once
+            # the retention window elapses (a later attempt overwrites).
+            await asyncio.to_thread(
+                self.export_path.mkdir, parents=True, exist_ok=True
+            )
             zip_path = await self.zip_manager.create_zip(
-                f"{study_number:04d}", self.base_path, source_dir=study_dir,
+                f"{study_number:04d}", self.export_path, source_dir=study_dir,
                 exclude=lambda p: p.parent.name in excluded,
             )
             if not zip_path:
@@ -1661,51 +1699,34 @@ class StorageManager:
                     self.inc_counter('errors', 'total')
                 return {"ok": False, "message": "failed to create ZIP archive"}
 
-            # The manifest item's sha256/size_bytes are the ZIP's — RHYTHM
-            # verifies sha256 before it extracts the archive — so they can
-            # only be filled in now that the file exists.
+            # RHYTHM verifies sha256 before it extracts the archive, so the
+            # manifest item's sha256/size_bytes are the ZIP's real values.
             zip_sha = await asyncio.to_thread(sha256_file, zip_path)
             item["sha256"] = zip_sha
             item["size_bytes"] = await asyncio.to_thread(
                 lambda: zip_path.stat().st_size
             )
+            await asyncio.to_thread(
+                self._write_rhythm_export_manifest_sync, study_number, item, batch
+            )
 
-            stashed = False
-            try:
-                result = await self.rhythm_storage.upload_study(
-                    zip_path, item, batch, file_hash=zip_sha
-                )
-                if (result.ok
-                        and self.settings.storage.get("retain_after_export_days")
-                        and (sc is None or sc.status != "archived")):
-                    # Keep the exact ZIP RHYTHM verified so the retained
-                    # audit copy's manifest sha256/size stay truthful with no
-                    # re-zip. The <NNNN>.json manifest is written beside it by
-                    # _finalize_rhythm_export once the job reaches COMPLETE.
-                    # (Skipped for a re-send of an already-archived study —
-                    # its retained pair is already in place.)
-                    await asyncio.to_thread(
-                        self._stash_rhythm_zip_sync, zip_path, study_number
-                    )
-                    stashed = True
-            finally:
-                if not stashed:
-                    await asyncio.to_thread(zip_path.unlink, missing_ok=True)
+            result = await self.rhythm_storage.upload_study(
+                zip_path, item, batch, file_hash=zip_sha
+            )
 
             # Persist whatever RHYTHM handed back — success or not — so the
             # dashboard can show job state / the failure reason.
             if sc is not None:
-                job_fields: dict = dict(
+                self.study_manager.set_rhythm_job(
+                    sc.original_study_uid,
                     batch=batch,
                     session_id=result.session_id,
                     job_id=result.job_id,
                     job_status_url=result.job_status_url,
                     status="uploaded" if result.ok else "failed",
+                    zip_sha256=zip_sha,
+                    zip_size=item["size_bytes"],
                 )
-                if stashed:
-                    job_fields["zip_sha256"] = zip_sha
-                    job_fields["zip_size"] = item["size_bytes"]
-                self.study_manager.set_rhythm_job(sc.original_study_uid, **job_fields)
 
             if result.ok:
                 # upload_study returns once the chunks are assembled and an
@@ -1782,96 +1803,92 @@ class StorageManager:
                 )
 
     async def _finalize_rhythm_export(self, sc: StudySidecar) -> None:
-        """Retain-or-delete + archive a study whose RHYTHM job reached
-        COMPLETE. Mirrors the first-successful-export bookkeeping of the
-        DICOM/HTTP paths."""
+        """Archive a study whose RHYTHM job reached COMPLETE and start its
+        retention clock. Mirrors the first-successful-export bookkeeping of
+        the DICOM/HTTP paths. The ``export_path/<NNNN>.{zip,json}`` pair was
+        written before the upload and is left in place (aged off with the
+        study directory by ``enforce_retention_purge``)."""
         study_dir, _location = self.resolve_study_dir(sc.study_number)
-        if study_dir is None:
-            logger.warning(
-                "RHYTHM finalize: study %04d directory is gone — marking archived",
-                sc.study_number,
+        image_count = 0
+        if study_dir is not None:
+            excluded = await asyncio.to_thread(
+                self._rhythm_excluded_series_sync, study_dir
             )
-            self.study_manager.mark_study_archived(sc.original_study_uid, via="rhythm")
-            return
-
-        excluded = await asyncio.to_thread(self._rhythm_excluded_series_sync, study_dir)
-        image_count = await asyncio.to_thread(
-            lambda: sum(
-                1 for f in study_dir.rglob("*.dcm")
-                if f.parent.name not in excluded
-                and not any(part.endswith("_pre_deface") for part in f.parts)
+            image_count = await asyncio.to_thread(
+                lambda: sum(
+                    1 for f in study_dir.rglob("*.dcm")
+                    if f.parent.name not in excluded
+                    and not any(part.endswith("_pre_deface") for part in f.parts)
+                )
             )
-        )
         with self.lock:
             self.inc_counter('export', 'rhythm_studies')
             self.inc_counter('export', 'rhythm_images', image_count)
             self.inc_counter('cleanup', 'studies')
             self.inc_counter('cleanup', 'images', image_count)
 
-        if self.settings.storage.get("retain_after_export_days") and sc.rhythm_zip_sha256:
-            # The uploaded ZIP was already moved to retain_path/<NNNN>.zip at
-            # upload time; write the audit manifest beside it and drop the
-            # working copy. (No zip_sha256 → stash failed / pre-dates this;
-            # fall back to the shared move-the-directory retention.)
-            await asyncio.to_thread(self._retain_rhythm_audit_sync, sc)
-            await asyncio.to_thread(shutil.rmtree, study_dir)
-        else:
-            await asyncio.to_thread(self._retain_or_delete_sync, study_dir)
         self.study_manager.mark_study_archived(sc.original_study_uid, via="rhythm")
+        await asyncio.to_thread(
+            self._finish_export_sync, sc.original_study_uid, sc.study_number
+        )
         logger.info("RHYTHM export of study %04d finalized (COMPLETE)", sc.study_number)
 
-    def _stash_rhythm_zip_sync(self, zip_path: Path, study_number: int) -> None:
-        """Move a just-uploaded RHYTHM export ZIP into ``retain_path`` as
-        ``<NNNN>.zip`` (latest upload attempt wins). Its audit manifest
-        ``<NNNN>.json`` is written next to it by ``_finalize_rhythm_export``
-        once the ingest job reaches COMPLETE."""
-        self.retained_path.mkdir(parents=True, exist_ok=True)
-        dest = self.retained_path / f"{study_number:04d}.zip"
-        shutil.move(str(zip_path), str(dest))
-        logger.debug("RHYTHM: stashed export ZIP for retention at %s", dest)
-
-    def _retain_rhythm_audit_sync(self, sc: StudySidecar) -> None:
-        """Write ``retain_path/<NNNN>.json`` — the RHYTHM v2 batch manifest
-        for the ZIP that was ingested (already stashed as ``<NNNN>.zip``),
-        carrying the real ``sha256``/``size_bytes`` RHYTHM verified. Its
-        mtime is the retention clock ``enforce_retention_purge`` reads."""
-        n = sc.study_number
-        item, err = self._rhythm_manifest_item_sync(n)
-        if item is None:
-            logger.warning(
-                "RHYTHM retain: no audit manifest written for %04d (%s)", n, err
-            )
-            return
-        item["sha256"] = sc.rhythm_zip_sha256
-        if sc.rhythm_zip_size is not None:
-            item["size_bytes"] = sc.rhythm_zip_size
+    def _write_rhythm_export_manifest_sync(
+        self, study_number: int, item: dict, batch: str
+    ) -> None:
+        """Write ``export_path/<NNNN>.json`` — the RHYTHM v2 batch manifest
+        for the ZIP being uploaded, with the ZIP's real ``sha256`` /
+        ``size_bytes`` and its ``batch``. Written before the upload; a later
+        attempt overwrites it."""
+        self.export_path.mkdir(parents=True, exist_ok=True)
         manifest = rhythm_manifest.build_batch_manifest(
             [item],
-            batch=sc.rhythm_batch or "unknown",
+            batch=batch,
             site_code=self.rhythm_storage.site_code or "SITE",
-            note="retained audit copy of the batch RHYTHM ingested",
+            note="export copy — the ZIP and manifest sent to RHYTHM for this study",
         )
-        self.retained_path.mkdir(parents=True, exist_ok=True)
-        dest = self.retained_path / f"{n:04d}.json"
+        dest = self.export_path / f"{study_number:04d}.json"
         tmp = dest.with_name(dest.name + ".tmp")
         tmp.write_text(json.dumps(manifest, indent=2))
         tmp.replace(dest)
-        logger.info("RHYTHM: wrote retained audit manifest %s", dest)
+        logger.info("RHYTHM: wrote export manifest %s", dest)
 
-    def load_retained_rhythm_manifest_sync(self, study_number: int) -> Optional[dict]:
-        """The audit manifest written beside a RHYTHM-retained study
-        (``retain_path/<NNNN>.json``), or ``None`` if there isn't one / it
-        is unreadable. The dashboard serves this verbatim for an archived
-        study instead of rebuilding a preview."""
-        path = self.retained_path / f"{study_number:04d}.json"
+    def _write_http_export_descriptor_sync(
+        self, study_number: int, sha256: str, size_bytes: int, status: str,
+    ) -> None:
+        """Write ``export_path/<NNNN>.json`` — a short descriptor of the ZIP
+        an HTTP export built, beside ``export_path/<NNNN>.zip``. Written with
+        ``status="attempted"`` *before* the upload (so a failed send still
+        leaves a record) and rewritten ``status="sent"`` on success — the
+        file's presence alone does not imply the upload succeeded."""
+        self.export_path.mkdir(parents=True, exist_ok=True)
+        dest = self.export_path / f"{study_number:04d}.json"
+        tmp = dest.with_name(dest.name + ".tmp")
+        tmp.write_text(json.dumps({
+            "study_number": study_number,
+            "exported_via": "http",
+            "status": status,
+            "written_at": _now_iso(),
+            "zip": {
+                "filename": f"{study_number:04d}.zip",
+                "sha256": sha256,
+                "size_bytes": size_bytes,
+            },
+        }, indent=2))
+        tmp.replace(dest)
+
+    def load_export_manifest_sync(self, study_number: int) -> Optional[dict]:
+        """The manifest/descriptor written beside a study's export ZIP
+        (``export_path/<NNNN>.json``), or ``None`` if there isn't one / it is
+        unreadable. The dashboard serves this verbatim for an archived study
+        instead of rebuilding a preview."""
+        path = self.export_path / f"{study_number:04d}.json"
         if not path.exists():
             return None
         try:
             return json.loads(path.read_text())
         except (OSError, ValueError):
-            logger.warning(
-                "Unreadable retained RHYTHM manifest: %s", path, exc_info=True
-            )
+            logger.warning("Unreadable export manifest: %s", path, exc_info=True)
             return None
 
     def _manual_reextract_sync(self, study_number: int, study_dir: Path) -> dict:

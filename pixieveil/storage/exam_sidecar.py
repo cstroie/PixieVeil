@@ -1,11 +1,12 @@
 """
 Persistent JSON sidecar for RHYTHM exam-data extraction.
 
-One file per study, stored as ``<base_path>/<NNNN>_exam.json`` (sibling of
-the per-study StudySidecar at ``<NNNN>.json`` — the ``_exam`` suffix keeps
-it out of StudySidecar.load_all()'s ``????.json`` glob). Written once, when
-the study completes, from whatever the DICOM headers reveal; see
-pixieveil.processing.exam_extractor for what is and isn't derivable.
+One file per study, stored as ``<base_path>/<NNNN>.exam.json`` (sibling of
+the per-study StudySidecar at ``<NNNN>.state.json`` — the ``.exam`` infix
+keeps it out of StudySidecar.load_all()'s ``????.state.json`` glob).
+Written once, when the study completes, from whatever the DICOM headers
+reveal; see pixieveil.processing.exam_extractor for what is and isn't
+derivable.
 
 Writes are atomic: the payload is written to a ``.tmp`` sibling and then
 renamed over the real file, same as StudySidecar.
@@ -28,7 +29,7 @@ class ExamSidecar:
 
     @staticmethod
     def path_for(base_path: Path, study_number: int) -> Path:
-        return base_path / f"{study_number:04d}_exam.json"
+        return base_path / f"{study_number:04d}.exam.json"
 
     def save(self, base_path: Path) -> None:
         """Atomically write this sidecar to disk."""

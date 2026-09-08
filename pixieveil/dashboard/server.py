@@ -440,14 +440,14 @@ class Dashboard:
     async def _rhythm_manifest_response(
         self, storage_manager: "StorageManager", numbers: list, request: web.Request
     ) -> web.Response:
-        # For a single archived study, serve the audit manifest that was
-        # written beside the retained ZIP verbatim (real sha256/size_bytes,
-        # the batch it actually went up under) rather than minting a fresh
-        # preview with a new batch id and no checksums.
+        # For a single already-exported study, serve the manifest written to
+        # export_path/<NNNN>.json verbatim (real sha256/size_bytes, the batch
+        # it actually went up under) rather than minting a fresh preview with
+        # a new batch id and no checksums.
         manifest = None
         if len(numbers) == 1:
             manifest = await asyncio.to_thread(
-                storage_manager.load_retained_rhythm_manifest_sync, numbers[0]
+                storage_manager.load_export_manifest_sync, numbers[0]
             )
         if manifest is None:
             manifest = await asyncio.to_thread(
@@ -489,8 +489,8 @@ class Dashboard:
     async def handle_rhythm_manifest_one(self, request: web.Request) -> web.Response:
         """Same as handle_rhythm_manifest for a single study (a 1-item batch).
 
-        If the study is already RHYTHM-archived and retained, this returns
-        the audit manifest saved next to its retained ZIP verbatim.
+        If the study has already been exported, this returns the manifest
+        saved at export_path/<NNNN>.json verbatim.
         """
         n = self._coerce_study_number(request)
         storage_manager: StorageManager = request.app['storage_manager']

@@ -11,14 +11,21 @@ storage:
   base_path: "./data/dicom"
   temp_path: "./data/tmp"
   max_storage_gb: 100
-  # Optional: keep a local copy of each already-anonymized study for N days
-  # after a successful export, instead of deleting it immediately. Useful
-  # for auditing or harvesting real acquisition parameters. Omit or set to
-  # 0/null to keep the default behavior (delete right after export).
-  # Stored under retain_path (defaults to a "retained" dir next to base_path)
-  # and outside max_storage_gb accounting — watch disk usage separately.
+  # Optional: keep each already-anonymized study on disk for N days after a
+  # successful export instead of deleting it immediately — useful for
+  # auditing or harvesting real acquisition parameters. The retention clock
+  # starts at export success (for RHYTHM, when the ingest job reaches
+  # COMPLETE). After the window the study directory, its export ZIP/manifest
+  # and its deface scratch are removed, but the <NNNN>.state.json /
+  # <NNNN>.exam.json records are kept permanently. Omit or set 0/null to
+  # keep the default (delete right after export). A study uploaded to RHYTHM
+  # but never confirmed COMPLETE keeps its export ZIP indefinitely as the
+  # retry source.
   #retain_after_export_days: 14
-  #retain_path: "./data/retained"
+  # HTTP/RHYTHM exports write <NNNN>.zip + <NNNN>.json here before sending;
+  # DICOM C-STORE exports produce no artifact. Defaults to an "export" dir
+  # next to base_path. Retained studies still count toward max_storage_gb.
+  #export_path: "./data/export"
 
   # Optional remote storage — remove entire block to keep archives local.
   # Every export is manual (a Send/Upload click on the /studies dashboard);

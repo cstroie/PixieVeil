@@ -359,6 +359,28 @@ class StudyManager:
         with self.lock:
             self.study_states.pop(original_study_uid, None)
 
+    def mark_study_exported(self, original_study_uid: str, when: str) -> None:
+        """Stamp ``exported_at`` on first successful export (the retention
+        clock). No-op if the sidecar is unknown / persistence disabled."""
+        self._stamp_sidecar(original_study_uid, exported_at=when)
+
+    def mark_study_purged(self, original_study_uid: str, when: str) -> None:
+        """Stamp ``purged_at`` once the retention window removed a study's
+        bulky artifacts (directory / export ZIP / deface scratch), leaving
+        only its records."""
+        self._stamp_sidecar(original_study_uid, purged_at=when)
+
+    def _stamp_sidecar(self, original_study_uid: str, **fields: object) -> None:
+        if self._base_path is None:
+            return
+        with self.lock:
+            sc = self._sidecars.get(original_study_uid)
+            if sc is None:
+                return
+            for key, value in fields.items():
+                setattr(sc, key, value)
+            sc.save(self._base_path)
+
     def _update_sidecar_status(self, original_study_uid: str, status: str) -> None:
         if self._base_path is None:
             return

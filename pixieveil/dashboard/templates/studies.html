@@ -195,8 +195,11 @@
             }
 
             function locationBadge(loc) {
-                const cls = loc === 'base' ? 'badge-ok' : (loc === 'retained' ? 'badge-muted' : 'badge-warn');
-                return `<span class="badge ${cls}">${loc}</span>`;
+                // 'base' = files on disk; 'absent' = purged after its
+                // retention window (record kept, pixel data gone).
+                const cls = loc === 'base' ? 'badge-ok' : 'badge-muted';
+                const label = loc === 'absent' ? 'purged' : loc;
+                return `<span class="badge ${cls}">${label}</span>`;
             }
 
             function statusBadge(status) {
