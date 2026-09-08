@@ -213,6 +213,8 @@
                 return `<span class="badge ${cls}" title="RHYTHM ingest job state">${esc(st)}</span>`;
             }
 
+            const nStudies = n => `${n} ${n === 1 ? 'study' : 'studies'}`;
+
             function renderSummaryBar() {
                 const bar = document.getElementById('summary-bar');
                 const pending = STUDIES.filter(s => s.status === 'ready');
@@ -238,7 +240,10 @@
                 const btns = `${dicomBtn}${httpBtn}${rhythmBtn}`;
                 bar.innerHTML = `
                     <article>
-                        <header><strong>${pending.length}</strong> study(ies) awaiting export</header>
+                        <header>
+                            <strong>Ready to export</strong>
+                            <span class="badge badge-warn">${nStudies(pending.length)}</span>
+                        </header>
                         ${btns ? `<div role="group">${btns}</div>` : ''}
                         <footer>
                             <small id="bulk-status"></small>
@@ -257,9 +262,9 @@
             async function runRhythmBulk() {
                 const pending = STUDIES.filter(s => s.status === 'ready');
                 if (!pending.length) return;
-                if (!confirm(`Upload ${pending.length} study(ies) awaiting export to RHYTHM as one batch?`)) return;
+                if (!confirm(`Upload ${nStudies(pending.length)} to RHYTHM as one batch?`)) return;
                 const statusEl = document.getElementById('bulk-status');
-                if (statusEl) statusEl.textContent = `Uploading ${pending.length} study(ies)…`;
+                if (statusEl) statusEl.textContent = `Uploading ${nStudies(pending.length)}…`;
 
                 let batch = '', queued = 0, blocked = 0;
                 try {
@@ -281,7 +286,7 @@
                 }
                 LAST_BULK_MESSAGE = blocked
                     ? `RHYTHM batch ${batch}: queued ${queued}, ${blocked} blocked — open each for the reason.`
-                    : `RHYTHM batch ${batch}: queued ${queued} study(ies) for ingest.`;
+                    : `RHYTHM batch ${batch}: queued ${nStudies(queued)} for ingest.`;
                 await loadStudies();
                 if (EXPANDED != null) await loadDetail(EXPANDED);
             }
@@ -290,7 +295,7 @@
                 const pending = STUDIES.filter(s => s.status === 'ready');
                 if (!pending.length) return;
                 const label = action === 'send_dicom' ? 'the DICOM node' : 'HTTP storage';
-                if (!confirm(`Send ${pending.length} study(ies) awaiting export to ${label}?`)) return;
+                if (!confirm(`Send ${nStudies(pending.length)} to ${label}?`)) return;
 
                 let sent = 0, failed = 0;
                 for (const s of pending) {
@@ -311,7 +316,7 @@
 
                 LAST_BULK_MESSAGE = failed
                     ? `Sent ${sent}, failed ${failed}.`
-                    : `Sent ${sent} study(ies).`;
+                    : `Sent ${nStudies(sent)}.`;
                 await loadStudies();
                 if (EXPANDED != null) await loadDetail(EXPANDED);
             }
