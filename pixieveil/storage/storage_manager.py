@@ -1961,6 +1961,69 @@ class StorageManager:
             "results": results,
         }
 
+    _MARK_EXPORTED_VIA = frozenset({"dicom", "http", "rhythm"})
+
+    async def mark_exported(self, study_number: int,
+                            *, via: str = "rhythm",
+                            sha256: Optional[str] = None) -> dict:
+        """Record that a ``ready`` study was exported out-of-band — e.g. by
+        partner tooling that shipped ``export_path/<NNNN>.zip`` to RHYTHM
+        itself. Runs the same bookkeeping a successful ``manual_*`` export
+        would: ``mark_study_archived(via)`` + ``_finish_export_sync`` (stamp
+        ``exported_at``, clear the deface scratch, and purge the study dir +
+        export pair now if ``retain_after_export_days`` is unset).
+
+        Refuses (does not raise) when the study is unknown, not ``ready``
+        (``defacing_failed`` / still processing), or *via* is not one of
+        ``dicom`` / ``http`` / ``rhythm``. An already-``archived`` study is a
+        no-op success. When *sha256* is given it is checked against the
+        prepared manifest and a mismatch is reported (but not fatal — the
+        caller shipped it, we just record it)."""
+        if via not in self._MARK_EXPORTED_VIA:
+            return {"ok": False, "message": f"invalid via {via!r}"}
+        if study_number in self._manual_actions_in_progress:
+            return {"ok": False, "message": "action already in progress for this study"}
+        self._manual_actions_in_progress.add(study_number)
+        try:
+            sc = self.find_sidecar_by_number(study_number)
+            if sc is None:
+                return {"ok": False, "message": "study not found"}
+            if sc.status == "archived":
+                return {"ok": True, "message": "already archived",
+                        "status": "archived", "archived_via": sc.archived_via}
+            if sc.status != "ready":
+                return {"ok": False, "message":
+                        f"study is '{sc.status}', not 'ready' — cannot mark exported"}
+
+            warning = None
+            if sha256 is not None:
+                manifest = await asyncio.to_thread(
+                    self.load_export_manifest_sync, study_number
+                )
+                on_disk = None
+                if manifest and manifest.get("items"):
+                    on_disk = manifest["items"][0].get("sha256")
+                if on_disk and on_disk != sha256:
+                    warning = (
+                        f"sha256 mismatch: caller {sha256!r} vs prepared "
+                        f"manifest {on_disk!r}"
+                    )
+                    logger.warning("mark_exported %04d: %s", study_number, warning)
+
+            self.study_manager.mark_study_archived(sc.original_study_uid, via=via)
+            await asyncio.to_thread(
+                self._finish_export_sync, sc.original_study_uid, study_number
+            )
+            with self.lock:
+                self.inc_counter('cleanup', 'studies')
+            result = {"ok": True, "message": f"marked exported (via {via})",
+                      "status": "archived", "archived_via": via}
+            if warning:
+                result["warning"] = warning
+            return result
+        finally:
+            self._manual_actions_in_progress.discard(study_number)
+
     _RHYTHM_TERMINAL = frozenset({"COMPLETE", "PARTIAL", "FAILED"})
 
     async def reconcile_rhythm_jobs(self) -> None:

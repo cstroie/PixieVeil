@@ -794,3 +794,70 @@ class TestPrepareExportArtifacts:
 
         assert (sm.export_path / "0001.zip").exists()
         assert not (sm.export_path / "0002.zip").exists()
+
+
+class TestMarkExported:
+    """Out-of-band export bookkeeping — partner tooling shipped the ZIP
+    itself and calls mark_exported so PixieVeil archives + starts the
+    retention clock."""
+
+    def test_marks_ready_study_archived_and_stamps_exported_at(self, tmp_path):
+        sm = _manager(tmp_path, retain_days=7)
+        _ready_study(sm)
+        sm._prepare_export_artifacts_sync(1)
+
+        r = asyncio.run(sm.mark_exported(1))
+        assert r == {"ok": True, "message": "marked exported (via rhythm)",
+                     "status": "archived", "archived_via": "rhythm"}
+
+        sc = sm.find_sidecar_by_number(1)
+        assert sc.status == "archived" and sc.archived_via == "rhythm"
+        assert sc.exported_at is not None and sc.purged_at is None
+        assert (sm.base_path / "0001").exists()          # retention keeps it
+
+    def test_no_retain_purges_immediately(self, tmp_path):
+        sm = _manager(tmp_path)  # retain unset
+        _ready_study(sm)
+        sm._prepare_export_artifacts_sync(1)
+        assert (sm.export_path / "0001.zip").exists()
+
+        asyncio.run(sm.mark_exported(1, via="rhythm"))
+
+        assert not (sm.base_path / "0001").exists()
+        assert not (sm.export_path / "0001.zip").exists()
+        sc = sm.find_sidecar_by_number(1)
+        assert sc.exported_at is not None and sc.purged_at is not None
+
+    def test_already_archived_is_noop_success(self, tmp_path):
+        sm = _manager(tmp_path)
+        register_study(sm, 1, "archived", archived_via="dicom")
+        r = asyncio.run(sm.mark_exported(1))
+        assert r["ok"] is True and r["message"] == "already archived"
+        assert r["archived_via"] == "dicom"
+
+    def test_refuses_non_ready(self, tmp_path):
+        sm = _manager(tmp_path)
+        register_study(sm, 1, "defacing_failed")
+        r = asyncio.run(sm.mark_exported(1))
+        assert r["ok"] is False and "not 'ready'" in r["message"]
+
+    def test_unknown_study(self, tmp_path):
+        sm = _manager(tmp_path)
+        r = asyncio.run(sm.mark_exported(99))
+        assert r == {"ok": False, "message": "study not found"}
+
+    def test_invalid_via(self, tmp_path):
+        sm = _manager(tmp_path)
+        _ready_study(sm)
+        r = asyncio.run(sm.mark_exported(1, via="ftp"))
+        assert r["ok"] is False and "invalid via" in r["message"]
+
+    def test_sha_mismatch_is_warned_not_fatal(self, tmp_path):
+        sm = _manager(tmp_path, retain_days=7)
+        _ready_study(sm)
+        sm._prepare_export_artifacts_sync(1)
+
+        r = asyncio.run(sm.mark_exported(1, sha256="deadbeef"))
+        assert r["ok"] is True
+        assert "sha256 mismatch" in r["warning"]
+        assert sm.find_sidecar_by_number(1).status == "archived"

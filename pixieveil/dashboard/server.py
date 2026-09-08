@@ -24,7 +24,9 @@ from pixieveil.storage.storage_manager import StorageManager
 
 logger = logging.getLogger(__name__)
 
-_VALID_ACTIONS = {"send_dicom", "reextract", "upload_http", "upload_rhythm"}
+_VALID_ACTIONS = {
+    "send_dicom", "reextract", "upload_http", "upload_rhythm", "mark_exported",
+}
 
 
 class Dashboard:
@@ -423,14 +425,30 @@ class Dashboard:
             return web.json_response({"error": f"unknown action {action!r}"}, status=400)
 
         storage_manager: StorageManager = request.app['storage_manager']
-        method = {
-            "send_dicom": storage_manager.manual_send_dicom,
-            "reextract": storage_manager.manual_reextract,
-            "upload_http": storage_manager.manual_upload_http,
-            "upload_rhythm": storage_manager.manual_upload_rhythm,
-        }[action]
 
-        result = await method(n)
+        if action == "mark_exported":
+            # Out-of-band export: partner tooling shipped export_path/<n>.zip
+            # to RHYTHM itself and calls this so PixieVeil archives the study
+            # and starts its retention clock. Optional JSON body:
+            # {"via": "rhythm"|"http"|"dicom", "sha256": "<hex>"}.
+            via, sha256 = "rhythm", None
+            if request.can_read_body:
+                try:
+                    body = await request.json()
+                except Exception:
+                    return web.json_response({"error": "invalid JSON body"}, status=400)
+                if isinstance(body, dict):
+                    via = body.get("via", "rhythm")
+                    sha256 = body.get("sha256")
+            result = await storage_manager.mark_exported(n, via=via, sha256=sha256)
+        else:
+            method = {
+                "send_dicom": storage_manager.manual_send_dicom,
+                "reextract": storage_manager.manual_reextract,
+                "upload_http": storage_manager.manual_upload_http,
+                "upload_rhythm": storage_manager.manual_upload_rhythm,
+            }[action]
+            result = await method(n)
         if result.get("ok"):
             return web.json_response(result)
         message = result.get("message", "")

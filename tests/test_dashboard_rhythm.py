@@ -62,6 +62,11 @@ class FakeSM:
             m["blockers"] = {"0009": ["image_quality is not set"]}
         return m
 
+    async def mark_exported(self, n, *, via="rhythm", sha256=None):
+        self.calls.append(("mark_exported", n, via, sha256))
+        return {"ok": True, "status": "archived", "archived_via": via,
+                "message": f"marked exported (via {via})"}
+
     # unused by these tests but referenced in the action method map
     async def manual_send_dicom(self, n):
         return {"ok": False}
@@ -82,6 +87,7 @@ class FakeRequest:
         self.query = query or {}
         self.headers = {}
         self.method = "POST"
+        self.can_read_body = body is not None or body_raises
 
     async def json(self):
         if self._body_raises:
@@ -150,6 +156,34 @@ class TestUploadRhythmAction:
         req = FakeRequest(sm, match_info={"n": "7", "action": "nope"})
         status, _ = _payload(asyncio.run(_dash(sm).handle_study_action(req)))
         assert status == 400
+
+
+class TestMarkExportedAction:
+    def test_no_body_defaults_to_rhythm(self):
+        sm = FakeSM()
+        req = FakeRequest(sm, match_info={"n": "8", "action": "mark_exported"})
+        status, data = _payload(asyncio.run(_dash(sm).handle_study_action(req)))
+        assert status == 200 and data["ok"] is True
+        assert sm.calls == [("mark_exported", 8, "rhythm", None)]
+
+    def test_body_via_and_sha_passed_through(self):
+        sm = FakeSM()
+        req = FakeRequest(
+            sm, match_info={"n": "8", "action": "mark_exported"},
+            body={"via": "http", "sha256": "abc123"},
+        )
+        status, data = _payload(asyncio.run(_dash(sm).handle_study_action(req)))
+        assert status == 200
+        assert sm.calls == [("mark_exported", 8, "http", "abc123")]
+
+    def test_invalid_json_body_is_400(self):
+        sm = FakeSM()
+        req = FakeRequest(
+            sm, match_info={"n": "8", "action": "mark_exported"}, body_raises=True,
+        )
+        status, _ = _payload(asyncio.run(_dash(sm).handle_study_action(req)))
+        assert status == 400
+        assert not sm.calls
 
 
 class TestManifestPreviewEndpoint:
