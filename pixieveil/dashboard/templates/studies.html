@@ -17,83 +17,82 @@
                 --pico-block-spacing-vertical: calc(var(--pico-spacing) * 0.75);
                 --pico-form-element-spacing-vertical: 0.5rem;
             }
-            article {
+            /* Tables live in a <figure> that scrolls horizontally when the
+               columns don't fit; rows in the list are click-to-expand. */
+            figure {
+                overflow-x: auto;
                 margin-bottom: var(--pico-spacing);
             }
-            table {
-                display: block;
-                white-space: nowrap;
+            figure > table {
+                margin-bottom: 0;
             }
             tr.study-row {
                 cursor: pointer;
             }
-            tr.study-row:hover {
+            tr.study-row:hover > * {
                 background-color: var(--pico-table-row-stripe-background-color);
             }
+            tr.study-row.selected > * {
+                background-color: var(--pico-table-row-stripe-background-color);
+            }
+            tr.study-row.selected > :first-child {
+                box-shadow: inset 0.2rem 0 0 var(--pico-primary);
+            }
+            /* Status pill — Pico has no badge primitive, so a minimal one
+               built from its border/color tokens. */
             .badge {
+                display: inline-block;
                 font-size: 0.8125em;
                 font-weight: var(--pico-font-weight);
                 text-transform: uppercase;
                 letter-spacing: 0.02em;
-                padding: 0.15rem 0.55rem;
+                padding: 0.15rem 0.5rem;
                 border-radius: var(--pico-border-radius);
+                border: 1px solid currentColor;
                 white-space: nowrap;
             }
-            .badge-ok {
-                color: var(--pico-form-element-valid-focus-color);
-                border: 1px solid var(--pico-form-element-valid-focus-color);
-            }
-            .badge-warn {
-                color: var(--pico-del-color);
-                border: 1px solid var(--pico-del-color);
-            }
-            .badge-muted {
-                color: var(--pico-muted-color);
-                border: 1px solid var(--pico-muted-border-color);
-            }
+            .badge-ok    { color: var(--pico-form-element-valid-focus-color); }
+            .badge-warn  { color: var(--pico-del-color); }
+            .badge-muted { color: var(--pico-muted-color); }
             .edited-flag {
                 color: var(--pico-primary);
                 font-weight: bold;
             }
-            tr.study-row.selected {
-                background-color: var(--pico-table-row-stripe-background-color);
-                box-shadow: inset 3px 0 0 var(--pico-primary);
+            /* stack a couple of pills / lines tightly inside a table cell */
+            .stack {
+                display: flex;
+                flex-direction: column;
+                gap: 0.2rem;
+                align-items: flex-start;
             }
-            /* Rendered as a plain block below the table rather than inside a
-               table row/cell — a <td> sharing column-width negotiation with
-               the (nowrap, narrow) summary rows above it via the table's
-               shared column-layout algorithm forced the whole table, and the
-               panel inside it, to an unpredictable width in every browser. */
-            .detail-panel {
+            .nowrap { white-space: nowrap; }
+            /* the detail editor sits below the whole table, not in a row —
+               a <td> in the shared column layout made the table width
+               unpredictable across browsers. */
+            #detail-panel-container {
                 margin-top: var(--pico-spacing);
             }
             .manual-set {
                 border-color: var(--pico-primary);
             }
-            .series-group {
-                margin-bottom: var(--pico-spacing);
-            }
-            /* secondary text uses <small>; only layout needs a class */
+            /* a button + its inline status text */
             .action-row {
                 display: flex;
                 gap: calc(var(--pico-spacing) * 0.75);
                 flex-wrap: wrap;
                 align-items: center;
             }
-            .token-bar {
-                display: flex;
-                gap: calc(var(--pico-spacing) * 0.5);
-                align-items: center;
-                margin-bottom: var(--pico-spacing);
+            /* article <footer> holding the small status / manifest lines */
+            article > footer > small {
+                display: block;
             }
             .token-bar input {
-                max-width: 320px;
-                margin: 0;
+                max-width: 20rem;
             }
         </style>
     </head>
     <body class="container">
-        <nav>
+        <nav aria-label="Primary">
             <ul>
                 <li><strong>PixieVeil</strong></li>
             </ul>
@@ -108,19 +107,19 @@
             <p>Extracted exam data, manual review and per-study actions</p>
         </hgroup>
 
-        <div class="token-bar" id="token-bar" style="display:none;">
-            <label for="auth-token" style="margin:0;">Auth token</label>
-            <input type="password" id="auth-token" placeholder="X-Auth-Token">
+        <fieldset role="group" id="token-bar" hidden>
+            <input type="password" id="auth-token" placeholder="Auth token"
+                aria-label="Auth token">
             <button type="button" class="secondary" onclick="saveToken()">Save</button>
-        </div>
+        </fieldset>
 
         <main>
             <div id="summary-bar"></div>
-            <div id="studies-container"><p aria-busy="true">Loading studies…</p></div>
+            <div id="studies-container" aria-busy="true">Loading studies…</div>
         </main>
 
         <footer>
-            <button onclick="refreshStudies()" role="button">Refresh</button>
+            <button class="secondary outline" onclick="refreshStudies()">Refresh</button>
         </footer>
 
         <script>
@@ -177,7 +176,7 @@
                     STUDIES = data.studies || [];
                     CAPABILITIES = data.capabilities || { dicom: false, http: false, rhythm: false };
                     AUTH_REQUIRED = !!data.auth_required;
-                    document.getElementById('token-bar').style.display = AUTH_REQUIRED ? 'flex' : 'none';
+                    document.getElementById('token-bar').hidden = !AUTH_REQUIRED;
                     if (AUTH_REQUIRED) {
                         document.getElementById('auth-token').value = authToken();
                     }
@@ -185,14 +184,17 @@
                     renderTable();
                 } catch (err) {
                     console.error(err);
+                    container.removeAttribute('aria-busy');
                     container.innerHTML = '<p>Could not load studies.</p>';
                 }
             }
 
             function locationBadge(loc) {
                 // 'base' = files on disk; 'absent' = purged after its
-                // retention window (record kept, pixel data gone).
-                const cls = loc === 'base' ? 'badge-ok' : 'badge-muted';
+                // retention window (record kept, pixel data gone). 'base' is
+                // the normal state — only surface the exception.
+                if (loc === 'base') return '';
+                const cls = loc === 'absent' ? 'badge-muted' : 'badge-warn';
                 const label = loc === 'absent' ? 'purged' : loc;
                 return `<span class="badge ${cls}">${label}</span>`;
             }
@@ -233,12 +235,15 @@
                     ? `<small>batch manifest: ` +
                       `<a href="/api/studies/rhythm-manifest?studies=${pendingNums}" target="_blank" rel="noopener">preview</a> · ` +
                       `<a href="/api/studies/rhythm-manifest?studies=${pendingNums}&download=1">download</a></small>` : '';
+                const btns = `${dicomBtn}${httpBtn}${rhythmBtn}`;
                 bar.innerHTML = `
-                    <article class="action-row">
-                        <span class="badge badge-warn">${pending.length} awaiting export</span>
-                        ${dicomBtn}${httpBtn}${rhythmBtn}
-                        ${rhythmManifestLinks}
-                        <small id="bulk-status"></small>
+                    <article>
+                        <header><strong>${pending.length}</strong> study(ies) awaiting export</header>
+                        ${btns ? `<div role="group">${btns}</div>` : ''}
+                        <footer>
+                            <small id="bulk-status"></small>
+                            ${rhythmManifestLinks}
+                        </footer>
                     </article>
                 `;
                 const db = document.getElementById('bulk-dicom-btn');
@@ -322,14 +327,16 @@
 
             function renderTable() {
                 const container = document.getElementById('studies-container');
+                container.removeAttribute('aria-busy');
                 if (!STUDIES.length) {
                     container.innerHTML = '<p>No studies found.</p>';
                     return;
                 }
-                let html = '<table role="grid" class="overflow-auto"><thead><tr>' +
-                    '<th>#</th><th>Status</th><th>Location</th><th>Indication</th>' +
-                    '<th>Protocol type</th><th>Exam group</th><th>Scanner</th>' +
-                    '<th>Total DLP</th><th>RHYTHM</th><th>Edited</th>' +
+                let html = '<figure><table><thead><tr>' +
+                    '<th scope="col">#</th><th scope="col">Status</th>' +
+                    '<th scope="col">Indication</th><th scope="col">Protocol</th>' +
+                    '<th scope="col">Scanner</th><th scope="col">Total DLP</th>' +
+                    '<th scope="col">RHYTHM</th>' +
                     '</tr></thead><tbody>';
                 STUDIES.forEach(s => {
                     const ex = s.exam_summary;
@@ -340,22 +347,23 @@
                         : (ex && ex.indication ? `${esc(ex.indication.region || '—')} / ${esc(ex.indication.clinical_indication || '—')}` : '—');
                     const scanner = ex && ex.scanner ? `${esc(ex.scanner.manufacturer || '')} ${esc(ex.scanner.model || '')}`.trim() || '—' : '—';
                     const dlp = ex && ex.total_dlp_mgy_cm != null ? ex.total_dlp_mgy_cm.toFixed(1) + ' mGy·cm' : '—';
-                    const edited = ex && ex.has_manual_edits ? '<span class="edited-flag" title="has manual edits">&#9998;</span>' : '';
+                    const edited = ex && ex.has_manual_edits ? ' <span class="edited-flag" title="has manual edits">&#9998;</span>' : '';
+                    const ptype = esc(ex ? ex.protocol_type : null) || '—';
+                    const pgroup = esc(ex ? ex.examination_group : null);
+                    const protoCell = pgroup ? `${ptype}<br><small>${pgroup}</small>` : ptype;
+                    const locBadge = locationBadge(s.location);
                     const rowClass = 'study-row' + (EXPANDED === s.study_number ? ' selected' : '');
                     html += `<tr class="${rowClass}" data-n="${s.study_number}">` +
-                        `<td>${String(s.study_number).padStart(4, '0')}</td>` +
-                        `<td>${statusBadge(s.status)}</td>` +
-                        `<td>${locationBadge(s.location)}</td>` +
+                        `<th scope="row" class="nowrap">${String(s.study_number).padStart(4, '0')}${edited}</th>` +
+                        `<td><span class="stack">${statusBadge(s.status)}${locBadge}</span></td>` +
                         `<td>${ind}</td>` +
-                        `<td>${esc(ex ? ex.protocol_type : null) || '—'}</td>` +
-                        `<td>${esc(ex ? ex.examination_group : null) || '—'}</td>` +
+                        `<td>${protoCell}</td>` +
                         `<td>${scanner}</td>` +
-                        `<td>${dlp}</td>` +
+                        `<td class="nowrap">${dlp}</td>` +
                         `<td>${rhythmBadge(s.rhythm_status)}</td>` +
-                        `<td>${edited}</td>` +
                         `</tr>`;
                 });
-                html += '</tbody></table>';
+                html += '</tbody></table></figure>';
                 container.innerHTML = html;
 
                 container.querySelectorAll('tr.study-row').forEach(row => {
@@ -363,12 +371,11 @@
                 });
 
                 // The edit panel is a single block below the table, not a
-                // per-row table cell — see the .detail-panel CSS comment.
+                // per-row table cell — see the #detail-panel-container CSS note.
                 let panel = document.getElementById('detail-panel-container');
                 if (!panel) {
                     panel = document.createElement('div');
                     panel.id = 'detail-panel-container';
-                    panel.className = 'detail-panel';
                     container.appendChild(panel);
                 }
                 if (EXPANDED != null && !STUDIES.some(s => s.study_number === EXPANDED)) {
@@ -487,35 +494,44 @@
 
                 // Series with no SeriesNumber (key "?" in the extractor) have
                 // no stable dotted path to overlay a manual value onto — keep
-                // them in the read-only table only.
-                const seriesFields = seriesList.filter(s => s.series_number != null).map(s => {
+                // them in the read-only table only. One <fieldset> per series.
+                const editableSeries = seriesList.filter(s => s.series_number != null);
+                const seriesFields = editableSeries.map(s => {
                     const n2 = s.series_number;
                     const topoBadge = s.is_topogram ? ' <span class="badge badge-muted">topogram</span>' : '';
                     return `
-                        <h6>Series ${esc(n2)} — ${esc(s.series_description || '')}${topoBadge}</h6>
-                        <div class="grid series-group">
-                            ${seriesField(n2, 'dlp_mgy_cm', 'DLP (mGy·cm)', s.dlp_mgy_cm)}
-                            ${seriesField(n2, 'ctdi_vol_mgy', 'CTDIvol (mGy)', s.ctdi_vol_mgy)}
-                            ${seriesField(n2, 'slice_thickness_mm', 'Slice thickness (mm)', s.slice_thickness_mm)}
-                            ${seriesField(n2, 'exposure_time_ms', 'Exposure time (ms)', s.exposure_time_ms)}
-                            ${seriesField(n2, 'spiral_pitch_factor', 'Pitch factor', s.spiral_pitch_factor)}
-                        </div>
-                        <div class="grid series-group">
-                            ${seriesField(n2, 'convolution_kernel', 'Convolution kernel', s.convolution_kernel, {type: 'text'})}
-                            ${seriesField(n2, 'patient_position', 'Patient position', s.patient_position, {type: 'text'})}
-                            ${seriesField(n2, 'single_collimation_width_mm', 'Single collimation (mm)', s.single_collimation_width_mm)}
-                            ${seriesField(n2, 'total_collimation_width_mm', 'Total collimation (mm)', s.total_collimation_width_mm)}
-                        </div>`;
+                        <fieldset>
+                            <legend>Series ${esc(n2)} — ${esc(s.series_description || '')}${topoBadge}</legend>
+                            <div class="grid">
+                                ${seriesField(n2, 'dlp_mgy_cm', 'DLP (mGy·cm)', s.dlp_mgy_cm)}
+                                ${seriesField(n2, 'ctdi_vol_mgy', 'CTDIvol (mGy)', s.ctdi_vol_mgy)}
+                                ${seriesField(n2, 'slice_thickness_mm', 'Slice thickness (mm)', s.slice_thickness_mm)}
+                                ${seriesField(n2, 'exposure_time_ms', 'Exposure time (ms)', s.exposure_time_ms)}
+                                ${seriesField(n2, 'spiral_pitch_factor', 'Pitch factor', s.spiral_pitch_factor)}
+                            </div>
+                            <div class="grid">
+                                ${seriesField(n2, 'convolution_kernel', 'Convolution kernel', s.convolution_kernel, {type: 'text'})}
+                                ${seriesField(n2, 'patient_position', 'Patient position', s.patient_position, {type: 'text'})}
+                                ${seriesField(n2, 'single_collimation_width_mm', 'Single collimation (mm)', s.single_collimation_width_mm)}
+                                ${seriesField(n2, 'total_collimation_width_mm', 'Total collimation (mm)', s.total_collimation_width_mm)}
+                            </div>
+                        </fieldset>`;
                 }).join('');
+                const seriesBlock = seriesFields ? `
+                        <details>
+                            <summary>Per-series technique parameters (${editableSeries.length})</summary>
+                            ${seriesFields}
+                        </details>` : '';
 
                 const num = v => v != null ? v.toFixed(2) : '—';
                 const seriesTable = seriesList.length ? `
-                    <table role="grid" class="overflow-auto"><thead><tr>
-                        <th>Series</th><th>Description</th><th>Type</th><th>CTDIvol (mGy)</th><th>DLP (mGy·cm)</th>
-                        <th>Slice (mm)</th><th>Exposure (ms)</th><th>Kernel</th><th>Position</th>
-                        <th>Coll. single/total (mm)</th><th>Pitch</th>
+                    <figure><table><thead><tr>
+                        <th scope="col">Series</th><th scope="col">Description</th><th scope="col">Type</th>
+                        <th scope="col">CTDIvol (mGy)</th><th scope="col">DLP (mGy·cm)</th>
+                        <th scope="col">Slice (mm)</th><th scope="col">Exposure (ms)</th><th scope="col">Kernel</th>
+                        <th scope="col">Position</th><th scope="col">Coll. single/total (mm)</th><th scope="col">Pitch</th>
                     </tr></thead>
-                    <tbody>${seriesList.map(s => `<tr><td>${esc(s.series_number)}</td><td>${esc(s.series_description)}</td>` +
+                    <tbody>${seriesList.map(s => `<tr><th scope="row">${esc(s.series_number)}</th><td>${esc(s.series_description)}</td>` +
                         `<td>${s.is_topogram ? 'Topogram' : 'Series'}</td>` +
                         `<td>${num(s.ctdi_vol_mgy)}</td>` +
                         `<td>${num(s.dlp_mgy_cm)}</td>` +
@@ -524,76 +540,82 @@
                         `<td>${esc(s.convolution_kernel) || '—'}</td>` +
                         `<td>${esc(s.patient_position) || '—'}</td>` +
                         `<td>${num(s.single_collimation_width_mm)} / ${num(s.total_collimation_width_mm)}</td>` +
-                        `<td>${num(s.spiral_pitch_factor)}</td></tr>`).join('')}</tbody></table>`
+                        `<td>${num(s.spiral_pitch_factor)}</td></tr>`).join('')}</tbody></table></figure>`
                     : '<p><small>No series recorded.</small></p>';
 
                 const rdsr = exam.rdsr;
                 const rdsrTable = rdsr && rdsr.acquisitions && rdsr.acquisitions.length ? `
                     <p><small>Total DLP: ${rdsr.total_dlp_mgy_cm != null ? rdsr.total_dlp_mgy_cm.toFixed(2) + ' mGy·cm' : '—'}</small></p>
-                    <table role="grid"><thead><tr><th>Protocol</th><th>Type</th><th>kVp</th><th>mean mA</th>
-                        <th>Mean CTDIvol</th><th>DLP</th></tr></thead>
-                    <tbody>${rdsr.acquisitions.map(a => `<tr><td>${esc(a.acquisition_protocol)}</td><td>${esc(a.acquisition_type)}</td>` +
+                    <figure><table><thead><tr><th scope="col">Protocol</th><th scope="col">Type</th><th scope="col">kVp</th>
+                        <th scope="col">mean mA</th><th scope="col">Mean CTDIvol</th><th scope="col">DLP</th></tr></thead>
+                    <tbody>${rdsr.acquisitions.map(a => `<tr><th scope="row">${esc(a.acquisition_protocol)}</th><td>${esc(a.acquisition_type)}</td>` +
                         `<td>${esc(a.kvp)}</td><td>${esc(a.mean_ma)}</td>` +
                         `<td>${a.mean_ctdivol_mgy != null ? a.mean_ctdivol_mgy.toFixed(2) : '—'}</td>` +
-                        `<td>${a.dlp_mgy_cm != null ? a.dlp_mgy_cm.toFixed(2) : '—'}</td></tr>`).join('')}</tbody></table>`
+                        `<td>${a.dlp_mgy_cm != null ? a.dlp_mgy_cm.toFixed(2) : '—'}</td></tr>`).join('')}</tbody></table></figure>`
                     : '<p><small>No RDSR data for this study.</small></p>';
 
                 const notes = (exam.notes || []).map(n2 => `<li>${esc(n2)}</li>`).join('');
 
                 el.innerHTML = `
                     <article>
-                        <h4>Manual review — study ${String(n).padStart(4, '0')}</h4>
+                        <header><strong>Manual review</strong> — study ${String(n).padStart(4, '0')}</header>
                         <form id="exam-form-${n}">
-                        <div class="grid">
-                            <label>Weight (kg)
-                                <input type="number" step="any" min="0" required data-path="patient.weight_kg"
-                                    class="${isManual(exam, 'patient.weight_kg') ? 'manual-set' : ''}"
-                                    value="${get(exam, 'patient.weight_kg') != null ? get(exam, 'patient.weight_kg') : ''}">
-                            </label>
-                            <label>Age (years)
-                                <input type="number" step="any" min="0" required data-path="patient.age_years"
-                                    class="${isManual(exam, 'patient.age_years') ? 'manual-set' : ''}"
-                                    value="${get(exam, 'patient.age_years') != null ? get(exam, 'patient.age_years') : ''}">
-                            </label>
-                            <label>Region / Indication
-                                <select id="region-indication-${n}" required
-                                    class="${(isManual(exam, 'indication.region') || isManual(exam, 'indication.clinical_indication')) ? 'manual-set' : ''}">
-                                    <option value="">— unset —</option>
-                                    ${regionOptions}
-                                </select>
-                            </label>
-                            <label>IV contrast
-                                <select data-path="indication.iv_contrast" required
-                                    class="${isManual(exam, 'indication.iv_contrast') ? 'manual-set' : ''}">
-                                    <option value="">—</option>
-                                    ${contrastOptions}
-                                </select>
-                            </label>
-                        </div>
-                        <div class="grid">
-                            <label>Image quality
-                                <select data-path="image_quality" required
-                                    class="${isManual(exam, 'image_quality') ? 'manual-set' : ''}">
-                                    ${qualityOptions}
-                                </select>
-                            </label>
-                            <label>Protocol name
-                                <input type="text" data-path="protocol_used_hint.protocol_name"
-                                    class="${isManual(exam, 'protocol_used_hint.protocol_name') ? 'manual-set' : ''}"
-                                    value="${esc(get(exam, 'protocol_used_hint.protocol_name') || '')}">
-                                <small>informational only</small>
-                            </label>
-                            <label>RHYTHM protocol
-                                <select data-path="rhythm.protocol_key" required
-                                    class="${isManual(exam, 'rhythm.protocol_key') ? 'manual-set' : ''}">
-                                    ${rhythmProtocolOptions}
-                                </select>
-                                <small>its UUID goes in the manifest;
-                                    region/indication/contrast/scanner are derived from it
-                                    upstream</small>
-                            </label>
-                        </div>
-                        ${seriesFields}
+                        <fieldset>
+                            <legend>Patient &amp; indication</legend>
+                            <div class="grid">
+                                <label>Weight (kg)
+                                    <input type="number" step="any" min="0" required data-path="patient.weight_kg"
+                                        class="${isManual(exam, 'patient.weight_kg') ? 'manual-set' : ''}"
+                                        value="${get(exam, 'patient.weight_kg') != null ? get(exam, 'patient.weight_kg') : ''}">
+                                </label>
+                                <label>Age (years)
+                                    <input type="number" step="any" min="0" required data-path="patient.age_years"
+                                        class="${isManual(exam, 'patient.age_years') ? 'manual-set' : ''}"
+                                        value="${get(exam, 'patient.age_years') != null ? get(exam, 'patient.age_years') : ''}">
+                                </label>
+                                <label>Region / Indication
+                                    <select id="region-indication-${n}" required
+                                        class="${(isManual(exam, 'indication.region') || isManual(exam, 'indication.clinical_indication')) ? 'manual-set' : ''}">
+                                        <option value="">— unset —</option>
+                                        ${regionOptions}
+                                    </select>
+                                </label>
+                                <label>IV contrast
+                                    <select data-path="indication.iv_contrast" required
+                                        class="${isManual(exam, 'indication.iv_contrast') ? 'manual-set' : ''}">
+                                        <option value="">—</option>
+                                        ${contrastOptions}
+                                    </select>
+                                </label>
+                            </div>
+                        </fieldset>
+                        <fieldset>
+                            <legend>Image quality &amp; protocol</legend>
+                            <div class="grid">
+                                <label>Image quality
+                                    <select data-path="image_quality" required
+                                        class="${isManual(exam, 'image_quality') ? 'manual-set' : ''}">
+                                        ${qualityOptions}
+                                    </select>
+                                </label>
+                                <label>Protocol name
+                                    <input type="text" data-path="protocol_used_hint.protocol_name"
+                                        class="${isManual(exam, 'protocol_used_hint.protocol_name') ? 'manual-set' : ''}"
+                                        value="${esc(get(exam, 'protocol_used_hint.protocol_name') || '')}">
+                                    <small>informational only</small>
+                                </label>
+                                <label>RHYTHM protocol
+                                    <select data-path="rhythm.protocol_key" required
+                                        class="${isManual(exam, 'rhythm.protocol_key') ? 'manual-set' : ''}">
+                                        ${rhythmProtocolOptions}
+                                    </select>
+                                    <small>its UUID goes in the manifest;
+                                        region/indication/contrast/scanner are derived from it
+                                        upstream</small>
+                                </label>
+                            </div>
+                        </fieldset>
+                        ${seriesBlock}
                         <label>Operator notes
                             <textarea data-path="operator_notes"
                                 class="${isManual(exam, 'operator_notes') ? 'manual-set' : ''}"
@@ -607,19 +629,25 @@
                     </article>
 
                     <article>
-                        <h5>Derived: ${esc(exam.protocol_type) || '—'} / ${esc(exam.examination_group) || '—'}</h5>
+                        <header><strong>Derived</strong> — ${esc(exam.protocol_type) || '—'} / ${esc(exam.examination_group) || '—'}</header>
                         <blockquote>Prefer <code>rdsr.acquisitions[*].mean_ctdivol_mgy</code> over
                             <code>series[*].ctdi_vol_mgy</code> — the flat per-image CTDIvol tag is cumulative
                             dose-to-date on this scanner, not per-acquisition.</blockquote>
-                        <h6>Irradiation events (RDSR acquisitions, read-only)</h6>
-                        <p><small>The authoritative per-dose-event record. One event can be
-                            reconstructed into several DICOM series below (e.g. two kernels from one spiral
-                            pass) — series counts and event counts don't need to match.</small></p>
-                        ${rdsrTable}
-                        <h6>DICOM series (reconstructions, read-only)</h6>
-                        ${seriesTable}
-                        <h6>Notes</h6>
-                        <ul>${notes || '<li>None.</li>'}</ul>
+                        <details open>
+                            <summary>Irradiation events (RDSR acquisitions, read-only)</summary>
+                            <p><small>The authoritative per-dose-event record. One event can be
+                                reconstructed into several DICOM series below (e.g. two kernels from one
+                                spiral pass) — series counts and event counts don't need to match.</small></p>
+                            ${rdsrTable}
+                        </details>
+                        <details>
+                            <summary>DICOM series (reconstructions, read-only)</summary>
+                            ${seriesTable}
+                        </details>
+                        <details>
+                            <summary>Notes (${(exam.notes || []).length})</summary>
+                            <ul>${notes || '<li>None.</li>'}</ul>
+                        </details>
                     </article>
 
                     ${actionsHtml(n, study, exam)}
@@ -698,16 +726,18 @@
 
                 return `
                     <article>
-                        <h5>Actions</h5>
-                        <div class="action-row">
+                        <header><strong>Actions</strong></header>
+                        <div role="group">
                             <button type="button" id="btn-dicom-${n}" ${dicomDisabled ? 'disabled' : ''} title="${dicomTitle}">Send to DICOM</button>
                             <button type="button" id="btn-reextract-${n}" ${absent ? 'disabled' : ''} title="${reextractTitle}" class="secondary">Re-extract</button>
                             <button type="button" id="btn-http-${n}" ${httpDisabled ? 'disabled' : ''} title="${httpTitle}" class="secondary">Upload to HTTP storage</button>
                             <button type="button" id="btn-rhythm-${n}" ${rhythmDisabled ? 'disabled' : ''} title="${rhythmTitle}" class="secondary">${rhythmLabel}</button>
                         </div>
-                        ${rhythmLine}
-                        ${manifestLinks}
-                        <small id="action-status-${n}"></small>
+                        <footer>
+                            <small id="action-status-${n}"></small>
+                            ${rhythmLine}
+                            ${manifestLinks}
+                        </footer>
                     </article>
                 `;
             }
