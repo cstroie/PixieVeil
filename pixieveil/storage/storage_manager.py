@@ -1529,6 +1529,46 @@ class StorageManager:
             str(name), description=desc
         )
 
+    # Tags the `rhythm` anonymization profile removes outright. If any still
+    # carries a value on a CT slice, the study was anonymized under a
+    # different profile — RHYTHM's GDPR-strict ingest validator would reject
+    # every slice, so the study must be re-received under `rhythm` rather
+    # than exported. Checked on one slice per series, cheap and decisive.
+    _RHYTHM_STRIPPED_SENTINELS = (
+        "DeviceSerialNumber", "StationName", "Manufacturer", "ProtocolName",
+    )
+
+    def _rhythm_anonymized_sync(self, study_dir: Path) -> bool:
+        """True unless a CT slice still carries a tag the ``rhythm`` profile
+        strips (i.e. the study was anonymized under another profile). A
+        study with no readable CT slice returns True — the "no CT series"
+        check handles that case."""
+        if not study_dir.is_dir():
+            return True
+        for series_dir in sorted(study_dir.iterdir()):
+            if not series_dir.is_dir() or not series_dir.name.isdigit():
+                continue
+            first_dcm = next(
+                (f for f in sorted(series_dir.glob("*.dcm"))
+                 if "_pre_deface" not in str(f)),
+                None,
+            )
+            if first_dcm is None:
+                continue
+            try:
+                ds = pydicom.dcmread(
+                    str(first_dcm), stop_before_pixels=True, force=True
+                )
+            except Exception:
+                continue
+            if str(getattr(ds, "SOPClassUID", "")) not in self._RHYTHM_CT_SOP_CLASSES:
+                continue
+            return not any(
+                str(getattr(ds, kw, "") or "").strip()
+                for kw in self._RHYTHM_STRIPPED_SENTINELS
+            )
+        return True
+
     def _rhythm_manifest_item_sync(
         self, study_number: int
     ) -> Tuple[Optional[dict], Optional[str]]:
@@ -1571,6 +1611,13 @@ class StorageManager:
                 )
             return None, (
                 f"protocol '{protocol_key}' is not in config/rhythm_protocols.yaml"
+            )
+
+        if not self._rhythm_anonymized_sync(self.base_path / f"{study_number:04d}"):
+            return None, (
+                "not anonymized under the 'rhythm' profile (device/date tags "
+                "remain on CT slices) — RHYTHM's GDPR-strict validator would "
+                "reject every slice; re-receive the source DICOM under 'rhythm'"
             )
 
         item = rhythm_manifest.build_manifest_item(
@@ -1623,39 +1670,6 @@ class StorageManager:
     # -- Proactive export artifacts (built when a study becomes export-ready,
     #    not when an upload button is clicked) -----------------------------
 
-    # Tags the `rhythm` anonymization profile removes outright. If any still
-    # carries a value the study was anonymized under a different profile —
-    # RHYTHM's GDPR-strict ingest validator will reject every slice, so the
-    # export artifacts must not be built (re-receive the source under
-    # `rhythm`). Checked on one CT slice, cheap and decisive.
-    _RHYTHM_STRIPPED_SENTINELS = (
-        "DeviceSerialNumber", "StationName", "Manufacturer", "ProtocolName",
-    )
-
-    def _rhythm_anonymized_sync(self, study_dir: Path, excluded: set) -> bool:
-        for series_dir in sorted(study_dir.iterdir()):
-            if (not series_dir.is_dir() or not series_dir.name.isdigit()
-                    or series_dir.name in excluded):
-                continue
-            first_dcm = next(
-                (f for f in sorted(series_dir.glob("*.dcm"))
-                 if "_pre_deface" not in str(f)),
-                None,
-            )
-            if first_dcm is None:
-                continue
-            try:
-                ds = pydicom.dcmread(
-                    str(first_dcm), stop_before_pixels=True, force=True
-                )
-            except Exception:
-                return True  # unreadable — don't block on a parse failure
-            return not any(
-                str(getattr(ds, kw, "") or "").strip()
-                for kw in self._RHYTHM_STRIPPED_SENTINELS
-            )
-        return True  # no CT slice to check — "no CT series" blocker handles it
-
     def _export_data_blockers_sync(
         self, study_number: int
     ) -> Tuple[Optional[dict], list]:
@@ -1663,7 +1677,8 @@ class StorageManager:
         *blockers* lists only the **study-data** problems that must be fixed
         before export artifacts can be built: study not ``ready``, missing
         ``protocol_id`` / ``image_quality``, unreadable exam sidecar, no CT
-        series. ``site_code`` is deliberately *not* counted — it is a
+        series, or a study not anonymized under the ``rhythm`` profile.
+        ``site_code`` is deliberately *not* counted — it is a
         destination-config value finalised at upload time, so a study can be
         packaged before RHYTHM/HTTP is configured."""
         sc = self.find_sidecar_by_number(study_number)
@@ -1688,11 +1703,6 @@ class StorageManager:
             } - excluded
             if not ct:
                 blockers.append("no CT image series")
-            elif not self._rhythm_anonymized_sync(study_dir, excluded):
-                blockers.append(
-                    "not anonymized under the 'rhythm' profile (device/date "
-                    "tags remain) — re-receive the source DICOM"
-                )
         return item, blockers
 
     def _export_artifacts_current_sync(self, study_number: int) -> bool:

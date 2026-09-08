@@ -179,13 +179,15 @@ class RhythmStorage:
             headers = {"Authorization": f"Bearer {self.auth_token}"}
 
             async with aiohttp.ClientSession(headers=headers) as session:
-                init = await self._init(
+                init, server_total_chunks = await self._init(
                     session, zip_path.name, total_size, file_hash, batch, manifest_item
                 )
                 if init.error:
                     return init
 
-                sent = await self._send_chunks(session, zip_path, init.session_id)
+                sent = await self._send_chunks(
+                    session, zip_path, init.session_id, server_total_chunks
+                )
                 if sent is not None:
                     sent.session_id = init.session_id
                     return sent
@@ -246,7 +248,7 @@ class RhythmStorage:
         file_hash: str,
         batch: str,
         manifest_item: dict[str, Any],
-    ) -> RhythmUploadResult:
+    ) -> tuple[RhythmUploadResult, int | None]:
         payload = {
             "filename": filename,
             "total_size": total_size,
@@ -261,26 +263,46 @@ class RhythmStorage:
             body = await _json(resp)
             if resp.status != 201:
                 logger.error("RHYTHM init failed: %s %s", resp.status, body)
-                return RhythmUploadResult(
-                    ok=False,
-                    error=f"init failed: HTTP {resp.status}",
-                    error_report=body.get("error") if isinstance(body, dict) else body,
+                detail = _err_detail(body)
+                return (
+                    RhythmUploadResult(
+                        ok=False,
+                        error=f"init failed: HTTP {resp.status}"
+                        + (f" ({detail})" if detail else ""),
+                        error_report=body if isinstance(body, dict) else None,
+                    ),
+                    None,
                 )
             session_id = body.get("session_id")
             total_chunks = body.get("total_chunks")
             logger.info(
                 "RHYTHM init ok: session=%s total_chunks=%s", session_id, total_chunks
             )
-            # session_id doubles as the "chunks still to send" marker for
-            # _send_chunks; total_chunks is recomputed there from the file.
-            return RhythmUploadResult(ok=True, session_id=session_id)
+            return (
+                RhythmUploadResult(ok=True, session_id=session_id),
+                int(total_chunks) if isinstance(total_chunks, int) else None,
+            )
 
     async def _send_chunks(
-        self, session: aiohttp.ClientSession, zip_path: Path, session_id: str
+        self, session: aiohttp.ClientSession, zip_path: Path, session_id: str,
+        server_total_chunks: int | None = None,
     ) -> RhythmUploadResult | None:
         """Upload every chunk. Returns None on success, or a failure result."""
         total_size = zip_path.stat().st_size
         total_chunks = max(1, -(-total_size // self.chunk_size))  # ceil div
+        # The server computed its own count from the chunk_size we sent it; a
+        # disagreement means it clamped/overrode chunk_size, and pushing our
+        # count would 409 at complete/ with an opaque message. Fail clearly.
+        if server_total_chunks is not None and server_total_chunks != total_chunks:
+            return RhythmUploadResult(
+                ok=False,
+                error=(
+                    f"chunk-count disagreement: server expects "
+                    f"{server_total_chunks}, we would send {total_chunks} "
+                    f"(chunk_size {self.chunk_size}) — check "
+                    f"remote_storage.rhythm.chunk_size"
+                ),
+            )
         url = f"{self.base_url}/api/v1/uploads/chunked/{session_id}/chunk/"
 
         with open(zip_path, "rb") as fh:
@@ -339,8 +361,12 @@ class RhythmStorage:
             body = await _json(resp)
             if resp.status != 200:
                 logger.error("RHYTHM complete failed: %s %s", resp.status, body)
+                detail = _err_detail(body)
                 return RhythmUploadResult(
-                    ok=False, error=f"complete failed: HTTP {resp.status}"
+                    ok=False,
+                    error=f"complete failed: HTTP {resp.status}"
+                    + (f" ({detail})" if detail else ""),
+                    error_report=body if isinstance(body, dict) else None,
                 )
             job_id = body.get("job_id")
             job_status_url = body.get("job_status_url")
@@ -351,6 +377,19 @@ class RhythmStorage:
 
 
 # -- helpers -----------------------------------------------------------------
+
+
+def _err_detail(body: Any) -> str | None:
+    """A short human string from a RHYTHM error body — its ``error`` and/or
+    ``code`` — for appending to a ``HTTP <n>`` message."""
+    if not isinstance(body, dict):
+        return None
+    parts = []
+    for key in ("code", "error"):
+        val = body.get(key)
+        if isinstance(val, str) and val.strip():
+            parts.append(val.strip())
+    return "; ".join(parts) or None
 
 
 def sha256_file(path: Path) -> str:

@@ -270,8 +270,23 @@ class TestFailures:
         install(monkeypatch, routes)
         r = asyncio.run(make_storage().upload_study(a_zip(tmp_path), ITEM, "b"))
         assert r.ok is False
-        assert "init failed" in r.error
-        assert r.error_report == [{"field": "$.image_quality", "code": "required"}]
+        assert "init failed: HTTP 400" in r.error
+        assert "invalid_manifest_item" in r.error       # server code surfaced
+        assert r.error_report == {
+            "code": "invalid_manifest_item",
+            "error": [{"field": "$.image_quality", "code": "required"}],
+        }
+
+    def test_chunk_count_disagreement_fails_before_sending(self, tmp_path, monkeypatch):
+        routes = happy_routes()
+        # server says 5 chunks; with chunk_size=10 and a 25-byte zip we'd send 3
+        routes["init"] = [FakeResp(201, {"session_id": "s", "total_chunks": 5})]
+        install(monkeypatch, routes)
+        s = make_storage(chunk_size=10)
+        r = asyncio.run(s.upload_study(a_zip(tmp_path, b"x" * 25), ITEM, "b"))
+        assert r.ok is False
+        assert "chunk-count disagreement" in r.error
+        assert not [c for c in FakeSession.last_instance.calls if "/chunk/" in c["url"]]
 
     def test_chunk_retries_then_gives_up(self, tmp_path, monkeypatch):
         routes = happy_routes()
