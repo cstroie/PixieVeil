@@ -158,14 +158,18 @@ def build_batch_manifest(
     items: list[dict[str, Any]],
     *,
     batch: str,
-    site_code: str,
+    site_code: str | None,
     note: str | None = None,
 ) -> dict[str, Any]:
     """Assemble the full v2 batch manifest document around *items*.
 
-    Not sent on the wire (RHYTHM has no manifest-ingest endpoint) — written
-    beside the retained study as an audit record mirroring the partner tool's
-    ``rhythm_upload_manifest.json`` output.
+    RHYTHM has no manifest-ingest endpoint, so PixieVeil's own upload path
+    passes ``items[]`` one at a time to ``chunked/init``. But the assembled
+    document is written to ``export_path/<NNNN>.json`` as the shippable
+    record — partner tooling that watches that directory submits it as-is —
+    so ``batch`` / ``site_code`` must be real (``site_code`` may be ``None``
+    when RHYTHM is unconfigured; the manifest then fails validation loudly
+    rather than carrying a placeholder).
     """
     manifest: dict[str, Any] = {
         "v": MANIFEST_FORMAT_VERSION,

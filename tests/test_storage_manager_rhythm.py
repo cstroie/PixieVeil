@@ -715,7 +715,9 @@ class TestPrepareExportArtifacts:
         from pixieveil.storage.rhythm_storage import sha256_file
         manifest = json.loads(json_path.read_text())
         assert manifest["type"] == "rhythm_server_assigned_upload_manifest"
-        assert manifest["batch"] == "prepared"
+        # a real, shippable manifest: batch is a site-stamped id, not a sentinel
+        assert manifest["batch"].startswith("S001-")
+        assert manifest["site"] == "S001"
         item = manifest["items"][0]
         assert item["sha256"] == sha256_file(zip_path)
         assert item["size_bytes"] == zip_path.stat().st_size
@@ -734,6 +736,23 @@ class TestPrepareExportArtifacts:
 
         assert sm._prepare_export_artifacts_sync(1) is False
         assert not (sm.export_path / "0001.json").exists()
+
+    def test_blocked_when_not_rhythm_anonymized(self, tmp_path):
+        # A CT slice that still carries device identity => a non-rhythm
+        # profile => RHYTHM's GDPR-strict validator would reject it.
+        sm = _manager(tmp_path)
+        register_study(sm, 1, "ready")
+        write_minimal_dicom(
+            sm.base_path / "0001" / "0001" / "img.dcm",
+            SOPClassUID=CTImageStorage, DeviceSerialNumber="79098",
+            StationName="CTAWP1", Manufacturer="SIEMENS",
+        )
+        from pixieveil.storage.exam_sidecar import ExamSidecar
+        ExamSidecar(1, dict(EXAM_OK)).save(sm.base_path)
+
+        _item, blockers = sm._export_data_blockers_sync(1)
+        assert any("rhythm' profile" in b for b in blockers)
+        assert sm._prepare_export_artifacts_sync(1) is False
 
     def test_stale_artifacts_removed_when_study_stops_qualifying(self, tmp_path):
         sm = _manager(tmp_path)

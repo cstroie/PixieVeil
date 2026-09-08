@@ -1623,6 +1623,39 @@ class StorageManager:
     # -- Proactive export artifacts (built when a study becomes export-ready,
     #    not when an upload button is clicked) -----------------------------
 
+    # Tags the `rhythm` anonymization profile removes outright. If any still
+    # carries a value the study was anonymized under a different profile —
+    # RHYTHM's GDPR-strict ingest validator will reject every slice, so the
+    # export artifacts must not be built (re-receive the source under
+    # `rhythm`). Checked on one CT slice, cheap and decisive.
+    _RHYTHM_STRIPPED_SENTINELS = (
+        "DeviceSerialNumber", "StationName", "Manufacturer", "ProtocolName",
+    )
+
+    def _rhythm_anonymized_sync(self, study_dir: Path, excluded: set) -> bool:
+        for series_dir in sorted(study_dir.iterdir()):
+            if (not series_dir.is_dir() or not series_dir.name.isdigit()
+                    or series_dir.name in excluded):
+                continue
+            first_dcm = next(
+                (f for f in sorted(series_dir.glob("*.dcm"))
+                 if "_pre_deface" not in str(f)),
+                None,
+            )
+            if first_dcm is None:
+                continue
+            try:
+                ds = pydicom.dcmread(
+                    str(first_dcm), stop_before_pixels=True, force=True
+                )
+            except Exception:
+                return True  # unreadable — don't block on a parse failure
+            return not any(
+                str(getattr(ds, kw, "") or "").strip()
+                for kw in self._RHYTHM_STRIPPED_SENTINELS
+            )
+        return True  # no CT slice to check — "no CT series" blocker handles it
+
     def _export_data_blockers_sync(
         self, study_number: int
     ) -> Tuple[Optional[dict], list]:
@@ -1655,6 +1688,11 @@ class StorageManager:
             } - excluded
             if not ct:
                 blockers.append("no CT image series")
+            elif not self._rhythm_anonymized_sync(study_dir, excluded):
+                blockers.append(
+                    "not anonymized under the 'rhythm' profile (device/date "
+                    "tags remain) — re-receive the source DICOM"
+                )
         return item, blockers
 
     def _export_artifacts_current_sync(self, study_number: int) -> bool:
@@ -1722,12 +1760,18 @@ class StorageManager:
         assert item is not None  # implied by empty blockers
         item["sha256"] = sha256_file(built)
         item["size_bytes"] = built.stat().st_size
+        # A real batch id + the configured site_code: this manifest is a
+        # complete, shippable v2 document — external tooling that picks up
+        # data/export/<NNNN>.json submits it as-is, and manual_upload_rhythm
+        # rewrites it with its own batch when the operator sends from the
+        # dashboard. site_code is left null (not a placeholder) when RHYTHM
+        # is unconfigured, so a bad manifest fails loudly rather than
+        # shipping "SITE".
         manifest = rhythm_manifest.build_batch_manifest(
             [item],
-            batch="prepared",
-            site_code=self.rhythm_storage.site_code or "SITE",
-            note=("prepared when the study became export-ready; batch and "
-                  "site_code are finalised at upload time"),
+            batch=self._new_rhythm_batch_id(),
+            site_code=self.rhythm_storage.site_code,
+            note="prepared when the study became export-ready",
         )
         tmp = json_path.with_name(json_path.name + ".tmp")
         tmp.write_text(json.dumps(manifest, indent=2))
