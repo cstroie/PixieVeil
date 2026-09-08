@@ -15,11 +15,6 @@
                 --pico-line-height: 1.45;
                 --pico-typography-spacing-vertical: 0.75rem;
                 --pico-block-spacing-vertical: calc(var(--pico-spacing) * 0.75);
-                /* single knobs for the secondary text sprinkled through the page */
-                --pv-font-size-sm: 0.8125rem;
-                --pv-font-size-xs: 0.75rem;
-                --pv-font-size-metric: 1.75rem;
-                --pv-gap: calc(var(--pico-spacing) * 0.75);
             }
             article {
                 margin-bottom: var(--pico-spacing);
@@ -42,10 +37,8 @@
             .metrics article:hover {
                 border-color: var(--pico-primary);
             }
-            .metrics article strong {
+            .metrics article > small:first-child {   /* the metric label */
                 display: block;
-                font-size: var(--pv-font-size-xs);
-                font-weight: var(--pico-font-weight);
                 text-transform: uppercase;
                 letter-spacing: 0.03em;
                 color: var(--pico-muted-color);
@@ -56,25 +49,22 @@
                 justify-content: center;
                 gap: 0.35rem;
             }
-            .metrics article span {
-                font-size: var(--pv-font-size-metric);
+            .metrics article data {
+                font-size: 1.75rem;
                 line-height: 1;
                 font-weight: bold;
                 color: var(--pico-primary);
                 font-variant-numeric: tabular-nums;
             }
             .metrics article .unit {
-                font-size: var(--pv-font-size-xs);
-                font-weight: normal;
                 color: var(--pico-muted-color);
             }
-            .metrics.errors article span,
-            .metrics article span.error-value {
+            .metrics.errors article data,
+            .metrics article data.error-value {
                 color: var(--pico-form-element-invalid-focus-color);
             }
             .sub-value {
                 color: var(--pico-muted-color);
-                font-size: var(--pv-font-size-xs);
             }
             .defacing-disabled {
                 color: var(--pico-muted-color);
@@ -83,14 +73,14 @@
             .section-title {
                 display: flex;
                 align-items: baseline;
-                gap: var(--pv-gap);
+                gap: calc(var(--pico-spacing) * 0.75);
                 margin-bottom: calc(var(--pico-spacing) * 0.5);
             }
             .section-title h3 {
                 margin: 0;
             }
             .badge {
-                font-size: var(--pv-font-size-xs);
+                font-size: 0.8125em;
                 font-weight: var(--pico-font-weight);
                 text-transform: uppercase;
                 letter-spacing: 0.02em;
@@ -108,14 +98,13 @@
             .status-bar {
                 display: flex;
                 flex-wrap: wrap;
-                gap: var(--pv-gap) calc(var(--pico-spacing) * 1.25);
+                gap: calc(var(--pico-spacing) * 0.75) calc(var(--pico-spacing) * 1.25);
                 align-items: center;
             }
             .led {
                 display: inline-flex;
                 align-items: center;
                 gap: 0.4rem;
-                font-size: var(--pv-font-size-sm);
             }
             .led-dot {
                 display: inline-block;
@@ -135,7 +124,6 @@
                 box-shadow: 0 0 6px var(--pico-form-element-invalid-focus-color);
             }
             .last-updated {
-                font-size: var(--pv-font-size-xs);
                 color: var(--pico-muted-color);
                 margin: 0 0 0 auto;
             }
@@ -166,7 +154,7 @@
                     <span class="led"><span class="led-dot" id="led-waiting"></span>Waiting</span>
                     <span class="led"><span class="led-dot" id="led-defacing"></span>Defacing</span>
                     <span class="led"><span class="led-dot" id="led-exporting"></span>Exporting</span>
-                    <span class="last-updated">Last updated: <span id="last-updated">Never</span></span>
+                    <small class="last-updated">Last updated: <time id="last-updated">Never</time></small>
                 </div>
             </article>
         </header>
@@ -227,7 +215,10 @@
                 setLed('led-defacing',  !!ps.defacing,  null);
                 setLed('led-exporting', !!ps.exporting, null);
 
-                document.getElementById('last-updated').textContent = new Date().toLocaleTimeString();
+                const now = new Date();
+                const lastUpdated = document.getElementById('last-updated');
+                lastUpdated.textContent = now.toLocaleTimeString();
+                lastUpdated.dateTime = now.toISOString();
 
                 const container = document.getElementById('metrics-container');
                 container.innerHTML = '';
@@ -272,22 +263,23 @@
                     section.metrics.forEach(metric => {
                         const article = document.createElement('article');
 
-                        const label = document.createElement('strong');
+                        const label = document.createElement('small');
                         label.textContent = metric.label;
                         article.appendChild(label);
 
                         const valueRow = document.createElement('div');
                         valueRow.className = 'value-row';
 
-                        const valueSpan = document.createElement('span');
-                        valueSpan.textContent = formatValue(metric.value);
+                        const valueEl = document.createElement('data');
+                        valueEl.value = String(metric.value);
+                        valueEl.textContent = formatValue(metric.value);
                         if (isDefacing && metric.label === 'Errors' && metric.value > 0) {
-                            valueSpan.classList.add('error-value');
+                            valueEl.classList.add('error-value');
                         }
-                        valueRow.appendChild(valueSpan);
+                        valueRow.appendChild(valueEl);
 
                         if (metric.suffix) {
-                            const unit = document.createElement('span');
+                            const unit = document.createElement('small');
                             unit.className = 'unit';
                             unit.textContent = metric.suffix;
                             valueRow.appendChild(unit);

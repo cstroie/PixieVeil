@@ -16,10 +16,6 @@
                 --pico-typography-spacing-vertical: 0.75rem;
                 --pico-block-spacing-vertical: calc(var(--pico-spacing) * 0.75);
                 --pico-form-element-spacing-vertical: 0.5rem;
-                /* single knobs for the secondary text sprinkled through the page */
-                --pv-font-size-sm: 0.8125rem;
-                --pv-font-size-xs: 0.75rem;
-                --pv-gap: calc(var(--pico-spacing) * 0.75);
             }
             article {
                 margin-bottom: var(--pico-spacing);
@@ -35,7 +31,7 @@
                 background-color: var(--pico-table-row-stripe-background-color);
             }
             .badge {
-                font-size: var(--pv-font-size-xs);
+                font-size: 0.8125em;
                 font-weight: var(--pico-font-weight);
                 text-transform: uppercase;
                 letter-spacing: 0.02em;
@@ -77,28 +73,12 @@
             .series-group {
                 margin-bottom: var(--pico-spacing);
             }
-            .field-hint {
-                font-size: var(--pv-font-size-xs);
-                color: var(--pico-muted-color);
-            }
-            .hint-box {
-                font-size: var(--pv-font-size-sm);
-                color: var(--pico-muted-color);
-                border-left: 3px solid var(--pico-muted-border-color);
-                padding-left: var(--pv-gap);
-                margin: calc(var(--pico-spacing) * 0.5) 0 var(--pico-spacing);
-            }
-            .notes-list {
-                font-size: var(--pv-font-size-sm);
-            }
+            /* secondary text uses <small>; only layout needs a class */
             .action-row {
                 display: flex;
-                gap: var(--pv-gap);
+                gap: calc(var(--pico-spacing) * 0.75);
                 flex-wrap: wrap;
                 align-items: center;
-            }
-            .status-line {
-                font-size: var(--pv-font-size-sm);
             }
             .token-bar {
                 display: flex;
@@ -250,7 +230,7 @@
                     ? `<button type="button" id="bulk-rhythm-btn" class="secondary" ${rhythmOk ? '' : 'disabled'} title="${rhythmOk ? '' : "requires the 'rhythm' anonymization profile"}">Upload all to RHYTHM</button>` : '';
                 const pendingNums = pending.map(s => s.study_number).join(',');
                 const rhythmManifestLinks = CAPABILITIES.rhythm
-                    ? `<small class="status-line">batch manifest: ` +
+                    ? `<small>batch manifest: ` +
                       `<a href="/api/studies/rhythm-manifest?studies=${pendingNums}" target="_blank" rel="noopener">preview</a> · ` +
                       `<a href="/api/studies/rhythm-manifest?studies=${pendingNums}&download=1">download</a></small>` : '';
                 bar.innerHTML = `
@@ -258,7 +238,7 @@
                         <span class="badge badge-warn">${pending.length} awaiting export</span>
                         ${dicomBtn}${httpBtn}${rhythmBtn}
                         ${rhythmManifestLinks}
-                        <small id="bulk-status" class="status-line"></small>
+                        <small id="bulk-status"></small>
                     </article>
                 `;
                 const db = document.getElementById('bulk-dicom-btn');
@@ -563,26 +543,27 @@
                 el.innerHTML = `
                     <article>
                         <h4>Manual review — study ${String(n).padStart(4, '0')}</h4>
+                        <form id="exam-form-${n}">
                         <div class="grid">
                             <label>Weight (kg)
-                                <input type="number" step="any" data-path="patient.weight_kg"
+                                <input type="number" step="any" min="0" required data-path="patient.weight_kg"
                                     class="${isManual(exam, 'patient.weight_kg') ? 'manual-set' : ''}"
                                     value="${get(exam, 'patient.weight_kg') != null ? get(exam, 'patient.weight_kg') : ''}">
                             </label>
                             <label>Age (years)
-                                <input type="number" step="any" data-path="patient.age_years"
+                                <input type="number" step="any" min="0" required data-path="patient.age_years"
                                     class="${isManual(exam, 'patient.age_years') ? 'manual-set' : ''}"
                                     value="${get(exam, 'patient.age_years') != null ? get(exam, 'patient.age_years') : ''}">
                             </label>
                             <label>Region / Indication
-                                <select id="region-indication-${n}"
+                                <select id="region-indication-${n}" required
                                     class="${(isManual(exam, 'indication.region') || isManual(exam, 'indication.clinical_indication')) ? 'manual-set' : ''}">
                                     <option value="">— unset —</option>
                                     ${regionOptions}
                                 </select>
                             </label>
                             <label>IV contrast
-                                <select data-path="indication.iv_contrast"
+                                <select data-path="indication.iv_contrast" required
                                     class="${isManual(exam, 'indication.iv_contrast') ? 'manual-set' : ''}">
                                     <option value="">—</option>
                                     ${contrastOptions}
@@ -591,7 +572,7 @@
                         </div>
                         <div class="grid">
                             <label>Image quality
-                                <select data-path="image_quality"
+                                <select data-path="image_quality" required
                                     class="${isManual(exam, 'image_quality') ? 'manual-set' : ''}">
                                     ${qualityOptions}
                                 </select>
@@ -603,13 +584,13 @@
                                 <small>informational only</small>
                             </label>
                             <label>RHYTHM protocol
-                                <select data-path="rhythm.protocol_key"
+                                <select data-path="rhythm.protocol_key" required
                                     class="${isManual(exam, 'rhythm.protocol_key') ? 'manual-set' : ''}">
                                     ${rhythmProtocolOptions}
                                 </select>
-                                <small>required for RHYTHM upload — its
-                                    UUID goes in the manifest; region/indication/contrast/
-                                    scanner are derived from it upstream</small>
+                                <small>its UUID goes in the manifest;
+                                    region/indication/contrast/scanner are derived from it
+                                    upstream</small>
                             </label>
                         </div>
                         ${seriesFields}
@@ -619,25 +600,26 @@
                             >${esc(get(exam, 'operator_notes') || '')}</textarea>
                         </label>
                         <div class="action-row">
-                            <button type="button" onclick="saveExam(${n})">Save</button>
-                            <small id="save-status-${n}" class="status-line"></small>
+                            <button type="submit">Save</button>
+                            <small id="save-status-${n}"></small>
                         </div>
+                        </form>
                     </article>
 
                     <article>
                         <h5>Derived: ${esc(exam.protocol_type) || '—'} / ${esc(exam.examination_group) || '—'}</h5>
-                        <p class="hint-box">Prefer <code>rdsr.acquisitions[*].mean_ctdivol_mgy</code> over
+                        <blockquote>Prefer <code>rdsr.acquisitions[*].mean_ctdivol_mgy</code> over
                             <code>series[*].ctdi_vol_mgy</code> — the flat per-image CTDIvol tag is cumulative
-                            dose-to-date on this scanner, not per-acquisition.</p>
+                            dose-to-date on this scanner, not per-acquisition.</blockquote>
                         <h6>Irradiation events (RDSR acquisitions, read-only)</h6>
-                        <p class="field-hint">The authoritative per-dose-event record. One event can be
+                        <p><small>The authoritative per-dose-event record. One event can be
                             reconstructed into several DICOM series below (e.g. two kernels from one spiral
-                            pass) — series counts and event counts don't need to match.</p>
+                            pass) — series counts and event counts don't need to match.</small></p>
                         ${rdsrTable}
                         <h6>DICOM series (reconstructions, read-only)</h6>
                         ${seriesTable}
                         <h6>Notes</h6>
-                        <ul class="notes-list">${notes || '<li>None.</li>'}</ul>
+                        <ul>${notes || '<li>None.</li>'}</ul>
                     </article>
 
                     ${actionsHtml(n, study, exam)}
@@ -663,6 +645,14 @@
                 // extracted values into the manual overlay forever.
                 el.querySelectorAll('[data-path]').forEach(input => {
                     input.dataset.initial = input.value;
+                });
+
+                // Native form validation gates the submit — the browser blocks
+                // it and points at the first empty required field.
+                const examForm = document.getElementById(`exam-form-${n}`);
+                if (examForm) examForm.addEventListener('submit', (e) => {
+                    e.preventDefault();
+                    saveExam(n);
                 });
 
                 wireActions(n, study);
@@ -697,11 +687,11 @@
                 const rhythmLabel = study.rhythm_status && study.rhythm_status !== 'failed'
                     ? 'Re-upload to RHYTHM' : 'Upload to RHYTHM';
                 const rhythmLine = study.rhythm_status
-                    ? `<small class="status-line">RHYTHM job: ${esc(study.rhythm_status)}` +
+                    ? `<small>RHYTHM job: ${esc(study.rhythm_status)}` +
                       `${study.rhythm_batch ? ' (batch ' + esc(study.rhythm_batch) + ')' : ''}</small>`
                     : '';
                 const manifestLinks = exam
-                    ? `<small class="status-line">RHYTHM manifest: ` +
+                    ? `<small>RHYTHM manifest: ` +
                       `<a href="/api/studies/${n}/rhythm-manifest" target="_blank" rel="noopener">preview</a> · ` +
                       `<a href="/api/studies/${n}/rhythm-manifest?download=1">download</a></small>`
                     : '';
@@ -717,7 +707,7 @@
                         </div>
                         ${rhythmLine}
                         ${manifestLinks}
-                        <small id="action-status-${n}" class="status-line"></small>
+                        <small id="action-status-${n}"></small>
                     </article>
                 `;
             }
