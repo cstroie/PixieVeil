@@ -13,11 +13,12 @@ import asyncio
 import logging
 import time
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from aiohttp import web
 
 from pixieveil.config import Settings
+from pixieveil.dashboard import options
 from pixieveil.processing import exam_merge
 from pixieveil.storage.storage_manager import StorageManager
 
@@ -25,31 +26,35 @@ logger = logging.getLogger(__name__)
 
 _VALID_ACTIONS = {"send_dicom", "reextract", "upload_http"}
 
+_DASHBOARD_DIR = Path(__file__).parent
+_TEMPLATES_DIR = _DASHBOARD_DIR / "templates"
+_STATIC_DIR = _DASHBOARD_DIR / "static"
+
 
 class Dashboard:
     """
     Main dashboard class handling web server setup and route management.
-    
+
     This class provides the web-based dashboard interface for the PixieVeil application.
     It manages the HTTP server, handles web routes, and provides real-time updates
     through periodic API calls.
-    
+
     The dashboard provides:
     - Main dashboard page with system status and metrics
     - JSON API endpoint for fetching current statistics
     - Real-time updates via periodic JavaScript API calls
-    
+
     Attributes:
         settings (Settings): Application configuration settings
         app (web.Application): aiohttp web application instance
         runner (web.AppRunner): Application runner for the web server
         site (web.TCPSite): TCP site for serving the web application
     """
-    
+
     def __init__(self, settings: Settings, storage_manager: StorageManager) -> None:
         """
         Initialize the Dashboard with application settings and storage manager.
-        
+
         Args:
             settings: Application configuration settings containing HTTP server
                       configuration (IP address, port, etc.)
@@ -63,6 +68,21 @@ class Dashboard:
         self.runner: Optional[web.AppRunner] = None
         self.site: Optional[web.TCPSite] = None
         self.app['storage_manager'] = storage_manager
+        self._started_at = time.time()
+        # Routes are registered here rather than in start() so tests can
+        # wrap self.app in an aiohttp TestServer without binding a port.
+        self.app.add_routes([
+            web.get("/", self.handle_index),
+            web.get("/stats", self.handle_stats),
+            web.get("/health", self.handle_health),
+            web.get("/studies", self.handle_studies_page),
+            web.get("/api/options", self.handle_options),
+            web.get("/api/studies", self.handle_list_studies),
+            web.get("/api/studies/{n}", self.handle_get_study),
+            web.put("/api/studies/{n}/exam", self.handle_save_exam),
+            web.post("/api/studies/{n}/actions/{action}", self.handle_study_action),
+            web.static("/static", _STATIC_DIR),
+        ])
 
     @web.middleware
     async def _auth_middleware(self, request: web.Request, handler):
@@ -90,33 +110,19 @@ class Dashboard:
     async def start(self) -> None:
         """
         Start the dashboard web server.
-        
-        This method sets up the web application, registers routes,
-        and starts the HTTP server. The dashboard becomes available
-        at the configured IP address and port.
-        
+
+        Routes are already registered in __init__; this creates the runner
+        and TCP site and starts serving on the configured IP address and port.
+
         The method:
-        - Sets up all web routes
         - Creates the application runner and TCP site
         - Starts the web server
         - Logs the server address for user access
-        
+
         Raises:
             Exception: If the web server fails to start
         """
         logger.info("Starting dashboard")
-
-        # Setup routes
-        self.app.add_routes([
-            web.get("/", self.handle_index),
-            web.get("/stats", self.handle_stats),
-            web.get("/health", self.handle_health),
-            web.get("/studies", self.handle_studies_page),
-            web.get("/api/studies", self.handle_list_studies),
-            web.get("/api/studies/{n}", self.handle_get_study),
-            web.put("/api/studies/{n}/exam", self.handle_save_exam),
-            web.post("/api/studies/{n}/actions/{action}", self.handle_study_action),
-        ])
 
         # Create runner and site
         self.runner = web.AppRunner(self.app)
@@ -137,15 +143,17 @@ class Dashboard:
             logger.error(f"Dashboard cannot bind to {host}:{port} — address already in use: {e}")
             raise
 
-        logger.info(f"Dashboard started on http://{self.settings.http_server['ip']}:{self.settings.http_server['port']}")
+        host = self.settings.http_server['ip']
+        port = self.settings.http_server['port']
+        logger.info(f"Dashboard started on http://{host}:{port}")
 
     async def stop(self):
         """
         Stop the dashboard web server gracefully.
-        
+
         This method performs a graceful shutdown of the web server,
         including stopping the site and cleaning up the application runner.
-        
+
         The method:
         - Stops the TCP site
         - Cleans up the application runner
@@ -174,153 +182,121 @@ class Dashboard:
 
         logger.info("Dashboard stopped")
 
-    async def handle_index(self, request: web.Request) -> web.Response:
-        """
-        Handle the main dashboard page.
-        
-        This method serves the main dashboard page which provides an overview
-        of the system status and all metrics in a single page.
-        
-        The page includes:
-        - System status display
-        - Real-time metrics and statistics
-        - Navigation links
-        - JavaScript for periodic API calls to update data
-        
-        Args:
-            request (web.Request): The incoming HTTP request
-            
-        Returns:
-            web.Response: HTML response containing the dashboard page
-        """
-        # Read the template file
-        template_path = Path(__file__).parent / "templates" / "index.html"
+    @staticmethod
+    async def _serve_template(name: str) -> web.Response:
+        """Serve one static HTML page from templates/ (no server-side templating)."""
+        template_path = _TEMPLATES_DIR / name
         try:
             html_content = await asyncio.to_thread(template_path.read_text, encoding='utf-8')
-            return web.Response(text=html_content, content_type="text/html")
         except FileNotFoundError:
             logger.error(f"Template file not found: {template_path}")
             return web.Response(text="Dashboard template not found", status=500)
+        return web.Response(text=html_content, content_type="text/html")
+
+    async def handle_index(self, request: web.Request) -> web.Response:
+        """Serve the status page (pipeline, action callouts, KPIs, counters)."""
+        return await self._serve_template("index.html")
 
     async def handle_stats(self, request: web.Request) -> web.Response:
         """
-        Handle the JSON API endpoint for statistics.
-        
-        This method provides current system statistics in JSON format
-        for the dashboard to consume and display. The response structure
-        mirrors the dashboard layout with sections and metrics.
-        
-        The API returns:
-        - server_status: "running" or "stopped"
-        - timestamp: current time
-        - sections: list of sections, each with title and metrics array
-        
-        Each metric has:
-        - label: display label
-        - value: numeric value (or formatted string for complex metrics)
-        - suffix: optional unit suffix (e.g., "MB", "ms")
-        
-        Args:
-            request (web.Request): The incoming HTTP request
-            
-        Returns:
-            web.Response: JSON response containing current statistics
+        JSON snapshot for the status page.
+
+        - ``pipeline.active``: which stages have work in flight right now
+        - ``pipeline.status_counts``: studies per sidecar status
+        - ``kpis``: the handful of headline numbers
+        - ``details``: every other counter, grouped, for the collapsible drawer
         """
-        storage_manager = request.app['storage_manager']
-        
-        studies_in_progress = storage_manager.study_manager.get_active_study_count()
-        completed_studies = storage_manager.study_manager.get_completed_study_count()
-        total_studies = completed_studies + studies_in_progress
-        
-        def bytes_to_mb(bytes_val):
-            return int(round(bytes_val / (1024 * 1024)))
-        
-        # Get processing errors dict for nested access
-        processing_errors = storage_manager.get_counter('processing', 'errors')
+        sm: StorageManager = request.app['storage_manager']
+        status_counts = await asyncio.to_thread(sm.get_status_counts_sync)
+
+        def c(category: str, sub: str) -> Any:
+            return sm.get_counter(category, sub, 0)
+
+        def mb(bytes_val: Any) -> float:
+            return round((bytes_val or 0) / (1024 * 1024), 1)
+
+        processing_errors = sm.get_counter('processing', 'errors')
         if not isinstance(processing_errors, dict):
             processing_errors = {}
-        
-        # Build sections structure using get_counter method
-        sections = [
-            {
-                "title": "Processed",
-                "metrics": [
-                    {"label": "Studies", "value": total_studies, "suffix": "total",
-                     "sub_value": studies_in_progress, "sub_suffix": "in progress"},
-                    {"label": "Completed", "value": completed_studies, "suffix": "studies"},
-                    {"label": "Images", "value": storage_manager.get_counter('processing', 'images'), "suffix": "processed",
-                     "sub_value": storage_manager.get_counter('processing', 'filtered_images'), "sub_suffix": "filtered"},
-                    {"label": "Anonymized", "value": storage_manager.get_counter('processing', 'anonymized_images'), "suffix": "images"},
-                ]
-            },
-            {
-                "title": "Reception",
-                "metrics": [
-                    {"label": "Received", "value": storage_manager.get_counter('reception', 'studies'), "suffix": "studies",
-                     "sub_value": storage_manager.get_counter('reception', 'images'), "sub_suffix": "images"},
-                    {"label": "Data", "value": bytes_to_mb(storage_manager.get_counter('reception', 'bytes')), "suffix": "MB"},
-                ]
-            },
-            {
-                "title": "Storage",
-                "metrics": [
-                    {"label": "Stored", "value": storage_manager.get_counter('storage', 'studies'), "suffix": "studies",
-                     "sub_value": storage_manager.get_counter('storage', 'images'), "sub_suffix": "images"},
-                    {"label": "Series", "value": storage_manager.get_counter('storage', 'series')},
-                ]
-            },
-            {
-                "title": "Export",
-                "metrics": [
-                    {"label": "Archived", "value": storage_manager.get_counter('archive', 'studies'), "suffix": "studies",
-                     "sub_value": storage_manager.get_counter('archive', 'images'), "sub_suffix": "images"},
-                    {"label": "DICOM Export", "value": storage_manager.get_counter('export', 'dicom_studies'), "suffix": "studies",
-                     "sub_value": storage_manager.get_counter('export', 'dicom_images'), "sub_suffix": "images"},
-                    {"label": "HTTP Export", "value": storage_manager.get_counter('export', 'http_studies'), "suffix": "studies",
-                     "sub_value": bytes_to_mb(storage_manager.get_counter('export', 'http_bytes')), "sub_suffix": "MB"},
-                    {"label": "Cleaned Up", "value": storage_manager.get_counter('cleanup', 'studies'), "suffix": "studies",
-                     "sub_value": storage_manager.get_counter('cleanup', 'images'), "sub_suffix": "images"},
-                ]
-            },
-            {
-                "title": "Performance",
-                "metrics": [
-                    {"label": "Average Time", "value": int(round(storage_manager.get_counter('performance', 'average_time', 0) * 1000)), "suffix": "ms"},
-                    {"label": "Total Time", "value": int(round(storage_manager.get_counter('performance', 'total_time', 0) * 1000)), "suffix": "ms"},
-                    {"label": "Images Anonymized", "value": storage_manager.get_counter('processing', 'anonymized_images')},
-                ]
-            },
-            {
-                "title": "Defacing",
-                "metrics": [
-                    {"label": "Studies Defaced", "value": storage_manager.get_counter('defacing', 'studies')},
-                    {"label": "Series Defaced", "value": storage_manager.get_counter('defacing', 'series_defaced')},
-                    {"label": "Series Skipped", "value": storage_manager.get_counter('defacing', 'series_skipped')},
-                    {"label": "Errors", "value": storage_manager.get_counter('defacing', 'errors')},
-                ]
-            },
-            {
-                "title": "Errors",
-                "class": "errors",
-                "metrics": [
-                    {"label": "Total", "value": storage_manager.get_counter('errors', 'total')},
-                    {"label": "Validation", "value": processing_errors.get('validation', 0)},
-                    {"label": "Anonymization", "value": processing_errors.get('anonymization', 0)},
-                    {"label": "Processing", "value": processing_errors.get('processing', 0)},
-                    {"label": "Export", "value": storage_manager.get_counter('export', 'errors')},
-                ]
-            }
+
+        exported = c('export', 'dicom_studies') + c('export', 'http_studies')
+        kpis = [
+            {"key": "received", "label": "Images received", "value": c('reception', 'images'),
+             "sub": f"{c('reception', 'studies')} studies · {mb(c('reception', 'bytes'))} MB"},
+            {"key": "anonymized", "label": "Anonymized",
+             "value": c('processing', 'anonymized_images'),
+             "sub": f"{c('processing', 'filtered_images')} filtered out"},
+            {"key": "defaced", "label": "Series defaced", "value": c('defacing', 'series_defaced'),
+             "sub": f"{c('defacing', 'series_skipped')} skipped (non-head)"},
+            {"key": "exported", "label": "Exports", "value": exported,
+             "sub": f"{c('export', 'dicom_studies')} DICOM · {c('export', 'http_studies')} HTTP"},
+            {"key": "errors", "label": "Errors", "value": c('errors', 'total'),
+             "sub": "since start", "alert": c('errors', 'total') > 0},
         ]
-        
-        stats = {
+
+        avg_ms = int(round((c('performance', 'average_time') or 0) * 1000))
+        details = [
+            {"title": "Reception", "rows": [
+                ["Studies", c('reception', 'studies')],
+                ["Images", c('reception', 'images')],
+                ["Data", f"{mb(c('reception', 'bytes'))} MB"],
+            ]},
+            {"title": "Storage", "rows": [
+                ["Studies", c('storage', 'studies')],
+                ["Series", c('storage', 'series')],
+                ["Images", c('storage', 'images')],
+            ]},
+            {"title": "Export", "rows": [
+                ["DICOM studies", c('export', 'dicom_studies')],
+                ["DICOM images", c('export', 'dicom_images')],
+                ["HTTP studies", c('export', 'http_studies')],
+                ["HTTP data", f"{mb(c('export', 'http_bytes'))} MB"],
+                ["Cleaned up", f"{c('cleanup', 'studies')} studies"],
+            ]},
+            {"title": "Defacing", "rows": [
+                ["Studies", c('defacing', 'studies')],
+                ["Series defaced", c('defacing', 'series_defaced')],
+                ["Series skipped", c('defacing', 'series_skipped')],
+                ["Errors", c('defacing', 'errors')],
+            ]},
+            {"title": "Errors", "rows": [
+                ["Validation", processing_errors.get('validation', 0)],
+                ["Anonymization", processing_errors.get('anonymization', 0)],
+                ["Processing", processing_errors.get('processing', 0)],
+                ["Export", c('export', 'errors')],
+            ]},
+            {"title": "Performance", "rows": [
+                ["Avg. per image", f"{avg_ms} ms"],
+            ]},
+        ]
+
+        return web.json_response({
             "server_status": "running",
             "timestamp": time.time(),
-            "defacing_enabled": storage_manager.defacer.enabled,
-            "pipeline_status": storage_manager.get_pipeline_status(),
-            "sections": sections
-        }
-        
-        return web.json_response(stats)
+            "uptime_s": int(time.time() - self._started_at),
+            "defacing_enabled": sm.defacer.enabled,
+            "capabilities": {
+                "dicom": sm.dicom_storage.enabled,
+                "http": sm.remote_storage.enabled,
+            },
+            "pipeline": {
+                "active": sm.get_pipeline_status(),
+                "status_counts": status_counts,
+            },
+            "kpis": kpis,
+            "details": details,
+        })
+
+    async def handle_options(self, request: web.Request) -> web.Response:
+        """Fixed vocabularies for the /studies review form."""
+        sm: StorageManager = request.app['storage_manager']
+        return web.json_response({
+            "region_indications": options.REGION_INDICATIONS,
+            "image_quality": options.IMAGE_QUALITY,
+            "iv_contrast": options.IV_CONTRAST,
+            "scanners": options.scanner_options(sm.exam_extractor.scanner_map),
+            "required_fields": list(exam_merge.REQUIRED_PATHS),
+        })
 
     async def handle_health(self, request: web.Request) -> web.Response:
         """
@@ -335,14 +311,8 @@ class Dashboard:
     # -----------------------------------------------------------------
 
     async def handle_studies_page(self, request: web.Request) -> web.Response:
-        """Serve the /studies dashboard page (same pattern as handle_index)."""
-        template_path = Path(__file__).parent / "templates" / "studies.html"
-        try:
-            html_content = await asyncio.to_thread(template_path.read_text, encoding='utf-8')
-            return web.Response(text=html_content, content_type="text/html")
-        except FileNotFoundError:
-            logger.error(f"Template file not found: {template_path}")
-            return web.Response(text="Studies template not found", status=500)
+        """Serve the /studies review page."""
+        return await self._serve_template("studies.html")
 
     @staticmethod
     def _coerce_study_number(request: web.Request) -> int:

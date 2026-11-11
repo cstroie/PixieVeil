@@ -1,705 +1,1001 @@
 <!DOCTYPE html>
 <html lang="en">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>PixieVeil Studies</title>
-        <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
-        <style>
-            article {
-                margin-bottom: var(--pico-spacing);
-            }
-            table {
-                display: block;
-                white-space: nowrap;
-            }
-            tr.study-row {
-                cursor: pointer;
-            }
-            tr.study-row:hover {
-                background-color: var(--pico-table-row-stripe-background-color);
-            }
-            .badge {
-                font-size: 0.75rem;
-                font-weight: var(--pico-font-weight);
-                text-transform: uppercase;
-                letter-spacing: 0.02em;
-                padding: 0.15rem 0.55rem;
-                border-radius: var(--pico-border-radius);
-                white-space: nowrap;
-            }
-            .badge-ok {
-                color: var(--pico-form-element-valid-focus-color);
-                border: 1px solid var(--pico-form-element-valid-focus-color);
-            }
-            .badge-warn {
-                color: var(--pico-del-color, #c00);
-                border: 1px solid var(--pico-del-color, #c00);
-            }
-            .badge-muted {
-                color: var(--pico-muted-color);
-                border: 1px solid var(--pico-muted-border-color);
-            }
-            .edited-flag {
-                color: var(--pico-primary);
-                font-weight: bold;
-            }
-            tr.study-row.selected {
-                background-color: var(--pico-table-row-stripe-background-color);
-                box-shadow: inset 3px 0 0 var(--pico-primary);
-            }
-            /* Rendered as a plain block below the table rather than inside a
-               table row/cell — a <td> sharing column-width negotiation with
-               the (nowrap, narrow) summary rows above it via the table's
-               shared column-layout algorithm forced the whole table, and the
-               panel inside it, to an unpredictable width in every browser. */
-            .detail-panel {
-                margin-top: var(--pico-spacing);
-            }
-            .manual-set {
-                border-color: var(--pico-primary);
-            }
-            .series-group {
-                margin-bottom: var(--pico-spacing);
-            }
-            .field-hint {
-                font-size: 0.75rem;
-                color: var(--pico-muted-color);
-            }
-            .hint-box {
-                font-size: 0.85rem;
-                color: var(--pico-muted-color);
-                border-left: 3px solid var(--pico-muted-border-color);
-                padding-left: 0.75rem;
-                margin: 0.5rem 0 1rem;
-            }
-            .notes-list {
-                font-size: 0.85rem;
-            }
-            .action-row {
-                display: flex;
-                gap: 0.75rem;
-                flex-wrap: wrap;
-                align-items: center;
-            }
-            .status-line {
-                font-size: 0.85rem;
-            }
-            .token-bar {
-                display: flex;
-                gap: 0.5rem;
-                align-items: center;
-                margin-bottom: var(--pico-spacing);
-            }
-            .token-bar input {
-                max-width: 320px;
-                margin: 0;
-            }
-        </style>
-    </head>
-    <body class="container">
-        <nav>
-            <ul>
-                <li><strong>PixieVeil</strong></li>
-            </ul>
-            <ul>
-                <li><a href="/">Dashboard</a></li>
-                <li><a href="/studies" aria-current="page">Studies</a></li>
-            </ul>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PixieVeil · Studies</title>
+    <script>
+        try { document.documentElement.dataset.theme = localStorage.getItem('pixieveil_theme') || 'dark'; }
+        catch (_e) { document.documentElement.dataset.theme = 'dark'; }
+    </script>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='1' y='1' width='30' height='30' rx='8' fill='%23151b22' stroke='%233cc8c0' stroke-width='2'/%3E%3Cg fill='%233cc8c0'%3E%3Crect x='8' y='8' width='4' height='4' rx='1'/%3E%3Crect x='14' y='8' width='4' height='4' rx='1' opacity='.6'/%3E%3Crect x='8' y='14' width='4' height='4' rx='1' opacity='.6'/%3E%3Crect x='20' y='8' width='4' height='4' rx='1' opacity='.3'/%3E%3Crect x='14' y='14' width='4' height='4' rx='1' opacity='.3'/%3E%3Crect x='8' y='20' width='4' height='4' rx='1' opacity='.3'/%3E%3C/g%3E%3C/svg%3E">
+    <link rel="stylesheet" href="/static/theme.css">
+    <style>
+        body { overflow: hidden; }
+        .workspace {
+            display: grid; grid-template-columns: minmax(330px, 400px) minmax(0, 1fr);
+            height: calc(100vh - var(--header-h));
+        }
+
+        /* ------------------------------------------------ worklist */
+        .worklist {
+            display: flex; flex-direction: column; min-height: 0;
+            border-right: 1px solid var(--border); background: var(--panel);
+        }
+        .wl-head { padding: 16px 16px 0; display: flex; flex-direction: column; gap: 12px; }
+        .wl-title { display: flex; align-items: center; gap: 10px; }
+        .wl-title h1 { font-size: 18px; }
+        .wl-title .spacer { flex: 1; }
+        .search { position: relative; }
+        .search svg { position: absolute; left: 10px; top: 50%; width: 16px; height: 16px; transform: translateY(-50%); color: var(--text-faint); }
+        .search .input { padding-left: 34px; padding-right: 36px; }
+        .search kbd { position: absolute; right: 9px; top: 50%; transform: translateY(-50%); }
+
+        .filters { display: flex; gap: 2px; overflow-x: auto; scrollbar-width: none; margin: 0 -16px; padding: 0 12px; border-bottom: 1px solid var(--border); }
+        .filters button {
+            position: relative; flex: none; padding: 8px 7px 10px;
+            border: 0; background: none; color: var(--text-dim); font: inherit; font-size: 13px; font-weight: 550; cursor: pointer;
+        }
+        .filters button:hover { color: var(--text); }
+        .filters button[aria-selected="true"] { color: var(--text); }
+        .filters button[aria-selected="true"]::after { content: ""; position: absolute; left: 6px; right: 6px; bottom: -1px; height: 2px; border-radius: 2px; background: var(--accent); }
+        .filters .n { margin-left: 4px; font-size: 11px; color: var(--text-faint); font-weight: 600; }
+        .filters button[data-f="needs"] .n.has { color: var(--warn); }
+        .filters button[data-f="failed"] .n.has { color: var(--bad); }
+
+        .wl-list { flex: 1; overflow-y: auto; padding: 6px 8px 24px; }
+        .row {
+            display: grid; grid-template-columns: 36px minmax(0, 1fr) auto; gap: 12px; align-items: center;
+            width: 100%; padding: 10px 10px; margin: 2px 0;
+            border: 1px solid transparent; border-radius: var(--radius-sm);
+            background: none; color: inherit; font: inherit; text-align: left; cursor: pointer;
+        }
+        .row:hover { background: var(--hover); }
+        .row[aria-selected="true"] { background: var(--raised); border-color: var(--border-strong); box-shadow: inset 3px 0 0 var(--accent); }
+        .row-top { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+        .row-num { font-family: var(--mono); font-weight: 650; font-size: 13.5px; }
+        .row-ind { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
+        .row-ind.none { color: var(--text-faint); font-style: italic; }
+        .row-sub { font-size: 12px; color: var(--text-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 1px; }
+        .row-chips { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 5px; }
+        .row-chips:empty { display: none; }
+        .row-side { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+        .row-side .edited { color: var(--accent); }
+        .row-side .edited svg { width: 14px; height: 14px; }
+
+        .ring { width: 34px; height: 34px; position: relative; display: grid; place-items: center; }
+        .ring svg { position: absolute; inset: 0; transform: rotate(-90deg); }
+        .ring .track { stroke: var(--border-strong); }
+        .ring .arc { stroke: var(--warn); transition: stroke-dashoffset 0.3s; }
+        .ring.full .arc { stroke: var(--ok); }
+        .ring.bad .track { stroke: var(--bad); }
+        .ring.busy .arc { stroke: var(--busy); animation: spin 1.4s linear infinite; transform-origin: 50% 50%; }
+        .ring.busy svg { transform: none; }
+        .ring .lbl { font-size: 10.5px; font-weight: 700; color: var(--text-dim); }
+        .ring.full .lbl { color: var(--ok); }
+        .ring.full .lbl svg { position: static; transform: none; width: 15px; height: 15px; }
+        .ring.bad .lbl { color: var(--bad); }
+
+        /* ------------------------------------------------ inspector */
+        .inspector { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+        .insp-head { padding: 18px 24px 0; display: flex; gap: 16px; align-items: flex-start; flex-wrap: wrap; }
+        .insp-head .back { display: none; }
+        .insp-title { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+        .insp-title h2 { font-size: 20px; }
+        .insp-title h2 .mono { font-weight: 650; }
+        .insp-meta { margin-top: 4px; font-size: 12.5px; color: var(--text-faint); display: flex; gap: 6px 14px; flex-wrap: wrap; }
+        .insp-meta .mono { color: var(--text-dim); }
+        .derived {
+            margin-left: auto; display: grid; grid-template-columns: auto auto; gap: 2px 12px;
+            padding: 8px 12px; border-radius: var(--radius-sm); background: var(--raised); border: 1px solid var(--border);
+            font-size: 12.5px;
+        }
+        .derived span:nth-child(odd) { color: var(--text-faint); }
+        .derived span:nth-child(even) { font-weight: 600; }
+        .banners { padding: 14px 24px 0; display: flex; flex-direction: column; gap: 8px; }
+        .banners:empty { display: none; }
+        .inspector .tabs { padding: 0 18px; margin-top: 14px; }
+        .insp-body { flex: 1; overflow-y: auto; padding: 20px 24px 32px; }
+        .pane { display: flex; flex-direction: column; gap: 16px; max-width: 1080px; }
+        .pane[hidden] { display: none; }
+
+        .progress { display: flex; align-items: center; gap: 10px; font-size: 12px; color: var(--text-dim); }
+        .progress .bar { width: 120px; height: 6px; border-radius: 99px; background: var(--bg-sunken); overflow: hidden; }
+        .progress .bar i { display: block; height: 100%; border-radius: inherit; background: var(--warn); transition: width 0.3s; }
+        .progress.full .bar i { background: var(--ok); }
+
+        .stats-strip { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+        .stat { padding: 14px 16px; }
+        .stat .s-label { font-size: 12px; color: var(--text-dim); font-weight: 600; }
+        .stat .s-value { font-size: 22px; font-weight: 650; margin-top: 4px; letter-spacing: -0.01em; }
+        .stat .s-value small { font-size: 12px; font-weight: 500; color: var(--text-faint); margin-left: 4px; }
+        .section-title { display: flex; align-items: baseline; gap: 10px; margin: 6px 0 -4px; }
+        .section-title h3 { font-size: 13px; font-weight: 650; }
+        .section-title span { font-size: 12px; color: var(--text-faint); }
+        .series-edit { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); padding: 8px 2px 6px; }
+        tr.is-edited td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
+
+        .notes { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 8px; }
+        .notes li { padding: 10px 12px; border-radius: var(--radius-sm); background: var(--raised); border: 1px solid var(--border); font-size: 13px; color: var(--text-dim); }
+
+        .actionbar {
+            display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+            padding: 12px 24px; border-top: 1px solid var(--border); background: var(--panel);
+        }
+        .actionbar .dirty { font-size: 12.5px; color: var(--text-faint); margin-right: 4px; }
+        .actionbar .dirty.on { color: var(--accent); font-weight: 600; }
+        .actionbar .spacer { flex: 1; }
+        .actionbar .sep { width: 1px; height: 22px; background: var(--border); margin: 0 4px; }
+
+        .insp-empty { flex: 1; }
+
+        @media (max-width: 900px) {
+            body { overflow: auto; }
+            .workspace { grid-template-columns: 1fr; height: auto; min-height: calc(100vh - var(--header-h)); }
+            .worklist { border-right: 0; }
+            .wl-list { overflow: visible; }
+            .inspector { display: none; }
+            .workspace.show-insp .worklist { display: none; }
+            .workspace.show-insp .inspector { display: flex; }
+            .insp-head .back { display: inline-flex; }
+            .insp-body { overflow: visible; padding: 16px; }
+            .insp-head, .banners { padding-left: 16px; padding-right: 16px; }
+            .derived { margin-left: 0; }
+            .actionbar { position: sticky; bottom: 0; padding: 10px 16px; }
+            .form-grid { grid-template-columns: 1fr; }
+            .form-grid .span-2 { grid-column: auto; }
+            .stats-strip { grid-template-columns: 1fr 1fr; }
+        }
+        @media (max-width: 560px) {
+            .topbar .brand small, .conn .label { display: none; }
+            .topbar { gap: 12px; }
+            .seg { flex-wrap: wrap; }
+        }
+    </style>
+</head>
+<body>
+    <header class="topbar">
+        <a class="brand" href="/">
+            <svg viewBox="0 0 32 32" aria-hidden="true"><rect x="1.5" y="1.5" width="29" height="29" rx="8" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.5"/><g fill="var(--accent)"><rect x="8" y="8" width="4" height="4" rx="1"/><rect x="14" y="8" width="4" height="4" rx="1" opacity=".6"/><rect x="8" y="14" width="4" height="4" rx="1" opacity=".6"/><rect x="20" y="8" width="4" height="4" rx="1" opacity=".3"/><rect x="14" y="14" width="4" height="4" rx="1" opacity=".3"/><rect x="8" y="20" width="4" height="4" rx="1" opacity=".3"/></g><path d="M8 25.5C14 24 21 18 25 8" stroke="var(--accent)" stroke-width="1.6" fill="none" stroke-linecap="round"/></svg>
+            <span>PixieVeil <small>DICOM anonymizer</small></span>
+        </a>
+        <nav class="nav">
+            <a href="/">Status</a>
+            <a href="/studies" aria-current="page">Studies<span class="count" id="nav-needs" hidden></span></a>
         </nav>
+        <div class="spacer"></div>
+        <span class="conn" id="conn"><span class="dot"></span><span class="label">Connecting…</span></span>
+        <button type="button" class="btn btn-ghost btn-icon" data-theme-toggle></button>
+    </header>
 
-        <hgroup>
-            <h1>PixieVeil Studies</h1>
-            <p>Extracted exam data, manual review and per-study actions</p>
-        </hgroup>
+    <div class="workspace" id="ws">
+        <aside class="worklist" aria-label="Study worklist">
+            <div class="wl-head">
+                <div class="wl-title">
+                    <h1>Studies</h1>
+                    <span class="dim" id="wl-count"></span>
+                    <span class="spacer"></span>
+                    <button type="button" class="btn btn-sm" id="btn-bulk" hidden></button>
+                </div>
+                <label class="search">
+                    <span data-icon="search"></span>
+                    <span class="sr-only">Search studies</span>
+                    <input class="input" id="q" type="search" placeholder="Study #, indication, scanner…" autocomplete="off">
+                    <kbd>/</kbd>
+                </label>
+                <div class="filters" role="tablist" id="filters"></div>
+            </div>
+            <div class="wl-list" id="list" role="listbox" aria-label="Studies">
+                <div style="padding:12px;display:grid;gap:14px">
+                    <div class="skeleton" style="width:80%"></div><div class="skeleton" style="width:60%"></div><div class="skeleton" style="width:70%"></div>
+                </div>
+            </div>
+        </aside>
 
-        <div class="token-bar" id="token-bar" style="display:none;">
-            <label for="auth-token" style="margin:0;">Auth token</label>
-            <input type="password" id="auth-token" placeholder="X-Auth-Token">
-            <button type="button" class="secondary" onclick="saveToken()">Save</button>
-        </div>
+        <section class="inspector" id="inspector" aria-live="polite">
+            <div class="empty insp-empty">
+                <span data-icon="inbox"></span>
+                <strong>Select a study</strong>
+                <span>Pick a study from the worklist to review its exam data, dose record and export it.<br>
+                    <kbd>↑</kbd> <kbd>↓</kbd> move · <kbd>/</kbd> search · <kbd>Ctrl</kbd>+<kbd>S</kbd> save</span>
+            </div>
+        </section>
+    </div>
 
-        <main>
-            <div id="summary-bar"></div>
-            <div id="studies-container"><p aria-busy="true">Loading studies…</p></div>
-        </main>
+    <script src="/static/common.js"></script>
+    <script>
+        'use strict';
+        const { esc, pad4, fmtNum, fmtDate, icon } = PV;
 
-        <footer>
-            <button onclick="refreshStudies()" role="button">Refresh</button>
-        </footer>
+        const FILTERS = [
+            { key: 'needs',    label: 'Needs input', test: PV.needsInput },
+            { key: 'ready',    label: 'Ready',       test: s => s.status === 'ready' },
+            { key: 'progress', label: 'Active', test: s => ['receiving', 'complete', 'defacing'].includes(s.status) },
+            { key: 'failed',   label: 'Failed',      test: s => s.status === 'defacing_failed' || s.exam_corrupt },
+            { key: 'exported', label: 'Exported',    test: s => s.status === 'archived' },
+            { key: 'all',      label: 'All',         test: () => true },
+        ];
+        const QUALITY_TONE = { 'Diagnostic': 'ok', 'Suboptimal': 'warn', 'Non-diagnostic': 'bad' };
+        const SERIES_FIELDS = [
+            ['ctdi_vol_mgy', 'CTDIvol', 'mGy'],
+            ['dlp_mgy_cm', 'DLP', 'mGy·cm'],
+            ['slice_thickness_mm', 'Slice thickness', 'mm'],
+            ['exposure_time_ms', 'Exposure time', 'ms'],
+            ['spiral_pitch_factor', 'Pitch factor', ''],
+            ['single_collimation_width_mm', 'Single collimation', 'mm'],
+            ['total_collimation_width_mm', 'Total collimation', 'mm'],
+            ['convolution_kernel', 'Kernel', '', 'text'],
+            ['patient_position', 'Patient position', '', 'text'],
+        ];
 
-        <script>
-            const AUTH_KEY = 'pixieveil_auth_token';
-            let CAPABILITIES = { dicom: false, http: false };
-            let AUTH_REQUIRED = false;
-            let STUDIES = [];
-            let EXPANDED = null;
-            let LAST_BULK_MESSAGE = '';
+        const state = {
+            studies: [],
+            caps: { dicom: false, http: false },
+            options: null,
+            filter: null,
+            query: '',
+            sel: null,        // selected study number
+            detail: null,     // {study, exam} for sel
+            tab: 'review',
+            dirtyCount: 0,
+            busy: false,
+        };
 
-            const REGION_INDICATION_OPTIONS = [
-                { region: "Head", indication: "Trauma", contrast: "Non-contrast" },
-                { region: "Mastoid bone/Inner Ear",
-                  indication: "Hearing loss; congenital malformations, infection, cholesteatoma, cochlear implants",
-                  contrast: "Non-contrast" },
-                { region: "Chest", indication: "Fungal infections", contrast: "Non-contrast" },
-                { region: "Chest", indication: "Complicated infections", contrast: "Contrast-enhanced" },
-                { region: "Chest/HRCT (Inspiration/Expiration)",
-                  indication: "Interstitial lung diseases, small airways disease, cystic fibrosis, asthma, primary ciliary dyskinesia, chronic lung disease of prematurity",
-                  contrast: "Non-contrast" },
-                { region: "Chest-Abdomen",
-                  indication: "Tumor staging & follow-up (Wilms tumor, neuroblastoma, other)",
-                  contrast: "Contrast-enhanced" },
-                { region: "Abdomen", indication: "Acute abdomen", contrast: "Contrast-enhanced" },
-                { region: "Neck-Chest-Abdomen", indication: "Lymphoma", contrast: "Contrast-enhanced" },
-            ];
-            const IMAGE_QUALITY_OPTIONS = ["Diagnostic", "Suboptimal", "Non-diagnostic"];
+        const $ = sel => document.querySelector(sel);
+        document.querySelectorAll('[data-icon]').forEach(el => { el.innerHTML = icon(el.dataset.icon); });
 
-            function authToken() {
-                return localStorage.getItem(AUTH_KEY) || '';
+        // ============================================================ worklist
+
+        function filterDef(key) { return FILTERS.find(f => f.key === key) || FILTERS[FILTERS.length - 1]; }
+
+        function matchesQuery(s, q) {
+            if (!q) return true;
+            const ex = s.exam_summary || {};
+            const ind = ex.indication || {};
+            const sc = ex.scanner || {};
+            const hay = [
+                pad4(s.study_number), ind.region, ind.clinical_indication, sc.manufacturer, sc.model,
+                ex.protocol_type, ex.examination_group, (PV.STATUS[s.status] || {}).label,
+            ].filter(Boolean).join(' ').toLowerCase();
+            return q.toLowerCase().split(/\s+/).every(t => hay.includes(t));
+        }
+
+        function visibleStudies() {
+            const f = filterDef(state.filter);
+            return state.studies
+                .filter(s => f.test(s) && matchesQuery(s, state.query))
+                .sort((a, b) => b.study_number - a.study_number);
+        }
+
+        function ringHtml(s) {
+            const R = 14, C = 2 * Math.PI * R;
+            const svg = (offset, extra) =>
+                `<svg viewBox="0 0 34 34"><circle class="track" cx="17" cy="17" r="${R}" fill="none" stroke-width="3" ${extra || ''}/>` +
+                `<circle class="arc" cx="17" cy="17" r="${R}" fill="none" stroke-width="3" stroke-linecap="round" ` +
+                `stroke-dasharray="${C}" stroke-dashoffset="${offset}"/></svg>`;
+            if (['receiving', 'complete', 'defacing'].includes(s.status)) {
+                return `<span class="ring busy" title="Processing">${svg(C * 0.72)}</span>`;
             }
-
-            function saveToken() {
-                const val = document.getElementById('auth-token').value;
-                localStorage.setItem(AUTH_KEY, val);
+            if (s.exam_corrupt) {
+                return `<span class="ring bad" title="Exam data unreadable">${svg(C)}<span class="lbl">!</span></span>`;
             }
-
-            function authHeaders(extra) {
-                const headers = Object.assign({}, extra || {});
-                const token = authToken();
-                if (token) headers['X-Auth-Token'] = token;
-                return headers;
+            const ex = s.exam_summary;
+            if (!ex) {
+                return `<span class="ring" title="No exam data — re-extract">${svg(C, 'stroke-dasharray="3 3"')}<span class="lbl">?</span></span>`;
             }
+            const { filled, required } = ex.completeness || { filled: 0, required: 7 };
+            const full = filled >= required;
+            const lbl = full ? icon('check') : `${filled}/${required}`;
+            return `<span class="ring ${full ? 'full' : ''}" title="${filled} of ${required} required fields">` +
+                `${svg(C * (1 - filled / required))}<span class="lbl">${lbl}</span></span>`;
+        }
 
-            async function loadStudies() {
-                const container = document.getElementById('studies-container');
-                try {
-                    const resp = await fetch('/api/studies');
-                    if (!resp.ok) throw new Error('failed to load studies');
-                    const data = await resp.json();
-                    STUDIES = data.studies || [];
-                    CAPABILITIES = data.capabilities || { dicom: false, http: false };
-                    AUTH_REQUIRED = !!data.auth_required;
-                    document.getElementById('token-bar').style.display = AUTH_REQUIRED ? 'flex' : 'none';
-                    if (AUTH_REQUIRED) {
-                        document.getElementById('auth-token').value = authToken();
-                    }
-                    renderSummaryBar();
-                    renderTable();
-                } catch (err) {
-                    console.error(err);
-                    container.innerHTML = '<p>Could not load studies.</p>';
+        function rowHtml(s) {
+            const ex = s.exam_summary || {};
+            const ind = ex.indication || {};
+            const sc = ex.scanner || {};
+            const indText = ind.region ? `${ind.region} · ${ind.clinical_indication || '—'}` : '';
+            const scanner = [sc.manufacturer, sc.model].filter(Boolean).join(' ');
+            const sub = [fmtDate(s.received_at), scanner, `${s.series_count} series`].filter(Boolean).join(' · ');
+            const chips = !['receiving', 'complete', 'defacing'].includes(s.status) && s.exam_summary
+                ? PV.missingLabels(ex.missing_fields).map(l => `<span class="chip">${esc(l)}</span>`).join('')
+                : '';
+            const edited = ex.has_manual_edits ? `<span class="edited" title="Has manual edits">${icon('edit')}</span>` : '';
+            return `<button type="button" class="row" role="option" data-n="${s.study_number}"
+                        aria-selected="${s.study_number === state.sel}">
+                ${ringHtml(s)}
+                <span>
+                    <span class="row-top"><span class="row-num">${pad4(s.study_number)}</span>
+                        <span class="row-ind ${indText ? '' : 'none'}">${esc(indText || 'No indication')}</span></span>
+                    <span class="row-sub" style="display:block">${esc(sub)}</span>
+                    <span class="row-chips">${chips}</span>
+                </span>
+                <span class="row-side">${PV.statusPill(s.status)}${edited}</span>
+            </button>`;
+        }
+
+        function renderFilters() {
+            $('#filters').innerHTML = FILTERS.map(f => {
+                const n = state.studies.filter(f.test).length;
+                return `<button type="button" role="tab" data-f="${f.key}" aria-selected="${f.key === state.filter}">
+                    ${esc(f.label)}<span class="n ${n ? 'has' : ''}">${n}</span></button>`;
+            }).join('');
+        }
+
+        function renderList() {
+            renderFilters();
+            const rows = visibleStudies();
+            $('#wl-count').textContent = `${state.studies.length} total`;
+            const needs = state.studies.filter(PV.needsInput).length;
+            const nav = $('#nav-needs');
+            nav.hidden = !needs;
+            nav.textContent = needs;
+
+            const ready = state.studies.filter(s => s.status === 'ready').length;
+            const bulk = $('#btn-bulk');
+            bulk.hidden = !ready || !(state.caps.dicom || state.caps.http);
+            bulk.innerHTML = `${icon('send')} Export ready (${ready})`;
+
+            const list = $('#list');
+            if (!rows.length) {
+                const f = filterDef(state.filter);
+                list.innerHTML = `<div class="empty">${icon(state.query ? 'search' : 'check')}
+                    <strong>${state.query ? 'No matches' : `Nothing in “${esc(f.label)}”`}</strong>
+                    <span>${state.query ? 'Try a different search.' : (f.key === 'needs' ? 'Every exam has its required data.' : '')}</span></div>`;
+                return;
+            }
+            list.innerHTML = rows.map(rowHtml).join('');
+        }
+
+        function setFilter(key) {
+            state.filter = key;
+            const url = new URL(location.href);
+            url.searchParams.set('filter', key);
+            history.replaceState(null, '', url);
+            renderList();
+        }
+
+        async function loadStudies() {
+            try {
+                const data = await PV.api('/api/studies');
+                PV.setConn(true);
+                state.studies = data.studies || [];
+                state.caps = data.capabilities || state.caps;
+                if (state.filter === null) {
+                    const fromUrl = new URL(location.href).searchParams.get('filter');
+                    state.filter = FILTERS.some(f => f.key === fromUrl) ? fromUrl
+                        : (state.studies.some(PV.needsInput) ? 'needs' : 'all');
                 }
-            }
-
-            function locationBadge(loc) {
-                const cls = loc === 'base' ? 'badge-ok' : (loc === 'retained' ? 'badge-muted' : 'badge-warn');
-                return `<span class="badge ${cls}">${loc}</span>`;
-            }
-
-            function statusBadge(status) {
-                const cls = status === 'archived' ? 'badge-ok' :
-                    (status === 'ready' ? 'badge-warn' : 'badge-muted');
-                return `<span class="badge ${cls}">${status}</span>`;
-            }
-
-            function renderSummaryBar() {
-                const bar = document.getElementById('summary-bar');
-                const pending = STUDIES.filter(s => s.status === 'ready');
-                if (!pending.length) {
-                    // Show the last bulk-action result once, even though
-                    // there's no longer a pending count to attach it to.
-                    bar.innerHTML = LAST_BULK_MESSAGE ? `<p><small>${esc(LAST_BULK_MESSAGE)}</small></p>` : '';
-                    LAST_BULK_MESSAGE = '';
-                    return;
+                renderList();
+                return true;
+            } catch (err) {
+                console.error(err);
+                PV.setConn(false);
+                if (!state.studies.length) {
+                    $('#list').innerHTML = `<div class="empty">${icon('alert')}<strong>Could not load studies</strong><span>${esc(err.message)}</span></div>`;
                 }
-                const dicomBtn = CAPABILITIES.dicom
-                    ? `<button type="button" id="bulk-dicom-btn">Send all to DICOM</button>` : '';
-                const httpBtn = CAPABILITIES.http
-                    ? `<button type="button" id="bulk-http-btn" class="secondary">Upload all to HTTP</button>` : '';
-                bar.innerHTML = `
-                    <article class="action-row">
-                        <span class="badge badge-warn">${pending.length} awaiting export</span>
-                        ${dicomBtn}${httpBtn}
-                        <small id="bulk-status" class="status-line"></small>
-                    </article>
-                `;
-                const db = document.getElementById('bulk-dicom-btn');
-                const hb = document.getElementById('bulk-http-btn');
-                if (db) db.addEventListener('click', () => runBulkAction('send_dicom'));
-                if (hb) hb.addEventListener('click', () => runBulkAction('upload_http'));
+                return false;
             }
+        }
 
-            async function runBulkAction(action) {
-                const pending = STUDIES.filter(s => s.status === 'ready');
-                if (!pending.length) return;
-                const label = action === 'send_dicom' ? 'the DICOM node' : 'HTTP storage';
-                if (!confirm(`Send ${pending.length} study(ies) awaiting export to ${label}?`)) return;
+        // ============================================================ inspector
 
-                let sent = 0, failed = 0;
-                for (const s of pending) {
-                    const statusEl = document.getElementById('bulk-status');
-                    if (statusEl) statusEl.textContent = `Sending ${sent + failed + 1}/${pending.length}…`;
-                    try {
-                        const resp = await fetch(`/api/studies/${s.study_number}/actions/${action}`, {
-                            method: 'POST',
-                            headers: authHeaders({ 'Content-Type': 'application/json' }),
-                        });
-                        const data = await resp.json();
-                        if (data.ok) sent++; else failed++;
-                    } catch (err) {
-                        console.error(err);
-                        failed++;
-                    }
-                }
+        function isManual(path) {
+            const ex = state.detail && state.detail.exam;
+            const f = ex && ex.manual && ex.manual.fields;
+            return !!f && Object.prototype.hasOwnProperty.call(f, path);
+        }
+        function getPath(obj, path) {
+            return path.split('.').reduce((o, k) => (o == null ? undefined : o[k]), obj);
+        }
+        const manualTag = path => (isManual(path) ? '<span class="tag-manual" title="Set manually">manual</span>' : '');
 
-                LAST_BULK_MESSAGE = failed
-                    ? `Sent ${sent}, failed ${failed}.`
-                    : `Sent ${sent} study(ies).`;
-                await loadStudies();
-                if (EXPANDED != null) await loadDetail(EXPANDED);
+        function inputField({ path, label, value, type, unit, hint, cls, missing, list }) {
+            type = type || 'number';
+            const val = value != null ? esc(value) : '';
+            const step = type === 'number' ? ' step="any" inputmode="decimal"' : '';
+            const id = `f-${path.replace(/\./g, '-')}`;
+            const listAttr = list ? ` list="${list}"` : '';
+            return `<div class="field ${cls || ''} ${missing ? 'is-missing' : ''}">
+                <label for="${id}">${esc(label)}${manualTag(path)}</label>
+                <div class="unit-wrap">
+                    <input class="input ${unit ? 'has-unit' : ''}" id="${id}" type="${type}"${step}${listAttr}
+                        data-path="${path}" value="${val}" autocomplete="off">
+                    ${unit ? `<span class="unit">${esc(unit)}</span>` : ''}
+                </div>
+                ${hint ? `<span class="hint">${hint}</span>` : ''}
+            </div>`;
+        }
+
+        // A one-click choice backed by a hidden input, so it participates in
+        // the same data-path dirty tracking / save path as plain inputs.
+        function segField({ path, label, value, choices, tones, cls, missing }) {
+            return `<div class="field ${cls || ''} ${missing ? 'is-missing' : ''}">
+                <span class="label" id="lbl-${path}">${esc(label)}${manualTag(path)}</span>
+                <div class="seg" role="group" aria-labelledby="lbl-${path}">
+                    ${choices.map(c => `<button type="button" data-seg="${path}" data-value="${esc(c)}"
+                        data-tone="${(tones && tones[c]) || ''}" aria-pressed="${c === value}">${esc(c)}</button>`).join('')}
+                </div>
+                <input type="hidden" data-path="${path}" value="${esc(value || '')}">
+            </div>`;
+        }
+
+        function banners(study, exam) {
+            const out = [];
+            if (study.status === 'defacing_failed') {
+                out.push(`<div class="callout bad">${icon('alert')}<div><strong>Defacing did not complete.</strong>
+                    A head-scan series still contains facial features, so export is blocked.
+                    Restarting PixieVeil retries the remaining series.</div></div>`);
             }
-
-            function esc(s) {
-                if (s === null || s === undefined) return '';
-                const div = document.createElement('div');
-                div.textContent = String(s);
-                // Also escape quotes: this is used inside HTML attribute
-                // values (e.g. value="${esc(...)}"), not just text content.
-                return div.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+            if (study.location === 'absent') {
+                out.push(`<div class="callout warn">${icon('alert')}<div><strong>Study files not found.</strong>
+                    The DICOM directory is gone from both storage and the retention area — only the exam record remains.</div></div>`);
+            } else if (study.location === 'retained') {
+                out.push(`<div class="callout info">${icon('info')}<div>Exported study kept in the
+                    <strong>retention area</strong>; it is purged automatically when the retention window ends.</div></div>`);
             }
-
-            function renderTable() {
-                const container = document.getElementById('studies-container');
-                if (!STUDIES.length) {
-                    container.innerHTML = '<p>No studies found.</p>';
-                    return;
-                }
-                let html = '<table role="grid" class="overflow-auto"><thead><tr>' +
-                    '<th>#</th><th>Status</th><th>Location</th><th>Indication</th>' +
-                    '<th>Protocol type</th><th>Exam group</th><th>Scanner</th>' +
-                    '<th>Total DLP</th><th>Edited</th>' +
-                    '</tr></thead><tbody>';
-                STUDIES.forEach(s => {
-                    const ex = s.exam_summary;
-                    // A corrupt exam sidecar must not look identical to "not
-                    // yet extracted" (both would otherwise just show "—").
-                    const ind = s.exam_corrupt
-                        ? '<span class="badge badge-warn" title="exam sidecar could not be read">⚠ corrupt exam data</span>'
-                        : (ex && ex.indication ? `${esc(ex.indication.region || '—')} / ${esc(ex.indication.clinical_indication || '—')}` : '—');
-                    const scanner = ex && ex.scanner ? `${esc(ex.scanner.manufacturer || '')} ${esc(ex.scanner.model || '')}`.trim() || '—' : '—';
-                    const dlp = ex && ex.total_dlp_mgy_cm != null ? ex.total_dlp_mgy_cm.toFixed(1) + ' mGy·cm' : '—';
-                    const edited = ex && ex.has_manual_edits ? '<span class="edited-flag" title="has manual edits">&#9998;</span>' : '';
-                    const rowClass = 'study-row' + (EXPANDED === s.study_number ? ' selected' : '');
-                    html += `<tr class="${rowClass}" data-n="${s.study_number}">` +
-                        `<td>${String(s.study_number).padStart(4, '0')}</td>` +
-                        `<td>${statusBadge(s.status)}</td>` +
-                        `<td>${locationBadge(s.location)}</td>` +
-                        `<td>${ind}</td>` +
-                        `<td>${esc(ex ? ex.protocol_type : null) || '—'}</td>` +
-                        `<td>${esc(ex ? ex.examination_group : null) || '—'}</td>` +
-                        `<td>${scanner}</td>` +
-                        `<td>${dlp}</td>` +
-                        `<td>${edited}</td>` +
-                        `</tr>`;
-                });
-                html += '</tbody></table>';
-                container.innerHTML = html;
-
-                container.querySelectorAll('tr.study-row').forEach(row => {
-                    row.addEventListener('click', () => toggleDetail(parseInt(row.dataset.n, 10)));
-                });
-
-                // The edit panel is a single block below the table, not a
-                // per-row table cell — see the .detail-panel CSS comment.
-                let panel = document.getElementById('detail-panel-container');
-                if (!panel) {
-                    panel = document.createElement('div');
-                    panel.id = 'detail-panel-container';
-                    panel.className = 'detail-panel';
-                    container.appendChild(panel);
-                }
-                if (EXPANDED != null && !STUDIES.some(s => s.study_number === EXPANDED)) {
-                    EXPANDED = null;
-                }
+            if (state.detail.corrupt) {
+                out.push(`<div class="callout bad">${icon('alert')}<div><strong>Exam data unreadable.</strong>
+                    The exam sidecar exists but could not be parsed. Re-extract to rebuild it.</div></div>`);
+            } else if (!exam && !['receiving', 'complete', 'defacing'].includes(study.status)) {
+                out.push(`<div class="callout warn">${icon('info')}<div><strong>No exam data extracted yet.</strong>
+                    Use <em>Re-extract</em> to read the DICOM headers.</div></div>`);
+            } else if (!exam) {
+                out.push(`<div class="callout info">${icon('info')}<div>Still processing — exam data appears once extraction has run.</div></div>`);
             }
+            return out.join('');
+        }
 
-            function updateSelectedRow() {
-                document.querySelectorAll('tr.study-row').forEach(r => {
-                    r.classList.toggle('selected', parseInt(r.dataset.n, 10) === EXPANDED);
-                });
+        function reviewPane(exam) {
+            const opts = state.options || { region_indications: [], image_quality: [], iv_contrast: [], scanners: [] };
+            const missing = new Set(exam.missing || []);
+            const ind = exam.indication || {};
+            const sc = exam.scanner || {};
+            const req = (exam.missing || []).length;
+            const total = (opts.required_fields || []).length || 7;
+            const filled = total - req;
+
+            const riIdx = opts.region_indications.findIndex(o =>
+                o.region === ind.region && o.indication === ind.clinical_indication);
+            const riMissing = missing.has('indication.region') || missing.has('indication.clinical_indication');
+            const riCustom = riIdx < 0 && ind.region
+                ? `<option value="" selected>${esc(ind.region)} / ${esc(ind.clinical_indication || '—')} (not in RHYTHM list)</option>` : '';
+            const riHint = isManual('indication.region') ? ''
+                : (ind.matched ? 'Auto-matched from the protocol name by indication_lookup.yaml.'
+                    : 'No lookup rule matched this protocol — choose the RHYTHM indication.');
+
+            const scannerLabel = (opts.scanners.find(o => o.id === sc.rhythm_scanner_id) || {}).label;
+            const detected = [sc.manufacturer, sc.model].filter(Boolean).join(' ');
+            const scannerHint = [
+                detected ? `Detected: <span class="mono">${esc(detected)}</span>` : 'Scanner not identified in headers',
+                scannerLabel ? '· in scanner_lookup.yaml' : (sc.rhythm_scanner_id ? '· not a known ID' : ''),
+            ].join(' ');
+
+            return `
+            <div class="card">
+                <div class="card-head">
+                    <h3>Required for RHYTHM</h3><span class="spacer"></span>
+                    <span class="progress ${req ? '' : 'full'}"><span class="bar"><i style="width:${(filled / total) * 100}%"></i></span>
+                        ${req ? `${req} missing` : 'Complete'}</span>
+                </div>
+                <div class="card-body form-grid">
+                    ${segField({ path: 'image_quality', label: 'Image quality', value: exam.image_quality,
+                        choices: opts.image_quality, tones: QUALITY_TONE, cls: 'span-2', missing: missing.has('image_quality') })}
+                    ${inputField({ path: 'patient.age_years', label: 'Patient age', value: getPath(exam, 'patient.age_years'),
+                        unit: 'years', missing: missing.has('patient.age_years') })}
+                    ${inputField({ path: 'patient.weight_kg', label: 'Patient weight', value: getPath(exam, 'patient.weight_kg'),
+                        unit: 'kg', missing: missing.has('patient.weight_kg'),
+                        hint: 'Written back into PatientWeight of the stored DICOM files.' })}
+                    <div class="field span-2 ${riMissing ? 'is-missing' : ''}">
+                        <label for="ri-select">Region / clinical indication${manualTag('indication.region')}</label>
+                        <select class="select" id="ri-select">
+                            ${riCustom}
+                            <option value="" ${riIdx < 0 && !ind.region ? 'selected' : ''}>— Choose indication —</option>
+                            ${opts.region_indications.map((o, i) =>
+                                `<option value="${i}" ${i === riIdx ? 'selected' : ''}>${esc(o.region)} — ${esc(o.indication)}</option>`).join('')}
+                        </select>
+                        ${riHint ? `<span class="hint">${riHint}</span>` : ''}
+                    </div>
+                    ${segField({ path: 'indication.iv_contrast', label: 'IV contrast', value: ind.iv_contrast,
+                        choices: opts.iv_contrast, missing: missing.has('indication.iv_contrast') })}
+                    ${inputField({ path: 'scanner.rhythm_scanner_id', label: 'RHYTHM scanner ID', type: 'text',
+                        value: sc.rhythm_scanner_id, list: 'scanner-ids', missing: missing.has('scanner.rhythm_scanner_id'),
+                        hint: scannerHint })}
+                    <datalist id="scanner-ids">${opts.scanners.map(o =>
+                        `<option value="${esc(o.id)}" label="${esc(o.label)}"></option>`).join('')}</datalist>
+                </div>
+            </div>
+            <div class="card">
+                <div class="card-head"><h3>Additional</h3></div>
+                <div class="card-body form-grid">
+                    ${inputField({ path: 'protocol_used_hint.protocol_name', label: 'Protocol name', type: 'text',
+                        value: getPath(exam, 'protocol_used_hint.protocol_name'), cls: 'span-2',
+                        hint: getPath(exam, 'protocol_used_hint.series_description_sample')
+                            ? `Series description: <span class="mono">${esc(getPath(exam, 'protocol_used_hint.series_description_sample'))}</span>` : '' })}
+                    <div class="field span-2">
+                        <label for="f-notes">Operator notes${manualTag('operator_notes')}</label>
+                        <textarea class="textarea" id="f-notes" data-path="operator_notes"
+                            placeholder="Paper-note details, deviations, anything worth keeping with this exam…">${esc(exam.operator_notes || '')}</textarea>
+                    </div>
+                </div>
+            </div>`;
+        }
+
+        function dosePane(exam) {
+            const rdsr = exam.rdsr || {};
+            const acqs = rdsr.acquisitions || [];
+            const series = exam.series || [];
+            const n2 = v => (v == null ? '—' : fmtNum(v, 2));
+
+            const acqTable = acqs.length ? `
+                <div class="table-wrap"><table class="data">
+                    <thead><tr><th>Protocol</th><th>Type</th><th class="r">kVp</th><th class="r">mean mA</th>
+                        <th class="r">Pitch</th><th class="r">CTDIvol</th><th class="r">DLP</th></tr></thead>
+                    <tbody>${acqs.map(a => `<tr>
+                        <td>${esc(a.acquisition_protocol) || '—'}</td><td>${esc(a.acquisition_type) || '—'}</td>
+                        <td class="r num">${a.kvp ?? '—'}</td><td class="r num">${a.mean_ma ?? '—'}</td>
+                        <td class="r num">${n2(a.pitch)}</td>
+                        <td class="r num">${n2(a.mean_ctdivol_mgy)}</td><td class="r num">${n2(a.dlp_mgy_cm)}</td></tr>`).join('')}
+                    </tbody></table></div>`
+                : `<div class="callout">${icon('info')}<div>No RDSR dose record in this study.</div></div>`;
+
+            const seriesRows = series.map(s => {
+                const editable = s.series_number != null;
+                const edited = editable && SERIES_FIELDS.some(([leaf]) => isManual(`series.${s.series_number}.${leaf}`));
+                const main = `<tr class="${edited ? 'is-edited' : ''}">
+                    <td class="mono">${esc(s.series_number ?? '?')}</td>
+                    <td>${esc(s.series_description) || '—'} ${s.is_topogram ? '<span class="pill plain">Topogram</span>' : ''}</td>
+                    <td class="r num">${n2(s.ctdi_vol_mgy)}</td><td class="r num">${n2(s.dlp_mgy_cm)}</td>
+                    <td class="r num">${n2(s.slice_thickness_mm)}</td><td class="mono">${esc(s.convolution_kernel) || '—'}</td>
+                    <td class="r num">${n2(s.spiral_pitch_factor)}</td>
+                    <td class="r">${editable ? `<button type="button" class="btn btn-ghost btn-sm" data-edit-series="${s.series_number}"
+                        aria-expanded="false">${icon('edit')} Edit</button>` : ''}</td></tr>`;
+                if (!editable) return main;
+                const fields = SERIES_FIELDS.map(([leaf, label, unit, type]) => inputField({
+                    path: `series.${s.series_number}.${leaf}`, label, value: s[leaf], unit, type,
+                })).join('');
+                return main + `<tr class="sub" data-series-row="${s.series_number}" hidden>
+                    <td colspan="8"><div class="series-edit">${fields}</div></td></tr>`;
+            }).join('');
+
+            return `
+            <div class="stats-strip">
+                <div class="card stat"><div class="s-label">Total DLP (RDSR)</div>
+                    <div class="s-value num">${rdsr.total_dlp_mgy_cm != null ? fmtNum(rdsr.total_dlp_mgy_cm, 1) : '—'}<small>mGy·cm</small></div></div>
+                <div class="card stat"><div class="s-label">Irradiation events</div><div class="s-value num">${acqs.length}</div></div>
+                <div class="card stat"><div class="s-label">DICOM series</div><div class="s-value num">${series.length}</div></div>
+            </div>
+            <div class="callout info">${icon('info')}<div>The RDSR is the authoritative per-event dose record. One event may be
+                reconstructed into several series, and on this scanner the per-image CTDIvol is <strong>cumulative</strong> —
+                prefer the RDSR values. Series DLP is an estimate (CTDIvol × scan length).</div></div>
+            <div class="section-title"><h3>Irradiation events</h3><span>RDSR · read-only</span></div>
+            ${acqTable}
+            <div class="section-title"><h3>Series</h3><span>reconstructions · edit a row to correct values read off the console</span></div>
+            ${series.length ? `<div class="table-wrap"><table class="data">
+                <thead><tr><th>#</th><th>Description</th><th class="r">CTDIvol</th><th class="r">DLP est.</th>
+                    <th class="r">Slice</th><th>Kernel</th><th class="r">Pitch</th><th></th></tr></thead>
+                <tbody>${seriesRows}</tbody></table></div>`
+                : `<div class="callout">${icon('info')}<div>No CT series recorded.</div></div>`}`;
+        }
+
+        function notesPane(exam) {
+            const notes = exam.notes || [];
+            const manual = exam.manual || {};
+            const edited = manual.edited_at
+                ? `<div class="callout">${icon('edit')}<div>Last manual edit <strong>${esc(fmtDate(manual.edited_at))}</strong> —
+                    ${Object.keys(manual.fields || {}).length} field(s) set by hand. Manual values survive re-extraction.</div></div>` : '';
+            return edited + (notes.length
+                ? `<ul class="notes">${notes.map(n => `<li>${esc(n)}</li>`).join('')}</ul>`
+                : `<div class="empty">${icon('check')}<strong>No extraction notes</strong></div>`);
+        }
+
+        function actionButtons(study) {
+            const absent = study.location === 'absent';
+            const failed = study.status === 'defacing_failed';
+            const processing = ['receiving', 'complete', 'defacing'].includes(study.status);
+            const exportBlock = absent ? 'Study files not found' : failed ? 'Blocked: defacing incomplete'
+                : processing ? 'Still processing' : '';
+            const out = [`<button type="button" class="btn btn-ghost" data-act="reextract" ${absent ? 'disabled title="Study files not found"' : ''}>
+                ${icon('redo')} Re-extract</button>`];
+            if (state.caps.dicom) {
+                out.push(`<button type="button" class="btn" data-act="send_dicom" ${exportBlock ? `disabled title="${exportBlock}"` : ''}>
+                    ${icon('send')} Send DICOM</button>`);
             }
-
-            async function toggleDetail(n) {
-                const panel = document.getElementById('detail-panel-container');
-                if (!panel) return;
-                if (EXPANDED === n) {
-                    EXPANDED = null;
-                    panel.innerHTML = '';
-                    updateSelectedRow();
-                    return;
-                }
-                EXPANDED = n;
-                updateSelectedRow();
-                await loadDetail(n);
+            if (state.caps.http) {
+                out.push(`<button type="button" class="btn" data-act="upload_http" ${exportBlock ? `disabled title="${exportBlock}"` : ''}>
+                    ${icon('upload')} Upload HTTP</button>`);
             }
-
-            async function loadDetail(n) {
-                const el = document.getElementById('detail-panel-container');
-                el.innerHTML = '<p aria-busy="true">Loading…</p>';
-                try {
-                    const resp = await fetch(`/api/studies/${n}`);
-                    if (!resp.ok) throw new Error('failed to load study');
-                    const data = await resp.json();
-                    renderDetail(n, data);
-                } catch (err) {
-                    console.error(err);
-                    el.innerHTML = '<p>Could not load study detail.</p>';
-                }
+            if (!state.caps.dicom && !state.caps.http) {
+                out.push('<span class="faint" style="font-size:12px">No export target configured</span>');
             }
+            return out.join('');
+        }
 
-            function isManual(exam, path) {
-                const manual = exam && exam.manual && exam.manual.fields ? exam.manual.fields : {};
-                return Object.prototype.hasOwnProperty.call(manual, path);
-            }
+        function renderInspector() {
+            const insp = $('#inspector');
+            const { study, exam } = state.detail;
+            const ex = exam || {};
+            const total = state.options ? state.options.required_fields.length : 7;
+            const missingCount = exam ? (exam.missing || []).length : 0;
+            const notesCount = exam ? (exam.notes || []).length : 0;
+            const archivedVia = study.archived_via ? ` via ${study.archived_via.toUpperCase()}` : '';
+            const uid = study.anonymized_study_uid || '';
 
-            function get(obj, path) {
-                return path.split('.').reduce((o, k) => (o == null ? undefined : o[k]), obj);
-            }
-
-            function renderDetail(n, payload) {
-                const el = document.getElementById('detail-panel-container');
-                const study = payload.study || {};
-                const exam = payload.exam;
-
-                if (!exam) {
-                    el.innerHTML = `<p>No exam data extracted for this study yet.</p>` + actionsHtml(n, study);
-                    wireActions(n, study);
-                    return;
-                }
-
-                const regionOptions = REGION_INDICATION_OPTIONS.map((o, i) => {
-                    const selected = (exam.indication && exam.indication.region === o.region &&
-                        exam.indication.clinical_indication === o.indication) ? 'selected' : '';
-                    return `<option value="${i}" ${selected}>${esc(o.region)} / ${esc(o.indication)}</option>`;
-                }).join('');
-
-                const contrastOptions = ["Non-contrast", "Contrast-enhanced"].map(c => {
-                    const selected = exam.indication && exam.indication.iv_contrast === c ? 'selected' : '';
-                    return `<option value="${c}" ${selected}>${c}</option>`;
-                }).join('');
-
-                const qualityOptions = ['<option value="">—</option>'].concat(
-                    IMAGE_QUALITY_OPTIONS.map(q => {
-                        const selected = exam.image_quality === q ? 'selected' : '';
-                        return `<option value="${q}" ${selected}>${q}</option>`;
-                    })
-                ).join('');
-
-                // exam.series lists DICOM series (reconstructions) — NOT the
-                // same thing as an irradiation event. One RDSR acquisition
-                // (one real dose event) can be reconstructed into several
-                // series at different kernel/thickness, so several rows
-                // here can share one event; rdsr.acquisitions[] below is the
-                // authoritative per-irradiation-event record.
-                const seriesList = exam.series || [];
-
-                // One editable input for a series.<N>.<leaf> path. type
-                // defaults to a number input; pass {type: 'text'} for
-                // string fields (convolution_kernel, patient_position).
-                const seriesField = (seriesNumber, leaf, label, value, opts) => {
-                    opts = opts || {};
-                    const path = `series.${seriesNumber}.${leaf}`;
-                    const cls = isManual(exam, path) ? 'manual-set' : '';
-                    const type = opts.type || 'number';
-                    const step = type === 'number' ? ' step="any"' : '';
-                    const val = value != null ? esc(value) : '';
-                    return `<label>${esc(label)}
-                        <input type="${type}"${step} data-path="${path}" class="${cls}" value="${val}">
-                    </label>`;
-                };
-
-                // Series with no SeriesNumber (key "?" in the extractor) have
-                // no stable dotted path to overlay a manual value onto — keep
-                // them in the read-only table only.
-                const seriesFields = seriesList.filter(s => s.series_number != null).map(s => {
-                    const n2 = s.series_number;
-                    const topoBadge = s.is_topogram ? ' <span class="badge badge-muted">topogram</span>' : '';
-                    return `
-                        <h6>Series ${esc(n2)} — ${esc(s.series_description || '')}${topoBadge}</h6>
-                        <div class="grid series-group">
-                            ${seriesField(n2, 'dlp_mgy_cm', 'DLP (mGy·cm)', s.dlp_mgy_cm)}
-                            ${seriesField(n2, 'ctdi_vol_mgy', 'CTDIvol (mGy)', s.ctdi_vol_mgy)}
-                            ${seriesField(n2, 'slice_thickness_mm', 'Slice thickness (mm)', s.slice_thickness_mm)}
-                            ${seriesField(n2, 'exposure_time_ms', 'Exposure time (ms)', s.exposure_time_ms)}
-                            ${seriesField(n2, 'spiral_pitch_factor', 'Pitch factor', s.spiral_pitch_factor)}
+            insp.innerHTML = `
+                <div class="insp-head">
+                    <button type="button" class="btn btn-ghost btn-icon back" id="btn-back" title="Back to list">${icon('back')}</button>
+                    <div>
+                        <div class="insp-title">
+                            <h2>Study <span class="mono">${pad4(study.study_number)}</span></h2>
+                            ${PV.statusPill(study.status)}
+                            ${study.status === 'archived' && archivedVia ? `<span class="faint" style="font-size:12px">${esc(archivedVia)}</span>` : ''}
                         </div>
-                        <div class="grid series-group">
-                            ${seriesField(n2, 'convolution_kernel', 'Convolution kernel', s.convolution_kernel, {type: 'text'})}
-                            ${seriesField(n2, 'patient_position', 'Patient position', s.patient_position, {type: 'text'})}
-                            ${seriesField(n2, 'single_collimation_width_mm', 'Single collimation (mm)', s.single_collimation_width_mm)}
-                            ${seriesField(n2, 'total_collimation_width_mm', 'Total collimation (mm)', s.total_collimation_width_mm)}
-                        </div>`;
-                }).join('');
-
-                const num = v => v != null ? v.toFixed(2) : '—';
-                const seriesTable = seriesList.length ? `
-                    <table role="grid" class="overflow-auto"><thead><tr>
-                        <th>Series</th><th>Description</th><th>Type</th><th>CTDIvol (mGy)</th><th>DLP (mGy·cm)</th>
-                        <th>Slice (mm)</th><th>Exposure (ms)</th><th>Kernel</th><th>Position</th>
-                        <th>Coll. single/total (mm)</th><th>Pitch</th>
-                    </tr></thead>
-                    <tbody>${seriesList.map(s => `<tr><td>${esc(s.series_number)}</td><td>${esc(s.series_description)}</td>` +
-                        `<td>${s.is_topogram ? 'Topogram' : 'Series'}</td>` +
-                        `<td>${num(s.ctdi_vol_mgy)}</td>` +
-                        `<td>${num(s.dlp_mgy_cm)}</td>` +
-                        `<td>${num(s.slice_thickness_mm)}</td>` +
-                        `<td>${s.exposure_time_ms != null ? s.exposure_time_ms : '—'}</td>` +
-                        `<td>${esc(s.convolution_kernel) || '—'}</td>` +
-                        `<td>${esc(s.patient_position) || '—'}</td>` +
-                        `<td>${num(s.single_collimation_width_mm)} / ${num(s.total_collimation_width_mm)}</td>` +
-                        `<td>${num(s.spiral_pitch_factor)}</td></tr>`).join('')}</tbody></table>`
-                    : '<p><small>No series recorded.</small></p>';
-
-                const rdsr = exam.rdsr;
-                const rdsrTable = rdsr && rdsr.acquisitions && rdsr.acquisitions.length ? `
-                    <p><small>Total DLP: ${rdsr.total_dlp_mgy_cm != null ? rdsr.total_dlp_mgy_cm.toFixed(2) + ' mGy·cm' : '—'}</small></p>
-                    <table role="grid"><thead><tr><th>Protocol</th><th>Type</th><th>kVp</th><th>mean mA</th>
-                        <th>Mean CTDIvol</th><th>DLP</th></tr></thead>
-                    <tbody>${rdsr.acquisitions.map(a => `<tr><td>${esc(a.acquisition_protocol)}</td><td>${esc(a.acquisition_type)}</td>` +
-                        `<td>${esc(a.kvp)}</td><td>${esc(a.mean_ma)}</td>` +
-                        `<td>${a.mean_ctdivol_mgy != null ? a.mean_ctdivol_mgy.toFixed(2) : '—'}</td>` +
-                        `<td>${a.dlp_mgy_cm != null ? a.dlp_mgy_cm.toFixed(2) : '—'}</td></tr>`).join('')}</tbody></table>`
-                    : '<p><small>No RDSR data for this study.</small></p>';
-
-                const notes = (exam.notes || []).map(n2 => `<li>${esc(n2)}</li>`).join('');
-
-                el.innerHTML = `
-                    <article>
-                        <h4>Manual review — study ${String(n).padStart(4, '0')}</h4>
-                        <div class="grid">
-                            <label>Weight (kg)
-                                <input type="number" step="any" data-path="patient.weight_kg"
-                                    class="${isManual(exam, 'patient.weight_kg') ? 'manual-set' : ''}"
-                                    value="${get(exam, 'patient.weight_kg') != null ? get(exam, 'patient.weight_kg') : ''}">
-                            </label>
-                            <label>Age (years)
-                                <input type="number" step="any" data-path="patient.age_years"
-                                    class="${isManual(exam, 'patient.age_years') ? 'manual-set' : ''}"
-                                    value="${get(exam, 'patient.age_years') != null ? get(exam, 'patient.age_years') : ''}">
-                            </label>
-                            <label>Region / Indication
-                                <select id="region-indication-${n}"
-                                    class="${(isManual(exam, 'indication.region') || isManual(exam, 'indication.clinical_indication')) ? 'manual-set' : ''}">
-                                    <option value="">— unset —</option>
-                                    ${regionOptions}
-                                </select>
-                            </label>
-                            <label>IV contrast
-                                <select data-path="indication.iv_contrast"
-                                    class="${isManual(exam, 'indication.iv_contrast') ? 'manual-set' : ''}">
-                                    <option value="">—</option>
-                                    ${contrastOptions}
-                                </select>
-                            </label>
+                        <div class="insp-meta">
+                            <span>Received ${esc(fmtDate(study.received_at))}</span>
+                            <span>${study.series_count} series</span>
+                            ${uid ? `<span title="Anonymized StudyInstanceUID">UID <span class="mono">…${esc(uid.slice(-18))}</span></span>` : ''}
                         </div>
-                        <div class="grid">
-                            <label>Image quality
-                                <select data-path="image_quality"
-                                    class="${isManual(exam, 'image_quality') ? 'manual-set' : ''}">
-                                    ${qualityOptions}
-                                </select>
-                            </label>
-                            <label>Protocol name
-                                <input type="text" data-path="protocol_used_hint.protocol_name"
-                                    class="${isManual(exam, 'protocol_used_hint.protocol_name') ? 'manual-set' : ''}"
-                                    value="${esc(get(exam, 'protocol_used_hint.protocol_name') || '')}">
-                            </label>
-                            <label>Scanner ID
-                                <input type="text" data-path="scanner.rhythm_scanner_id"
-                                    class="${isManual(exam, 'scanner.rhythm_scanner_id') ? 'manual-set' : ''}"
-                                    value="${esc(get(exam, 'scanner.rhythm_scanner_id') || '')}">
-                                <span class="field-hint">RHYTHM UUID</span>
-                            </label>
-                        </div>
-                        ${seriesFields}
-                        <label>Operator notes
-                            <textarea data-path="operator_notes"
-                                class="${isManual(exam, 'operator_notes') ? 'manual-set' : ''}"
-                            >${esc(get(exam, 'operator_notes') || '')}</textarea>
-                        </label>
-                        <div class="action-row">
-                            <button type="button" onclick="saveExam(${n})">Save</button>
-                            <small id="save-status-${n}" class="status-line"></small>
-                        </div>
-                    </article>
+                    </div>
+                    ${exam ? `<div class="derived" title="Derived from indication, age and weight">
+                        <span>Protocol type</span><span>${esc(ex.protocol_type) || '—'}</span>
+                        <span>Exam group</span><span>${esc(ex.examination_group) || '—'}</span></div>` : ''}
+                </div>
+                <div class="banners">${banners(study, exam)}</div>
+                ${exam ? `
+                <div class="tabs" role="tablist">
+                    <button type="button" role="tab" data-tab="review" aria-selected="${state.tab === 'review'}">Review
+                        ${missingCount ? `<span class="badge warn">${missingCount}/${total}</span>` : ''}</button>
+                    <button type="button" role="tab" data-tab="dose" aria-selected="${state.tab === 'dose'}">Dose &amp; series</button>
+                    <button type="button" role="tab" data-tab="notes" aria-selected="${state.tab === 'notes'}">Notes
+                        ${notesCount ? `<span class="badge">${notesCount}</span>` : ''}</button>
+                </div>` : ''}
+                <div class="insp-body" id="insp-body">
+                    ${exam ? `
+                    <div class="pane" data-pane="review" ${state.tab === 'review' ? '' : 'hidden'}>${reviewPane(exam)}</div>
+                    <div class="pane" data-pane="dose" ${state.tab === 'dose' ? '' : 'hidden'}>${dosePane(exam)}</div>
+                    <div class="pane" data-pane="notes" ${state.tab === 'notes' ? '' : 'hidden'}>${notesPane(exam)}</div>` : ''}
+                </div>
+                <footer class="actionbar">
+                    ${exam ? `<span class="dirty" id="dirty">No changes</span>
+                    <button type="button" class="btn btn-ghost btn-sm" id="btn-discard" hidden>Discard</button>
+                    <button type="button" class="btn btn-primary" id="btn-save" disabled>${icon('save')} Save</button>` : ''}
+                    <span class="spacer"></span>
+                    ${actionButtons(study)}
+                </footer>`;
 
-                    <article>
-                        <h5>Derived: ${esc(exam.protocol_type) || '—'} / ${esc(exam.examination_group) || '—'}</h5>
-                        <p class="hint-box">Prefer <code>rdsr.acquisitions[*].mean_ctdivol_mgy</code> over
-                            <code>series[*].ctdi_vol_mgy</code> — the flat per-image CTDIvol tag is cumulative
-                            dose-to-date on this scanner, not per-acquisition.</p>
-                        <h6>Irradiation events (RDSR acquisitions, read-only)</h6>
-                        <p class="field-hint">The authoritative per-dose-event record. One event can be
-                            reconstructed into several DICOM series below (e.g. two kernels from one spiral
-                            pass) — series counts and event counts don't need to match.</p>
-                        ${rdsrTable}
-                        <h6>DICOM series (reconstructions, read-only)</h6>
-                        ${seriesTable}
-                        <h6>Notes</h6>
-                        <ul class="notes-list">${notes || '<li>None.</li>'}</ul>
-                    </article>
+            // Snapshot rendered values: Save sends only what the operator
+            // changed, so values ExamExtractor derived are never pinned into
+            // the manual overlay (they would stop updating on re-extract).
+            insp.querySelectorAll('[data-path], #ri-select').forEach(el => { el.dataset.initial = el.value; });
+            refreshDirty();
+        }
 
-                    ${actionsHtml(n, study)}
-                `;
-
-                const riSelect = document.getElementById(`region-indication-${n}`);
-                if (riSelect) {
-                    riSelect.dataset.initial = riSelect.value;
-                    riSelect.addEventListener('change', () => {
-                        const idx = riSelect.value;
-                        if (idx === '') return;
-                        const opt = REGION_INDICATION_OPTIONS[parseInt(idx, 10)];
-                        const contrastSelect = el.querySelector('select[data-path="indication.iv_contrast"]');
-                        if (contrastSelect && !contrastSelect.value) {
-                            contrastSelect.value = opt.contrast;
-                        }
-                    });
+        // Returns {fields, count}; also paints .is-dirty on changed fields.
+        function collectChanges() {
+            const insp = $('#inspector');
+            const fields = {};
+            let count = 0;
+            insp.querySelectorAll('[data-path]').forEach(input => {
+                const raw = input.value;
+                const val = input.type === 'number' ? raw : raw.trim();
+                let dirty = val !== '' && raw !== (input.dataset.initial || '');
+                if (dirty && input.type === 'number') {
+                    const num = parseFloat(val);
+                    if (Number.isNaN(num)) dirty = false; else fields[input.dataset.path] = num;
+                } else if (dirty) {
+                    fields[input.dataset.path] = val;
                 }
-
-                // Snapshot each field's rendered value so Save can tell an
-                // untouched field (skip) from one the operator actually
-                // changed (send) — sending every non-empty field would pin
-                // extracted values into the manual overlay forever.
-                el.querySelectorAll('[data-path]').forEach(input => {
-                    input.dataset.initial = input.value;
-                });
-
-                wireActions(n, study);
-            }
-
-            function actionsHtml(n, study) {
-                const location = study.location || 'absent';
-                const absent = location === 'absent';
-                const dicomDisabled = absent || !CAPABILITIES.dicom;
-                const httpDisabled = absent || !CAPABILITIES.http;
-                const dicomTitle = absent ? 'study directory not found' :
-                    (!CAPABILITIES.dicom ? 'DICOM export is not configured' : '');
-                const httpTitle = absent ? 'study directory not found' :
-                    (!CAPABILITIES.http ? 'HTTP export is not configured' : '');
-                const reextractTitle = absent ? 'study directory not found' : '';
-                return `
-                    <article>
-                        <h5>Actions</h5>
-                        <div class="action-row">
-                            <button type="button" id="btn-dicom-${n}" ${dicomDisabled ? 'disabled' : ''} title="${dicomTitle}">Send to DICOM</button>
-                            <button type="button" id="btn-reextract-${n}" ${absent ? 'disabled' : ''} title="${reextractTitle}" class="secondary">Re-extract</button>
-                            <button type="button" id="btn-http-${n}" ${httpDisabled ? 'disabled' : ''} title="${httpTitle}" class="secondary">Upload to HTTP storage</button>
-                        </div>
-                        <small id="action-status-${n}" class="status-line"></small>
-                    </article>
-                `;
-            }
-
-            function wireActions(n, study) {
-                const dicomBtn = document.getElementById(`btn-dicom-${n}`);
-                const reBtn = document.getElementById(`btn-reextract-${n}`);
-                const httpBtn = document.getElementById(`btn-http-${n}`);
-                if (dicomBtn) dicomBtn.addEventListener('click', () => runAction(n, 'send_dicom'));
-                if (reBtn) reBtn.addEventListener('click', () => runAction(n, 'reextract'));
-                if (httpBtn) httpBtn.addEventListener('click', () => runAction(n, 'upload_http'));
-            }
-
-            async function runAction(n, action) {
-                const status = document.getElementById(`action-status-${n}`);
-                if (status) status.textContent = 'Working…';
-                let message = '';
-                try {
-                    const resp = await fetch(`/api/studies/${n}/actions/${action}`, {
-                        method: 'POST',
-                        headers: authHeaders({ 'Content-Type': 'application/json' }),
-                    });
-                    const data = await resp.json();
-                    message = data.message || (data.ok ? 'Done.' : 'Failed.');
-                } catch (err) {
-                    console.error(err);
-                    message = 'Request failed.';
-                }
-
-                // Reload the list (counters/location may have changed) and
-                // the detail panel (re-extract refreshes the exam data) —
-                // loadStudies() rebuilds the whole table, which would wipe
-                // out anything loadDetail wrote if called first, so the
-                // status message is applied to the freshly-rendered panel
-                // last, not before these reloads run.
-                await loadStudies();
-                if (EXPANDED === n) {
-                    await loadDetail(n);
-                    const newStatus = document.getElementById(`action-status-${n}`);
-                    if (newStatus) newStatus.textContent = message;
-                }
-            }
-
-            async function saveExam(n) {
-                const el = document.getElementById('detail-panel-container');
-                const status = document.getElementById(`save-status-${n}`);
-                const fields = {};
-
-                // Only send fields the operator actually changed from what was
-                // rendered — sending every filled-in field would re-pin values
-                // ExamExtractor already derived correctly into the manual
-                // overlay, and they'd never update again on re-extract.
-                el.querySelectorAll('[data-path]').forEach(input => {
-                    const path = input.dataset.path;
-                    const val = input.value;
-                    if (val === (input.dataset.initial || '')) return;
-                    if (val === '') return;
-                    if (input.type === 'number') {
-                        const num = parseFloat(val);
-                        if (!Number.isNaN(num)) fields[path] = num;
-                    } else {
-                        fields[path] = val;
-                    }
-                });
-
-                const riSelect = document.getElementById(`region-indication-${n}`);
-                if (riSelect && riSelect.value !== '' && riSelect.value !== (riSelect.dataset.initial || '')) {
-                    const opt = REGION_INDICATION_OPTIONS[parseInt(riSelect.value, 10)];
+                if (dirty) count++;
+                const f = input.closest('.field');
+                if (f) f.classList.toggle('is-dirty', dirty);
+            });
+            const ri = insp.querySelector('#ri-select');
+            if (ri) {
+                const dirty = ri.value !== '' && ri.value !== (ri.dataset.initial || '');
+                if (dirty) {
+                    const opt = state.options.region_indications[parseInt(ri.value, 10)];
                     fields['indication.region'] = opt.region;
                     fields['indication.clinical_indication'] = opt.indication;
+                    count++;
                 }
-
-                if (status) status.textContent = 'Saving…';
-                try {
-                    const resp = await fetch(`/api/studies/${n}/exam`, {
-                        method: 'PUT',
-                        headers: authHeaders({ 'Content-Type': 'application/json' }),
-                        body: JSON.stringify({ fields }),
-                    });
-                    const data = await resp.json();
-                    if (!resp.ok) {
-                        if (status) status.textContent = data.message || data.error || 'Save failed.';
-                        return;
-                    }
-                    // Reload first, then set the message on the freshly-rendered
-                    // panel's status element — loadDetail() rebuilds the whole
-                    // panel (same reasoning as runAction()), so setting it
-                    // before would just get wiped out.
-                    await loadStudies();
-                    await loadDetail(n);
-                    const newStatus = document.getElementById(`save-status-${n}`);
-                    if (newStatus) newStatus.textContent = data.message || 'Saved.';
-                } catch (err) {
-                    console.error(err);
-                    if (status) status.textContent = 'Save failed.';
-                }
+                ri.closest('.field').classList.toggle('is-dirty', dirty);
             }
+            return { fields, count };
+        }
 
-            async function refreshStudies() {
+        function refreshDirty() {
+            const { count } = collectChanges();
+            state.dirtyCount = count;
+            const d = $('#dirty');
+            if (!d) return;
+            d.textContent = count ? `${count} unsaved change${count === 1 ? '' : 's'}` : 'No changes';
+            d.classList.toggle('on', !!count);
+            $('#btn-save').disabled = !count || state.busy;
+            $('#btn-discard').hidden = !count;
+        }
+
+        async function loadDetail(n, { keepTab } = {}) {
+            try {
+                const data = await PV.api(`/api/studies/${n}`);
+                if (data.exam) data.exam.missing = data.missing_fields || [];
+                data.corrupt = !!data.exam_corrupt;
+                state.detail = data;
+            } catch (err) {
+                $('#inspector').innerHTML = `<div class="empty insp-empty">${icon('alert')}<strong>Could not load study ${pad4(n)}</strong><span>${esc(err.message)}</span></div>`;
+                return;
+            }
+            if (!keepTab) state.tab = 'review';
+            renderInspector();
+        }
+
+        async function confirmDiscard() {
+            if (!state.dirtyCount) return true;
+            const ok = await PV.modal({
+                title: 'Discard unsaved changes?',
+                body: `<p>You have ${state.dirtyCount} unsaved change${state.dirtyCount === 1 ? '' : 's'} on study ${pad4(state.sel)}.</p>`,
+                confirm: 'Discard', tone: 'danger',
+            });
+            return !!ok;
+        }
+
+        async function select(n, { force } = {}) {
+            if (n === state.sel && !force) return;
+            if (!(await confirmDiscard())) return;
+            state.sel = n;
+            state.dirtyCount = 0;
+            history.replaceState(null, '', `${location.pathname}${location.search}#${pad4(n)}`);
+            document.querySelectorAll('.row').forEach(r =>
+                r.setAttribute('aria-selected', String(parseInt(r.dataset.n, 10) === n)));
+            const row = document.querySelector(`.row[data-n="${n}"]`);
+            if (row) row.scrollIntoView({ block: 'nearest' });
+            $('#ws').classList.add('show-insp');
+            $('#inspector').innerHTML = `<div style="padding:24px;display:grid;gap:14px">
+                <div class="skeleton" style="width:240px;height:22px"></div><div class="skeleton" style="width:60%"></div>
+                <div class="skeleton" style="width:90%;height:120px"></div></div>`;
+            await loadDetail(n);
+        }
+
+        async function deselect() {
+            if (!(await confirmDiscard())) return;
+            state.sel = null; state.detail = null; state.dirtyCount = 0;
+            history.replaceState(null, '', `${location.pathname}${location.search}`);
+            $('#ws').classList.remove('show-insp');
+            renderList();
+        }
+
+        // ============================================================ save & actions
+
+        async function save({ quiet } = {}) {
+            const { fields, count } = collectChanges();
+            if (!count) return true;
+            const n = state.sel;
+            const btn = $('#btn-save');
+            state.busy = true;
+            btn.classList.add('is-busy');
+            try {
+                const res = await PV.api(`/api/studies/${n}/exam`, { method: 'PUT', body: { fields } });
+                state.dirtyCount = 0;
+                if (!quiet) PV.toast(res.message || 'Saved.', 'ok');
                 await loadStudies();
-                if (EXPANDED != null) await loadDetail(EXPANDED);
+                await loadDetail(n, { keepTab: true });
+                return true;
+            } catch (err) {
+                PV.toast(`Save failed: ${err.message}`, 'bad', 7000);
+                return false;
+            } finally {
+                state.busy = false;
+                const b = $('#btn-save');
+                if (b) b.classList.remove('is-busy');
+                refreshDirty();
+            }
+        }
+
+        function discard() {
+            const tab = state.tab;
+            renderInspector();
+            state.tab = tab;
+        }
+
+        const TARGET = { send_dicom: 'the DICOM node', upload_http: 'HTTP storage' };
+
+        async function runAction(action, btn) {
+            const n = state.sel;
+            const { study } = state.detail;
+            const summary = state.studies.find(s => s.study_number === n) || {};
+            if (action === 'reextract') {
+                if (!(await confirmDiscard())) return;
+            } else {
+                const missing = PV.missingLabels(summary.exam_summary ? summary.exam_summary.missing_fields : null);
+                const noExam = !summary.exam_summary;
+                const parts = [];
+                if (noExam || missing.length) {
+                    parts.push(`<div class="callout warn" style="margin-bottom:12px">${icon('alert')}<div>
+                        <strong>Exam data incomplete.</strong> ${noExam ? 'No exam data has been extracted.'
+                            : `Missing: ${missing.map(esc).join(', ')}.`}
+                        You can export now and complete the exam record later.</div></div>`);
+                }
+                if (study.status === 'archived') {
+                    parts.push(`<p>Already exported${study.archived_via ? ` via ${esc(study.archived_via.toUpperCase())}` : ''} —
+                        this sends it again without moving any files.</p>`);
+                }
+                if (state.dirtyCount) {
+                    parts.push(`<p>Your ${state.dirtyCount} unsaved change(s) will be saved first, so corrected
+                        weight/age reach the exported files.</p>`);
+                }
+                parts.push(`<p>Send study <strong class="mono">${pad4(n)}</strong> to ${TARGET[action]}?</p>`);
+                const ok = await PV.modal({
+                    title: action === 'send_dicom' ? 'Send to DICOM node' : 'Upload to HTTP storage',
+                    body: parts.join(''),
+                    confirm: (noExam || missing.length) ? 'Export anyway' : (state.dirtyCount ? 'Save & send' : 'Send'),
+                });
+                if (!ok) return;
+                if (state.dirtyCount && !(await save({ quiet: true }))) return;
             }
 
-            document.addEventListener('DOMContentLoaded', loadStudies);
-        </script>
-    </body>
+            const liveBtn = document.querySelector(`[data-act="${action}"]`) || btn;
+            liveBtn.classList.add('is-busy');
+            try {
+                const res = await PV.api(`/api/studies/${n}/actions/${action}`, { method: 'POST' });
+                PV.toast(res.message || 'Done.', 'ok');
+            } catch (err) {
+                PV.toast(err.message, 'bad', 8000);
+            } finally {
+                await loadStudies();
+                state.dirtyCount = 0;
+                if (state.sel === n) await loadDetail(n, { keepTab: true });
+            }
+        }
+
+        async function bulkExport() {
+            const ready = state.studies.filter(s => s.status === 'ready');
+            const complete = ready.filter(s => !PV.needsInput(s));
+            const incomplete = ready.length - complete.length;
+            const targets = [['send_dicom', 'DICOM node', state.caps.dicom], ['upload_http', 'HTTP storage', state.caps.http]]
+                .filter(t => t[2]);
+            const body = `
+                <p>${ready.length} ${ready.length === 1 ? 'study is' : 'studies are'} ready:
+                   <strong>${complete.length}</strong> complete, <strong>${incomplete}</strong> with missing exam data.</p>
+                ${targets.length > 1 ? `<div class="seg" style="margin-bottom:14px">${targets.map((t, i) =>
+                    `<label style="flex:1;display:flex"><input type="radio" name="target" value="${t[0]}" ${i === 0 ? 'checked' : ''}
+                        style="display:none"><button type="button" style="flex:1" aria-pressed="${i === 0}"
+                        onclick="this.previousElementSibling.checked=true;this.closest('.seg').querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed', b===this))">${t[1]}</button></label>`).join('')}</div>`
+                    : `<input type="hidden" name="target" value="${targets[0][0]}"><p>Target: <strong>${targets[0][1]}</strong></p>`}
+                ${incomplete ? `<label class="check"><input type="checkbox" name="incl"> Include the ${incomplete} incomplete ${incomplete === 1 ? 'study' : 'studies'}</label>` : ''}`;
+            const fd = await PV.modal({ title: 'Export ready studies', body, confirm: 'Start export' });
+            if (!fd) return;
+            const action = fd.get('target');
+            const batch = fd.get('incl') ? ready : complete;
+            if (!batch.length) { PV.toast('Nothing to export — all ready studies are incomplete.', 'warn'); return; }
+            if (!(await confirmDiscard())) return;
+
+            const t = PV.toast(`Exporting 0/${batch.length}…`);
+            t.sticky();
+            let sent = 0, failed = 0;
+            const errors = [];
+            for (const s of batch) {
+                t.update(`Exporting ${sent + failed + 1}/${batch.length} · study ${pad4(s.study_number)}…`);
+                t.sticky();
+                try {
+                    await PV.api(`/api/studies/${s.study_number}/actions/${action}`, { method: 'POST' });
+                    sent++;
+                } catch (err) {
+                    failed++;
+                    errors.push(`${pad4(s.study_number)}: ${err.message}`);
+                }
+            }
+            t.update(failed ? `Exported ${sent}, failed ${failed}. ${errors.slice(0, 3).join(' · ')}` : `Exported ${sent} ${sent === 1 ? 'study' : 'studies'}.`,
+                failed ? 'bad' : 'ok');
+            await loadStudies();
+            state.dirtyCount = 0;
+            if (state.sel != null) await loadDetail(state.sel, { keepTab: true });
+        }
+
+        // ============================================================ events
+
+        $('#filters').addEventListener('click', e => {
+            const b = e.target.closest('[data-f]');
+            if (b) setFilter(b.dataset.f);
+        });
+        $('#list').addEventListener('click', e => {
+            const r = e.target.closest('.row');
+            if (r) select(parseInt(r.dataset.n, 10));
+        });
+        $('#q').addEventListener('input', e => { state.query = e.target.value.trim(); renderList(); });
+        $('#btn-bulk').addEventListener('click', bulkExport);
+
+        const insp = $('#inspector');
+        insp.addEventListener('input', refreshDirty);
+        insp.addEventListener('change', e => {
+            if (e.target.id === 'ri-select' && e.target.value !== '') {
+                // RHYTHM fixes the contrast phase per indication.
+                const opt = state.options.region_indications[parseInt(e.target.value, 10)];
+                setSeg('indication.iv_contrast', opt.contrast);
+            }
+            refreshDirty();
+        });
+        insp.addEventListener('click', e => {
+            const t = e.target.closest('button');
+            if (!t) return;
+            if (t.dataset.seg) { setSeg(t.dataset.seg, t.dataset.value); refreshDirty(); return; }
+            if (t.dataset.tab) {
+                state.tab = t.dataset.tab;
+                insp.querySelectorAll('[data-tab]').forEach(b => b.setAttribute('aria-selected', String(b === t)));
+                insp.querySelectorAll('[data-pane]').forEach(p => { p.hidden = p.dataset.pane !== state.tab; });
+                return;
+            }
+            if (t.dataset.editSeries) {
+                const row = insp.querySelector(`[data-series-row="${t.dataset.editSeries}"]`);
+                row.hidden = !row.hidden;
+                t.setAttribute('aria-expanded', String(!row.hidden));
+                if (!row.hidden) row.querySelector('input').focus();
+                return;
+            }
+            if (t.dataset.act) { runAction(t.dataset.act, t); return; }
+            if (t.id === 'btn-save') save();
+            else if (t.id === 'btn-discard') discard();
+            else if (t.id === 'btn-back') deselect();
+        });
+
+        function setSeg(path, value) {
+            const hidden = insp.querySelector(`input[type=hidden][data-path="${path}"]`);
+            if (!hidden) return;
+            hidden.value = value;
+            insp.querySelectorAll(`[data-seg="${path}"]`).forEach(b =>
+                b.setAttribute('aria-pressed', String(b.dataset.value === value)));
+        }
+
+        document.addEventListener('keydown', e => {
+            const inField = e.target.matches('input, textarea, select');
+            if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+                if (state.detail) { e.preventDefault(); save(); }
+                return;
+            }
+            if (e.key === 'Escape' && e.target.id === 'q') { e.target.value = ''; state.query = ''; renderList(); return; }
+            if (inField || e.ctrlKey || e.metaKey || e.altKey || document.querySelector('dialog[open]')) return;
+            if (e.key === '/') { e.preventDefault(); $('#q').focus(); return; }
+            if (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'j' || e.key === 'k') {
+                const rows = visibleStudies();
+                if (!rows.length) return;
+                e.preventDefault();
+                const i = rows.findIndex(s => s.study_number === state.sel);
+                const down = e.key === 'ArrowDown' || e.key === 'j';
+                const next = i < 0 ? 0 : Math.min(rows.length - 1, Math.max(0, i + (down ? 1 : -1)));
+                select(rows[next].study_number);
+            }
+        });
+
+        window.addEventListener('beforeunload', e => {
+            if (state.dirtyCount) { e.preventDefault(); e.returnValue = ''; }
+        });
+
+        // ============================================================ boot
+
+        (async () => {
+            try {
+                state.options = await PV.api('/api/options');
+            } catch (err) {
+                console.error(err);
+                PV.toast('Could not load form options.', 'bad');
+            }
+            await loadStudies();
+            const m = location.hash.match(/^#(\d+)$/);
+            if (m && state.studies.some(s => s.study_number === parseInt(m[1], 10))) {
+                await select(parseInt(m[1], 10));
+            }
+            // Keep the worklist current (new arrivals, processing progress)
+            // without touching the inspector the operator may be editing.
+            let first = true;
+            PV.poll(async () => {
+                if (first) { first = false; return; }
+                const prev = state.sel != null ? state.studies.find(s => s.study_number === state.sel) : null;
+                const prevStatus = prev && prev.status;
+                if (!(await loadStudies())) return;
+                const now = state.sel != null ? state.studies.find(s => s.study_number === state.sel) : null;
+                if (now && prevStatus && now.status !== prevStatus && !state.dirtyCount) {
+                    await loadDetail(state.sel, { keepTab: true });
+                }
+            }, 20000);
+        })();
+    </script>
+</body>
 </html>

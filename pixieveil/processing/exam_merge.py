@@ -82,6 +82,42 @@ _STALE_NOTE_PREFIXES = (
 )
 
 
+# Fields an exam must carry before it is considered complete for RHYTHM
+# entry. Advisory only: the dashboard warns (and bulk export skips
+# incomplete studies by default) but never hard-blocks an export on these.
+REQUIRED_PATHS = (
+    "image_quality",
+    "patient.weight_kg",
+    "patient.age_years",
+    "indication.region",
+    "indication.clinical_indication",
+    "indication.iv_contrast",
+    "scanner.rhythm_scanner_id",
+)
+
+
+def _get_dotted(data: dict, path: str) -> Any:
+    node: Any = data
+    for key in path.split("."):
+        if not isinstance(node, dict):
+            return None
+        node = node.get(key)
+    return node
+
+
+def missing_required(data: Optional[dict]) -> list[str]:
+    """Return the REQUIRED_PATHS that are null/empty in *data* (all of them if
+    *data* is None). Blank/whitespace-only strings count as missing."""
+    if data is None:
+        return list(REQUIRED_PATHS)
+    missing = []
+    for path in REQUIRED_PATHS:
+        value = _get_dotted(data, path)
+        if value is None or (isinstance(value, str) and not value.strip()):
+            missing.append(path)
+    return missing
+
+
 def _is_series_path(path: str) -> Optional[tuple[int, str]]:
     """Return (series_number, leaf) if path is 'series.<N>.<leaf>' and leaf
     is one of the whitelisted per-series fields — not just shape-matching."""

@@ -452,3 +452,27 @@ class TestManualExportBlockedOnDefacingFailure:
 
         assert "defacing did not complete" not in result.get("message", "")
         assert result["ok"] is True
+
+
+class TestStatusCountsAndExamSummary:
+    def test_status_counts_report_every_status(self, storage_manager):
+        register_study(storage_manager, 1, "ready")
+        register_study(storage_manager, 2, "archived", archived_via="dicom")
+        register_study(storage_manager, 3, "ready")
+
+        counts = storage_manager.get_status_counts_sync()
+
+        assert counts == {"receiving": 0, "complete": 0, "defacing": 0,
+                          "defacing_failed": 0, "ready": 2, "archived": 1}
+
+    def test_exam_summary_reports_missing_fields_and_completeness(self):
+        summary = StorageManager._exam_summary({
+            "image_quality": None,
+            "patient": {"age_years": 5.0, "weight_kg": None},
+            "indication": {"region": "Head", "clinical_indication": "Trauma",
+                           "iv_contrast": "Non-contrast"},
+            "scanner": {"rhythm_scanner_id": "uuid"},
+        })
+        assert summary["missing_fields"] == ["image_quality", "patient.weight_kg"]
+        assert summary["completeness"] == {"filled": 5, "required": 7}
+        assert summary["patient"] == {"age_years": 5.0, "weight_kg": None}

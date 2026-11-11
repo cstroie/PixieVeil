@@ -92,3 +92,39 @@ class TestRecomputeBuckets:
         # The stale "needs manual entry" note should have been dropped once
         # a real value resolved the bucket.
         assert not any("PatientWeight absent" in n for n in data["notes"])
+
+
+class TestMissingRequired:
+    def _full(self) -> dict:
+        return {
+            "image_quality": "Diagnostic",
+            "patient": {"age_years": 8.0, "weight_kg": 25.0},
+            "indication": {"region": "Head", "clinical_indication": "Trauma",
+                           "iv_contrast": "Non-contrast"},
+            "scanner": {"rhythm_scanner_id": "uuid"},
+        }
+
+    def test_complete_exam_has_nothing_missing(self):
+        assert exam_merge.missing_required(self._full()) == []
+
+    def test_none_means_everything_missing(self):
+        assert exam_merge.missing_required(None) == list(exam_merge.REQUIRED_PATHS)
+
+    def test_null_blank_and_absent_all_count_as_missing(self):
+        data = self._full()
+        data["image_quality"] = None
+        data["scanner"]["rhythm_scanner_id"] = "   "
+        del data["patient"]["weight_kg"]
+        assert exam_merge.missing_required(data) == [
+            "image_quality", "patient.weight_kg", "scanner.rhythm_scanner_id",
+        ]
+
+    def test_zero_is_a_value_not_missing(self):
+        data = self._full()
+        data["patient"]["age_years"] = 0
+        assert exam_merge.missing_required(data) == []
+
+    def test_non_dict_intermediate_is_missing_not_an_error(self):
+        data = self._full()
+        data["patient"] = None
+        assert exam_merge.missing_required(data) == ["patient.weight_kg", "patient.age_years"]

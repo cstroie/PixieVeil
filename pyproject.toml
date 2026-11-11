@@ -48,5 +48,10 @@ Repository = "https://github.com/cstroie/PixieVeil.git"
 [tool.setuptools.packages.find]
 include = ["pixieveil*"]
 
+# The dashboard serves these from disk next to its module — ship them in
+# non-editable installs too.
+[tool.setuptools.package-data]
+"pixieveil.dashboard" = ["templates/*.html", "static/*"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

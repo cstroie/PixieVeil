@@ -74,7 +74,10 @@ logic — arcname layout, `_pre_deface` exclusion, the default-vs-explicit
 `source_dir` split used for retained studies, empty/missing-source-dir
 edge cases), and `RemoteStorage` (config resolution and the HTTP upload
 path against a small fake `aiohttp.ClientSession`/response substituted with
-`monkeypatch` — never a real HTTP request).
+`monkeypatch` — never a real HTTP request), and the
+dashboard HTTP layer (`tests/test_dashboard.py`: every route's status
+codes/payload shape, the auth middleware, and `/api/options`, driven through
+aiohttp's in-process `TestServer`/`TestClient` on a real `StorageManager`).
 
 Deliberately still out of scope: `dicom_to_nifti`, the pixel-array half of
 `nifti_to_dicom`, `run_nnunet_inference`, `_run_nnunet_and_apply_mask`, and
@@ -142,7 +145,9 @@ Single asyncio event loop. All blocking I/O (nnUNet inference, ZIP, file I/O) us
 | `pixieveil/storage/dicom_storage.py` | DICOM C-STORE export to remote node |
 | `pixieveil/storage/remote_storage.py` | HTTP multipart ZIP upload |
 | `pixieveil/storage/zip_manager.py` | ZIP archive creation |
-| `pixieveil/dashboard/server.py` | aiohttp web server: `/`, `/stats`, `/health`, plus the `/studies` review page and its `/api/studies*` JSON API (list/detail/save/actions) |
+| `pixieveil/dashboard/server.py` | aiohttp web server: `/` status page + `/stats` (pipeline status counts, KPIs, grouped counters), `/health`, the `/studies` review page and its `/api/studies*` JSON API (list/detail/save/actions), `/api/options` (form vocabularies), `/static/*` |
+| `pixieveil/dashboard/options.py` | RHYTHM region/indication combos, image-quality and contrast vocabularies served by `/api/options` (single source for the review form's dropdowns) |
+| `pixieveil/dashboard/static/` | Self-hosted `theme.css` (dark/light design tokens) and `common.js` (API/auth, toasts, dialogs, polling) — no CDN, works on an offline LAN |
 | `pixieveil/processing/exam_merge.py` | Manual-edit/provenance-overlay semantics for the exam sidecar — shared by the `/api/studies/{n}/exam` save handler and the manual re-extract action |
 
 ## Key design decisions
@@ -162,6 +167,8 @@ Single asyncio event loop. All blocking I/O (nnUNet inference, ZIP, file I/O) us
 **Manual provenance overlay** — `ExamSidecar`'s data carries a top-level `manual` key (`{"edited_at": ..., "fields": {"patient.weight_kg": 34.0, ...}}`) recording which dotted paths a human set via the `/studies` dashboard page, distinct from the canonical (effective) values those paths already hold. This exists because `_process_study()` skips extraction entirely when `<study_number>_exam.json` already exists — a naive re-extraction would otherwise silently discard hand-entered fields (weight, image quality, an indication the lookup table couldn't match, per-series DLP/CTDIvol read off a console screen). `pixieveil/processing/exam_merge.py` is the single place this overlay logic lives: `apply_manual()` writes `manual.fields` into the canonical dict (per-series fields keyed `series.<series_number>.<leaf>`, never list index, since `extract()` rebuilds `series[]` from disk and the set can change between runs), `merge_extracted()` re-applies a previous sidecar's `manual` block onto a freshly extracted one, and `recompute_buckets()` reruns `exam_extractor._determine_bucket()` (a module-level function, not a method — it needs no lookup-table state) so a manually-entered weight or age immediately updates `protocol_type`/`examination_group` instead of leaving them stale. Both the PUT-exam handler (`StorageManager.save_exam`) and the manual re-extract action (`StorageManager.manual_reextract`) go through this module so the semantics never drift between the two call sites.
 
 **Patient weight/age write-back** — `StorageManager._save_exam_sync()` also patches a manually-corrected `patient.weight_kg`/`patient.age_years` straight into `PatientWeight`/`PatientAge` on every anonymized `.dcm` file under the study's directory (`_writeback_patient_fields_sync`), not just the exam sidecar — otherwise the correction would never reach whatever gets exported. Only the field(s) present in *this* save's `manual_fields` are patched (not the full merged overlay), and only while the study is still sitting in `base_path` (`sidecar.status != "archived"`); once a study is archived its DICOM copies are already gone, so nothing to patch. Other manual fields (indication, protocol name, per-series DLP, etc.) stay sidecar-only — they don't have a clean 1:1 DICOM tag to write back to.
+
+**Exam completeness** — `exam_merge.REQUIRED_PATHS` (image quality, weight, age, region + clinical indication, IV contrast, RHYTHM scanner ID) defines when an exam record is complete; `missing_required()` is exposed per study as `missing_fields`/`completeness` in `/api/studies` and the detail endpoint. Advisory only: the `/studies` page flags incomplete exams, warns before exporting one, and its bulk export skips them unless explicitly included — the server never refuses an export for missing exam data (unlike `defacing_failed`).
 
 **Device fallback** — `Defacer._resolve_device()` validates `cuda`/`mps`/`cpu` at startup with a test tensor and falls back to CPU automatically.
 

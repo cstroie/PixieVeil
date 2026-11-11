@@ -1,326 +1,358 @@
 <!DOCTYPE html>
 <html lang="en">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>PixieVeil Dashboard</title>
-        <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
-        <style>
-            article {
-                margin-bottom: var(--pico-spacing);
-            }
-            .metrics {
-                margin-bottom: calc(var(--pico-spacing) * 1.5);
-            }
-            .metrics h3 {
-                margin-bottom: calc(var(--pico-spacing) * 0.5);
-            }
-            .metrics article {
-                text-align: center;
-                padding: 1.25rem 1rem;
-                margin-bottom: 0;
-                transition: border-color 0.2s;
-                display: flex;
-                flex-direction: column;
-                gap: 0.35rem;
-            }
-            .metrics article:hover {
-                border-color: var(--pico-primary);
-            }
-            .metrics article strong {
-                display: block;
-                font-size: 0.8rem;
-                font-weight: var(--pico-font-weight);
-                text-transform: uppercase;
-                letter-spacing: 0.03em;
-                color: var(--pico-muted-color);
-            }
-            .metrics article .value-row {
-                display: flex;
-                align-items: baseline;
-                justify-content: center;
-                gap: 0.35rem;
-            }
-            .metrics article span {
-                font-size: 2rem;
-                line-height: 1;
-                font-weight: bold;
-                color: var(--pico-primary);
-                font-variant-numeric: tabular-nums;
-            }
-            .metrics article .unit {
-                font-size: 0.8rem;
-                font-weight: normal;
-                color: var(--pico-muted-color);
-            }
-            .metrics.errors article span,
-            .metrics article span.error-value {
-                color: var(--pico-form-element-invalid-focus-color);
-            }
-            .sub-value {
-                color: var(--pico-muted-color);
-                font-size: 0.8rem;
-            }
-            .defacing-disabled {
-                color: var(--pico-muted-color);
-                font-style: italic;
-            }
-            .section-title {
-                display: flex;
-                align-items: baseline;
-                gap: 0.75rem;
-                margin-bottom: calc(var(--pico-spacing) * 0.5);
-            }
-            .section-title h3 {
-                margin: 0;
-            }
-            .badge {
-                font-size: 0.75rem;
-                font-weight: var(--pico-font-weight);
-                text-transform: uppercase;
-                letter-spacing: 0.02em;
-                padding: 0.15rem 0.55rem;
-                border-radius: var(--pico-border-radius);
-            }
-            .badge-enabled {
-                color: var(--pico-form-element-valid-focus-color);
-                border: 1px solid var(--pico-form-element-valid-focus-color);
-            }
-            .badge-disabled {
-                color: var(--pico-muted-color);
-                border: 1px solid var(--pico-muted-border-color);
-            }
-            .status-bar {
-                display: flex;
-                flex-wrap: wrap;
-                gap: 0.75rem 1.25rem;
-                align-items: center;
-            }
-            .led {
-                display: inline-flex;
-                align-items: center;
-                gap: 0.4rem;
-                font-size: 0.9rem;
-            }
-            .led-dot {
-                display: inline-block;
-                width: 12px;
-                height: 12px;
-                border-radius: 50%;
-                background-color: var(--pico-muted-border-color);
-                flex-shrink: 0;
-                transition: background-color 0.3s, box-shadow 0.3s;
-            }
-            .led-dot.active {
-                background-color: var(--pico-form-element-valid-focus-color);
-                box-shadow: 0 0 6px var(--pico-form-element-valid-focus-color);
-            }
-            .led-dot.active.led-error {
-                background-color: var(--pico-form-element-invalid-focus-color);
-                box-shadow: 0 0 6px var(--pico-form-element-invalid-focus-color);
-            }
-            .last-updated {
-                font-size: 0.75rem;
-                color: var(--pico-muted-color);
-                margin: 0 0 0 auto;
-            }
-        </style>
-    </head>
-    <body class="container">
-        <nav>
-            <ul>
-                <li><strong>PixieVeil</strong></li>
-            </ul>
-            <ul>
-                <li><a href="/" aria-current="page">Dashboard</a></li>
-                <li><a href="/studies">Studies</a></li>
-            </ul>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PixieVeil · Status</title>
+    <script>
+        try { document.documentElement.dataset.theme = localStorage.getItem('pixieveil_theme') || 'dark'; }
+        catch (_e) { document.documentElement.dataset.theme = 'dark'; }
+    </script>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='1' y='1' width='30' height='30' rx='8' fill='%23151b22' stroke='%233cc8c0' stroke-width='2'/%3E%3Cg fill='%233cc8c0'%3E%3Crect x='8' y='8' width='4' height='4' rx='1'/%3E%3Crect x='14' y='8' width='4' height='4' rx='1' opacity='.6'/%3E%3Crect x='8' y='14' width='4' height='4' rx='1' opacity='.6'/%3E%3Crect x='20' y='8' width='4' height='4' rx='1' opacity='.3'/%3E%3Crect x='14' y='14' width='4' height='4' rx='1' opacity='.3'/%3E%3Crect x='8' y='20' width='4' height='4' rx='1' opacity='.3'/%3E%3C/g%3E%3C/svg%3E">
+    <link rel="stylesheet" href="/static/theme.css">
+    <style>
+        .page { max-width: 1180px; margin: 0 auto; padding: 28px 20px 48px; display: flex; flex-direction: column; gap: 20px; }
+
+        .hero { display: flex; align-items: flex-end; gap: 16px; flex-wrap: wrap; }
+        .hero h1 { font-size: 22px; }
+        .hero .meta { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+        .hero .spacer { flex: 1; }
+        .refresh-ctl { display: flex; align-items: center; gap: 6px; color: var(--text-faint); font-size: 12px; }
+
+        /* ------------------------------------------------ pipeline */
+        .pipeline { padding: 26px 22px 22px; }
+        .stages { display: grid; grid-template-columns: 1fr 56px 1fr 56px 1fr 56px 1fr; align-items: start; }
+        .stage {
+            display: flex; flex-direction: column; align-items: center; text-align: center; gap: 4px;
+            padding: 6px 4px; border-radius: var(--radius); color: inherit;
+        }
+        a.stage:hover { background: var(--hover); color: inherit; }
+        .stage-ring {
+            position: relative; width: 52px; height: 52px; margin-bottom: 8px;
+            display: grid; place-items: center; border-radius: 50%;
+            border: 1.5px solid var(--border-strong); background: var(--raised); color: var(--text-dim);
+            transition: border-color 0.3s, color 0.3s, background 0.3s;
+        }
+        .stage-ring svg { width: 22px; height: 22px; }
+        .stage.is-active .stage-ring { border-color: var(--busy); color: var(--busy); background: var(--busy-soft); }
+        .stage.is-active .stage-ring::after {
+            content: ""; position: absolute; inset: -6px; border-radius: 50%;
+            border: 1.5px solid var(--busy); opacity: 0; animation: ripple 1.8s ease-out infinite;
+        }
+        .stage.tone-ok .stage-ring { border-color: var(--ok); color: var(--ok); background: var(--ok-soft); }
+        @keyframes ripple { 0% { opacity: 0.7; transform: scale(0.9); } 100% { opacity: 0; transform: scale(1.35); } }
+        .stage-ring { order: 0; } .stage-count { order: 1; } .stage-text { order: 2; } .stage-extra { order: 3; }
+        .stage-count { font-size: 30px; font-weight: 650; line-height: 1.1; letter-spacing: -0.02em; }
+        .stage-count.zero { color: var(--text-faint); }
+        .stage-label { font-weight: 600; }
+        .stage-sub { font-size: 12px; color: var(--text-faint); min-height: 18px; }
+        .stage-state { font-size: 11.5px; font-weight: 600; color: var(--busy); min-height: 18px; }
+        .stage-extra { margin-top: 6px; min-height: 22px; }
+
+        .flow { position: relative; height: 2px; margin-top: 26px; background: var(--border-strong); border-radius: 2px; overflow: hidden; }
+        .flow.is-active {
+            background: repeating-linear-gradient(90deg, var(--busy) 0 8px, transparent 8px 14px);
+            background-size: 28px 2px; animation: flow 0.8s linear infinite;
+        }
+        @keyframes flow { to { background-position: 28px 0; } }
+
+        /* ------------------------------------------------ callouts */
+        .callouts { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+        .callouts:empty { display: none; }
+        a.callout { color: var(--text-dim); transition: transform 0.12s, border-color 0.12s; }
+        a.callout:hover { transform: translateY(-1px); border-color: var(--border-strong); color: var(--text-dim); }
+        .callout .go { margin-left: auto; align-self: center; opacity: 0.6; }
+        .callout.ok svg { color: var(--ok); }
+
+        /* ------------------------------------------------ KPIs */
+        .kpis { display: grid; gap: 12px; grid-template-columns: repeat(5, minmax(0, 1fr)); }
+        .kpi { padding: 16px 18px; }
+        .kpi .k-label { font-size: 12px; font-weight: 600; color: var(--text-dim); }
+        .kpi .k-value { font-size: 26px; font-weight: 650; letter-spacing: -0.02em; margin: 6px 0 2px; }
+        .kpi .k-sub { font-size: 12px; color: var(--text-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .kpi.alert .k-value { color: var(--bad); }
+
+        /* ------------------------------------------------ counters drawer */
+        details.drawer > summary {
+            list-style: none; cursor: pointer; display: flex; align-items: center; gap: 10px;
+            padding: 14px 18px; font-weight: 600; color: var(--text-dim);
+        }
+        details.drawer > summary::-webkit-details-marker { display: none; }
+        details.drawer > summary svg { width: 16px; height: 16px; transition: transform 0.15s; }
+        details.drawer[open] > summary svg { transform: rotate(90deg); }
+        details.drawer > summary:hover { color: var(--text); }
+        .details-grid {
+            display: grid; gap: 22px 28px; padding: 4px 18px 20px;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+        }
+        .details-grid h4 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-faint); margin-bottom: 6px; }
+        .kv { display: flex; justify-content: space-between; gap: 12px; padding: 5px 0; border-bottom: 1px dashed var(--border); font-size: 13px; }
+        .kv:last-child { border-bottom: 0; }
+        .kv span:first-child { color: var(--text-dim); }
+
+        @media (max-width: 900px) {
+            .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+            .stages { grid-template-columns: 1fr; gap: 6px; }
+            .stage { flex-direction: row; text-align: left; gap: 14px; flex-wrap: wrap; }
+            .stage-ring { margin: 0; }
+            .stage-count { order: 3; margin-left: auto; }
+            .flow { width: 2px; height: 16px; margin: 0 0 0 31px; }
+            .flow.is-active { background: repeating-linear-gradient(180deg, var(--busy) 0 6px, transparent 6px 10px); background-size: 2px 20px; animation: none; }
+            .stage-text { display: flex; flex-direction: column; }
+        }
+        @media (max-width: 560px) {
+            .topbar .brand small, .conn .label { display: none; }
+            .topbar { gap: 12px; }
+        }
+    </style>
+</head>
+<body>
+    <header class="topbar">
+        <a class="brand" href="/">
+            <svg viewBox="0 0 32 32" aria-hidden="true"><rect x="1.5" y="1.5" width="29" height="29" rx="8" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.5"/><g fill="var(--accent)"><rect x="8" y="8" width="4" height="4" rx="1"/><rect x="14" y="8" width="4" height="4" rx="1" opacity=".6"/><rect x="8" y="14" width="4" height="4" rx="1" opacity=".6"/><rect x="20" y="8" width="4" height="4" rx="1" opacity=".3"/><rect x="14" y="14" width="4" height="4" rx="1" opacity=".3"/><rect x="8" y="20" width="4" height="4" rx="1" opacity=".3"/></g><path d="M8 25.5C14 24 21 18 25 8" stroke="var(--accent)" stroke-width="1.6" fill="none" stroke-linecap="round"/></svg>
+            <span>PixieVeil <small>DICOM anonymizer</small></span>
+        </a>
+        <nav class="nav">
+            <a href="/" aria-current="page">Status</a>
+            <a href="/studies">Studies<span class="count" id="nav-needs" hidden></span></a>
         </nav>
+        <div class="spacer"></div>
+        <span class="conn" id="conn"><span class="dot"></span><span class="label">Connecting…</span></span>
+        <button type="button" class="btn btn-ghost btn-icon" data-theme-toggle></button>
+    </header>
 
-        <hgroup>
-            <h1>PixieVeil Dashboard</h1>
-            <p>Real-time DICOM Anonymization Server</p>
-        </hgroup>
-        
-        <header>
-            <h2>System Status</h2>
-            <article>
-                <div class="status-bar" id="status-bar">
-                    <span class="led"><span class="led-dot" id="led-server"></span>Server</span>
-                    <span class="led"><span class="led-dot" id="led-receiving"></span>Receiving</span>
-                    <span class="led"><span class="led-dot" id="led-waiting"></span>Waiting</span>
-                    <span class="led"><span class="led-dot" id="led-defacing"></span>Defacing</span>
-                    <span class="led"><span class="led-dot" id="led-exporting"></span>Exporting</span>
-                    <span class="last-updated">Last updated: <span id="last-updated">Never</span></span>
-                </div>
-            </article>
-        </header>
-        
-        <main>
-            <div id="metrics-container"><p aria-busy="true">Loading metrics…</p></div>
-        </main>
+    <main class="page">
+        <section class="hero">
+            <div>
+                <h1>Pipeline</h1>
+                <div class="meta" id="meta"><span class="skeleton" style="width:220px"></span></div>
+            </div>
+            <div class="spacer"></div>
+            <div class="refresh-ctl">
+                <span id="updated">—</span>
+                <button type="button" class="btn btn-ghost btn-icon btn-sm" id="btn-pause" title="Pause auto-refresh"></button>
+                <button type="button" class="btn btn-ghost btn-icon btn-sm" id="btn-refresh" title="Refresh now"></button>
+            </div>
+        </section>
 
-        <footer class="grid">
-            <button onclick="refreshData()" role="button">Refresh Data</button>
-            <button onclick="toggleAutoRefresh()" id="auto-refresh-btn" role="button" class="secondary">Disable Auto Refresh</button>
-        </footer>
+        <section class="card pipeline" aria-label="Processing pipeline">
+            <div class="stages">
+                <a class="stage" id="st-receive" href="/studies?filter=progress">
+                    <div class="stage-ring" data-icon="inbox"></div>
+                    <div class="stage-text">
+                        <div class="stage-label">Receive</div>
+                        <div class="stage-sub">C-STORE · anonymize</div>
+                        <div class="stage-state"></div>
+                    </div>
+                    <div class="stage-count num">–</div>
+                </a>
+                <div class="flow" id="fl-1"></div>
+                <a class="stage" id="st-process" href="/studies?filter=progress">
+                    <div class="stage-ring" data-icon="redo"></div>
+                    <div class="stage-text">
+                        <div class="stage-label">Process</div>
+                        <div class="stage-sub">extract · deface</div>
+                        <div class="stage-state"></div>
+                    </div>
+                    <div class="stage-count num">–</div>
+                    <div class="stage-extra"></div>
+                </a>
+                <div class="flow" id="fl-2"></div>
+                <a class="stage" id="st-ready" href="/studies?filter=ready">
+                    <div class="stage-ring" data-icon="check"></div>
+                    <div class="stage-text">
+                        <div class="stage-label">Ready</div>
+                        <div class="stage-sub">awaiting manual export</div>
+                        <div class="stage-state"></div>
+                    </div>
+                    <div class="stage-count num">–</div>
+                </a>
+                <div class="flow" id="fl-3"></div>
+                <a class="stage" id="st-exported" href="/studies?filter=exported">
+                    <div class="stage-ring" data-icon="send"></div>
+                    <div class="stage-text">
+                        <div class="stage-label">Exported</div>
+                        <div class="stage-sub">&nbsp;</div>
+                        <div class="stage-state"></div>
+                    </div>
+                    <div class="stage-count num">–</div>
+                </a>
+            </div>
+        </section>
 
-        <script>
-            let autoRefreshInterval = null;
-            let isAutoRefreshEnabled = true;
+        <section class="callouts" id="callouts" aria-live="polite"></section>
 
-            async function fetchStats() {
-                try {
-                    const response = await fetch('/stats');
-                    if (!response.ok) {
-                        throw new Error('Network response was not ok');
-                    }
-                    const data = await response.json();
-                    updateDashboard(data);
-                } catch (error) {
-                    console.error('Error fetching stats:', error);
-                    const serverDot = document.getElementById('led-server');
-                    serverDot.classList.add('active', 'led-error');
-                    document.getElementById('metrics-container').innerHTML = '<p>Could not load metrics. Retrying…</p>';
-                }
-            }
+        <section class="kpis" id="kpis"></section>
 
-            function formatValue(value) {
-                if (typeof value === 'number') {
-                    return value.toLocaleString();
-                }
-                return value;
-            }
+        <details class="card drawer" id="drawer">
+            <summary><span data-icon="chevron"></span>All counters</summary>
+            <div class="details-grid" id="details"></div>
+        </details>
+    </main>
 
-            function setLed(id, active, extraClass) {
-                const dot = document.getElementById(id);
-                dot.classList.toggle('active', active);
-                if (extraClass) dot.classList.toggle(extraClass, active);
-            }
+    <script src="/static/common.js"></script>
+    <script>
+        'use strict';
+        const { esc, fmtInt, icon } = PV;
+        let lastOk = 0;
+        let tick = 0;
+        let studies = null;
 
-            function updateDashboard(data) {
-                const ps = data.pipeline_status || {};
-                const serverUp = data.server_status === 'running';
+        document.querySelectorAll('[data-icon]').forEach(el => { el.innerHTML = icon(el.dataset.icon); });
+        document.getElementById('btn-refresh').innerHTML = icon('refresh');
 
-                // Server LED: always lit, green when up, red when stopped
-                const serverDot = document.getElementById('led-server');
-                serverDot.classList.add('active');
-                serverDot.classList.toggle('led-error', !serverUp);
+        function setStage(id, { count, active, sub, state, tone, extra }) {
+            const el = document.getElementById(id);
+            el.classList.toggle('is-active', !!active);
+            el.classList.toggle('tone-ok', tone === 'ok' && !active);
+            const c = el.querySelector('.stage-count');
+            c.textContent = fmtInt(count);
+            c.classList.toggle('zero', !count);
+            if (sub !== undefined) el.querySelector('.stage-sub').textContent = sub;
+            el.querySelector('.stage-state').textContent = active ? (state || 'working…') : '';
+            const ex = el.querySelector('.stage-extra');
+            if (ex) ex.innerHTML = extra || '';
+        }
 
-                setLed('led-receiving', !!ps.receiving, null);
-                setLed('led-waiting',   !!ps.waiting,   null);
-                setLed('led-defacing',  !!ps.defacing,  null);
-                setLed('led-exporting', !!ps.exporting, null);
-
-                document.getElementById('last-updated').textContent = new Date().toLocaleTimeString();
-
-                const container = document.getElementById('metrics-container');
-                container.innerHTML = '';
-
-                data.sections.forEach(section => {
-                    const isDefacing = section.title === 'Defacing';
-
-                    const sectionEl = document.createElement('section');
-                    sectionEl.className = 'metrics';
-                    if (section.class) {
-                        sectionEl.classList.add(section.class);
-                    }
-
-                    const titleRow = document.createElement('div');
-                    titleRow.className = 'section-title';
-
-                    const title = document.createElement('h3');
-                    title.textContent = section.title;
-                    titleRow.appendChild(title);
-
-                    if (isDefacing) {
-                        const badge = document.createElement('span');
-                        badge.className = data.defacing_enabled ? 'badge badge-enabled' : 'badge badge-disabled';
-                        badge.textContent = data.defacing_enabled ? 'enabled' : 'disabled';
-                        titleRow.appendChild(badge);
-                    }
-
-                    sectionEl.appendChild(titleRow);
-
-                    if (isDefacing && !data.defacing_enabled) {
-                        const msg = document.createElement('p');
-                        msg.className = 'defacing-disabled';
-                        msg.textContent = 'Defacing is not enabled in the current configuration.';
-                        sectionEl.appendChild(msg);
-                        container.appendChild(sectionEl);
-                        return;
-                    }
-
-                    const grid = document.createElement('div');
-                    grid.className = 'grid';
-
-                    section.metrics.forEach(metric => {
-                        const article = document.createElement('article');
-
-                        const label = document.createElement('strong');
-                        label.textContent = metric.label;
-                        article.appendChild(label);
-
-                        const valueRow = document.createElement('div');
-                        valueRow.className = 'value-row';
-
-                        const valueSpan = document.createElement('span');
-                        valueSpan.textContent = formatValue(metric.value);
-                        if (isDefacing && metric.label === 'Errors' && metric.value > 0) {
-                            valueSpan.classList.add('error-value');
-                        }
-                        valueRow.appendChild(valueSpan);
-
-                        if (metric.suffix) {
-                            const unit = document.createElement('span');
-                            unit.className = 'unit';
-                            unit.textContent = metric.suffix;
-                            valueRow.appendChild(unit);
-                        }
-
-                        article.appendChild(valueRow);
-
-                        if (metric.sub_value !== undefined) {
-                            const subLine = document.createElement('small');
-                            subLine.className = 'sub-value';
-                            let subText = formatValue(metric.sub_value);
-                            if (metric.sub_suffix) subText += ' ' + metric.sub_suffix;
-                            subLine.textContent = subText;
-                            article.appendChild(subLine);
-                        }
-
-                        grid.appendChild(article);
-                    });
-
-                    sectionEl.appendChild(grid);
-                    container.appendChild(sectionEl);
-                });
-            }
-
-            function refreshData() {
-                fetchStats();
-            }
-
-            function toggleAutoRefresh() {
-                const btn = document.getElementById('auto-refresh-btn');
-                if (isAutoRefreshEnabled) {
-                    clearInterval(autoRefreshInterval);
-                    autoRefreshInterval = null;
-                    isAutoRefreshEnabled = false;
-                    btn.textContent = 'Enable Auto Refresh';
-                    btn.classList.remove('secondary');
-                } else {
-                    autoRefreshInterval = setInterval(fetchStats, 5000);
-                    isAutoRefreshEnabled = true;
-                    btn.textContent = 'Disable Auto Refresh';
-                    btn.classList.add('secondary');
-                }
-            }
-
-            document.addEventListener('DOMContentLoaded', function() {
-                fetchStats();
-                autoRefreshInterval = setInterval(fetchStats, 5000);
+        function renderPipeline(data) {
+            const a = data.pipeline.active || {};
+            const sc = data.pipeline.status_counts || {};
+            const caps = data.capabilities || {};
+            setStage('st-receive', { count: sc.receiving, active: a.receiving, state: 'receiving images' });
+            setStage('st-process', {
+                count: (sc.complete || 0) + (sc.defacing || 0),
+                active: a.waiting || a.defacing,
+                state: a.defacing ? 'defacing' : 'extracting',
+                sub: data.defacing_enabled ? 'extract · deface' : 'extract · defacing off',
+                extra: sc.defacing_failed
+                    ? `<span class="pill bad">${sc.defacing_failed} deface failed</span>` : '',
             });
-        </script>
-    </body>
+            setStage('st-ready', { count: sc.ready, tone: sc.ready ? 'ok' : '' });
+            const targets = [caps.dicom && 'DICOM', caps.http && 'HTTP'].filter(Boolean);
+            setStage('st-exported', {
+                count: sc.archived, active: a.exporting, state: 'sending',
+                sub: targets.length ? `via ${targets.join(' · ')}` : 'no export target set',
+            });
+            document.getElementById('fl-1').classList.toggle('is-active', !!a.receiving);
+            document.getElementById('fl-2').classList.toggle('is-active', !!(a.waiting || a.defacing));
+            document.getElementById('fl-3').classList.toggle('is-active', !!a.exporting);
+
+            const meta = document.getElementById('meta');
+            meta.innerHTML = [
+                `<span class="pill ok">Running · up ${esc(PV.fmtDuration(data.uptime_s))}</span>`,
+                data.defacing_enabled
+                    ? '<span class="pill plain">Defacing on</span>'
+                    : '<span class="pill plain dim">Defacing off</span>',
+                caps.dicom ? '<span class="pill plain">DICOM export</span>' : '',
+                caps.http ? '<span class="pill plain">HTTP export</span>' : '',
+            ].join('');
+        }
+
+        function renderKpis(kpis) {
+            document.getElementById('kpis').innerHTML = kpis.map(k => `
+                <div class="card kpi ${k.alert ? 'alert' : ''}">
+                    <div class="k-label">${esc(k.label)}</div>
+                    <div class="k-value num">${esc(fmtInt(k.value))}</div>
+                    <div class="k-sub" title="${esc(k.sub)}">${esc(k.sub)}</div>
+                </div>`).join('');
+        }
+
+        function renderDetails(groups) {
+            document.getElementById('details').innerHTML = groups.map(g => `
+                <div>
+                    <h4>${esc(g.title)}</h4>
+                    ${g.rows.map(([label, value]) =>
+                        `<div class="kv"><span>${esc(label)}</span><span class="num">${esc(fmtInt(value))}</span></div>`
+                    ).join('')}
+                </div>`).join('');
+        }
+
+        function renderCallouts(stats) {
+            const host = document.getElementById('callouts');
+            const sc = (stats && stats.pipeline.status_counts) || {};
+            const items = [];
+            if (studies) {
+                const needs = studies.filter(PV.needsInput).length;
+                const nav = document.getElementById('nav-needs');
+                nav.hidden = !needs;
+                nav.textContent = needs;
+                if (needs) {
+                    items.push({ tone: 'warn', icon: 'edit', href: '/studies?filter=needs',
+                        html: `<strong>${needs} ${needs === 1 ? 'study needs' : 'studies need'} data entry</strong><br>
+                               Image quality, weight, indication or scanner ID still missing.` });
+                }
+            }
+            if (sc.defacing_failed) {
+                items.push({ tone: 'bad', icon: 'alert', href: '/studies?filter=failed',
+                    html: `<strong>${sc.defacing_failed} defacing failed</strong><br>
+                           Export is blocked; a restart retries the undefaced series.` });
+            }
+            if (sc.ready) {
+                items.push({ tone: '', icon: 'send', href: '/studies?filter=ready',
+                    html: `<strong>${sc.ready} ready to export</strong><br>Nothing is sent automatically — review and send from Studies.` });
+            }
+            if (stats && !stats.capabilities.dicom && !stats.capabilities.http) {
+                items.push({ tone: 'info', icon: 'info', href: null,
+                    html: '<strong>No export target configured</strong><br>Set <span class="mono">remote_storage.dicom</span> or <span class="mono">.http</span> in settings.yaml.' });
+            }
+            if (!items.length && studies) {
+                items.push({ tone: 'ok', icon: 'check', href: null,
+                    html: '<strong>All clear</strong><br>No studies waiting on you.' });
+            }
+            host.innerHTML = items.map(it => {
+                const tag = it.href ? 'a' : 'div';
+                const href = it.href ? ` href="${it.href}"` : '';
+                const go = it.href ? `<span class="go">${icon('chevron')}</span>` : '';
+                return `<${tag} class="callout ${it.tone}"${href}>${icon(it.icon)}<div>${it.html}</div>${go}</${tag}>`;
+            }).join('');
+        }
+
+        let lastStats = null;
+        async function refresh() {
+            try {
+                const [stats, list] = await Promise.all([
+                    PV.api('/stats'),
+                    // The study list reads every exam sidecar — refresh it
+                    // every third tick (15 s) instead of every 5 s.
+                    tick % 3 === 0 ? PV.api('/api/studies') : Promise.resolve(null),
+                ]);
+                tick++;
+                if (list) studies = list.studies || [];
+                lastStats = stats;
+                lastOk = Date.now();
+                PV.setConn(true);
+                renderPipeline(stats);
+                renderKpis(stats.kpis);
+                renderDetails(stats.details);
+                renderCallouts(stats);
+            } catch (err) {
+                console.error(err);
+                PV.setConn(false);
+            }
+            updateAgo();
+        }
+
+        function updateAgo() {
+            document.getElementById('updated').textContent = lastOk ? `Updated ${PV.fmtAgo(Date.now() - lastOk)}` : '—';
+        }
+        setInterval(updateAgo, 1000);
+
+        const poller = PV.poll(refresh, 5000);
+        const pauseBtn = document.getElementById('btn-pause');
+        const drawPause = () => {
+            pauseBtn.innerHTML = icon(poller.paused ? 'play' : 'pause');
+            pauseBtn.title = poller.paused ? 'Resume auto-refresh' : 'Pause auto-refresh';
+        };
+        drawPause();
+        pauseBtn.addEventListener('click', () => { poller.paused ? poller.resume() : poller.pause(); drawPause(); });
+        document.getElementById('btn-refresh').addEventListener('click', () => { tick = 0; poller.now(); });
+
+        // Remember whether the counters drawer was left open.
+        const drawer = document.getElementById('drawer');
+        try { drawer.open = localStorage.getItem('pixieveil_drawer') === '1'; } catch (_e) { /* ignore */ }
+        drawer.addEventListener('toggle', () => {
+            try { localStorage.setItem('pixieveil_drawer', drawer.open ? '1' : '0'); } catch (_e) { /* ignore */ }
+        });
+    </script>
+</body>
 </html>

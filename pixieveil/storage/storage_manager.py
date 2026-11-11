@@ -1093,6 +1093,9 @@ class StorageManager:
         scanner = exam_data.get("scanner") or {}
         rdsr = exam_data.get("rdsr") or {}
         manual = exam_data.get("manual") or {}
+        patient = exam_data.get("patient") or {}
+        missing = exam_merge.missing_required(exam_data)
+        required = len(exam_merge.REQUIRED_PATHS)
         return {
             "protocol_type": exam_data.get("protocol_type"),
             "examination_group": exam_data.get("examination_group"),
@@ -1101,9 +1104,30 @@ class StorageManager:
                 "manufacturer": scanner.get("manufacturer"),
                 "model": scanner.get("model"),
             },
+            "patient": {
+                "age_years": patient.get("age_years"),
+                "weight_kg": patient.get("weight_kg"),
+            },
+            "image_quality": exam_data.get("image_quality"),
             "total_dlp_mgy_cm": rdsr.get("total_dlp_mgy_cm"),
             "has_manual_edits": bool(manual.get("fields")),
+            "missing_fields": missing,
+            "completeness": {"filled": required - len(missing), "required": required},
         }
+
+    # Every sidecar status a study can be in; get_status_counts_sync always
+    # reports all of them (zero when absent) so callers need no defaults.
+    _STUDY_STATUSES = (
+        "receiving", "complete", "defacing", "defacing_failed", "ready", "archived",
+    )
+
+    def get_status_counts_sync(self) -> dict:
+        """Blocking: count studies per sidecar status (unknown statuses under 'other')."""
+        counts = dict.fromkeys(self._STUDY_STATUSES, 0)
+        for sc in StudySidecar.load_all(self.base_path).values():
+            key = sc.status if sc.status in counts else "other"
+            counts[key] = counts.get(key, 0) + 1
+        return counts
 
     def list_studies_summary_sync(self) -> List[dict]:
         """Blocking: enumerate every study sidecar plus its exam sidecar, if any."""
@@ -1138,10 +1162,21 @@ class StorageManager:
         study_info = self._whitelist_sidecar(sc, location)
 
         exam_path = ExamSidecar.path_for(self.base_path, study_number)
+        result: dict = {"study": study_info, "exam": None, "exam_corrupt": False,
+                        "missing_fields": list(exam_merge.REQUIRED_PATHS)}
         if not exam_path.exists():
-            return {"study": study_info, "exam": None}
-        exam_data = ExamSidecar.load(exam_path).data
-        return {"study": study_info, "exam": exam_data}
+            return result
+        try:
+            exam_data = ExamSidecar.load(exam_path).data
+        except Exception:
+            # Same policy as list_studies_summary_sync: report it, don't 500 —
+            # the dashboard still needs the study so it can be re-extracted.
+            logger.warning("Corrupt exam sidecar %s", exam_path, exc_info=True)
+            result["exam_corrupt"] = True
+            return result
+        result["exam"] = exam_data
+        result["missing_fields"] = exam_merge.missing_required(exam_data)
+        return result
 
     async def manual_send_dicom(self, study_number: int) -> dict:
         """Send a study to the configured DICOM node at the user's request."""
