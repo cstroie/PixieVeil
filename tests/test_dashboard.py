@@ -217,3 +217,43 @@ class TestAuthMiddleware:
                              json={"fields": {"bogus": 1}},
                              headers={"Authorization": "Bearer s3cret"})
         assert status == 400
+
+
+class TestAbout:
+    def test_page_served(self, tmp_path):
+        status, body = _request(_dashboard(tmp_path), "GET", "/about")
+        assert status == 200
+        assert "Credits" in body
+        assert "cdn." not in body
+
+    def test_payload_shape(self, tmp_path):
+        d = _dashboard(tmp_path)
+        status, body = _request(d, "GET", "/api/about")
+        assert status == 200
+        assert body["software"]["name"] == "PixieVeil"
+        assert body["software"]["version"]
+        assert "CT Image Storage" in body["instance"]["sop_classes"]
+        assert body["packages"]["core"]["aiohttp"]  # installed in any test run
+        assert set(body["packages"]["deface"]) >= {"torch", "nnunetv2"}
+        assert body["instance"]["export"] == {"dicom": None, "http": None}
+
+    def test_never_leaks_secrets(self, tmp_path):
+        settings = make_settings(
+            tmp_path,
+            http_server={"auth_token": "dash-s3cret"},
+            storage={
+                "base_path": str(tmp_path / "data"),
+                "temp_path": str(tmp_path / "tmp"),
+                "remote_storage": {"http": {"base_url": "https://up.example/api?key=q",
+                                            "auth_token": "upload-s3cret"}},
+            },
+        )
+        d = Dashboard(settings, StorageManager(settings))
+
+        status, body = _request(d, "GET", "/api/about")
+
+        assert status == 200
+        assert body["instance"]["auth_required"] is True
+        assert body["instance"]["export"]["http"] == {"host": "up.example"}
+        text = str(body)
+        assert "s3cret" not in text and "key=q" not in text

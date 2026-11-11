@@ -420,6 +420,13 @@ kbd {
     font: 11px var(--mono); color: var(--text-dim);
 }
 
+/* Phone width: keep the top bar to one row without horizontal scroll. */
+@media (max-width: 560px) {
+    .topbar { gap: 8px; padding: 0 12px; }
+    .topbar .brand > span, .conn .label { display: none; }
+    .nav a { padding: 6px 8px; }
+}
+
 @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { animation: none !important; transition: none !important; }
 }

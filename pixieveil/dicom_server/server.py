@@ -35,6 +35,18 @@ from pixieveil.dicom_server.handlers import CStoreSCPHandler
 
 logger = logging.getLogger(__name__)
 
+# Storage SOP classes accepted at association negotiation; anything else is
+# refused up front. Also listed on the dashboard's /about page.
+# RDSR (Radiation Dose Structured Report) — without it, a scanner's dose
+# report is refused at negotiation and never transferred, regardless of
+# series numbering; see integrations/rhythm/DATA_REQUIREMENTS.md.
+SUPPORTED_STORAGE_SOP_CLASSES = (
+    CTImageStorage,
+    MRImageStorage,
+    SecondaryCaptureImageStorage,
+    XRayRadiationDoseSRStorage,
+)
+
 
 class DicomServer:
     """
@@ -103,14 +115,8 @@ class DicomServer:
         
         # Add supported contexts
         self.ae.add_supported_context(Verification)
-        self.ae.add_supported_context(CTImageStorage)
-        self.ae.add_supported_context(MRImageStorage)
-        self.ae.add_supported_context(SecondaryCaptureImageStorage)
-        # RDSR (Radiation Dose Structured Report) — without this, a scanner's
-        # dose report is refused at association negotiation and never
-        # transferred, regardless of series numbering; see
-        # integrations/rhythm/DATA_REQUIREMENTS.md for why this matters.
-        self.ae.add_supported_context(XRayRadiationDoseSRStorage)
+        for sop_class in SUPPORTED_STORAGE_SOP_CLASSES:
+            self.ae.add_supported_context(sop_class)
 
         # Register event handlers using proper API
         handlers = [

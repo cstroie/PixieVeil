@@ -10,15 +10,22 @@ Classes:
 """
 
 import asyncio
+import functools
+import importlib.metadata
 import logging
+import platform
 import time
 from pathlib import Path
 from typing import Any, Optional
 
+from urllib.parse import urlparse
+
 from aiohttp import web
 
+import pixieveil
 from pixieveil.config import Settings
 from pixieveil.dashboard import options
+from pixieveil.dicom_server.server import SUPPORTED_STORAGE_SOP_CLASSES
 from pixieveil.processing import exam_merge
 from pixieveil.storage.storage_manager import StorageManager
 
@@ -29,6 +36,23 @@ _VALID_ACTIONS = {"send_dicom", "reextract", "upload_http"}
 _DASHBOARD_DIR = Path(__file__).parent
 _TEMPLATES_DIR = _DASHBOARD_DIR / "templates"
 _STATIC_DIR = _DASHBOARD_DIR / "static"
+
+# Distributions whose installed version /api/about reports. The second group
+# only exists when the [deface] extra is installed.
+_CORE_PACKAGES = ("pydicom", "pynetdicom", "aiohttp", "pydantic", "PyYAML")
+_DEFACE_PACKAGES = ("torch", "nnunetv2", "SimpleITK", "nibabel", "numpy", "gdown")
+
+
+@functools.lru_cache(maxsize=1)
+def _package_versions() -> dict[str, Optional[str]]:
+    """Installed versions (None if absent). Cached: they can't change while running."""
+    versions: dict[str, Optional[str]] = {}
+    for name in _CORE_PACKAGES + _DEFACE_PACKAGES:
+        try:
+            versions[name] = importlib.metadata.version(name)
+        except importlib.metadata.PackageNotFoundError:
+            versions[name] = None
+    return versions
 
 
 class Dashboard:
@@ -76,6 +100,8 @@ class Dashboard:
             web.get("/stats", self.handle_stats),
             web.get("/health", self.handle_health),
             web.get("/studies", self.handle_studies_page),
+            web.get("/about", self.handle_about_page),
+            web.get("/api/about", self.handle_about),
             web.get("/api/options", self.handle_options),
             web.get("/api/studies", self.handle_list_studies),
             web.get("/api/studies/{n}", self.handle_get_study),
@@ -296,6 +322,62 @@ class Dashboard:
             "iv_contrast": options.IV_CONTRAST,
             "scanners": options.scanner_options(sm.exam_extractor.scanner_map),
             "required_fields": list(exam_merge.REQUIRED_PATHS),
+        })
+
+    async def handle_about_page(self, request: web.Request) -> web.Response:
+        """Serve the /about page (software info, this instance, credits)."""
+        return await self._serve_template("about.html")
+
+    async def handle_about(self, request: web.Request) -> web.Response:
+        """
+        Software and instance information for the /about page.
+
+        Never includes secrets: auth tokens are reported only as on/off, and
+        the HTTP export target only by host.
+        """
+        sm: StorageManager = request.app['storage_manager']
+        cfg = self.settings
+        versions = await asyncio.to_thread(_package_versions)
+
+        model_present = None
+        if sm.defacer.model_dir is not None:
+            model_present = (sm.defacer.model_dir / "Dataset001_DEFACE").exists()
+
+        dicom_export = None
+        if sm.dicom_storage.enabled:
+            dicom_export = {"ae_title": sm.dicom_storage.ae_title,
+                            "host": sm.dicom_storage.host, "port": sm.dicom_storage.port}
+        http_export = None
+        if sm.remote_storage.enabled:
+            http_export = {"host": urlparse(sm.remote_storage.base_url).netloc or None}
+
+        return web.json_response({
+            "software": {
+                "name": "PixieVeil",
+                "version": pixieveil.__version__,
+                "python": platform.python_version(),
+                "platform": f"{platform.system()} {platform.release()} ({platform.machine()})",
+            },
+            "instance": {
+                "uptime_s": int(time.time() - self._started_at),
+                "dicom": {"ae_title": cfg.dicom_server.get("ae_title"),
+                          "port": cfg.dicom_server.get("port")},
+                "http_port": cfg.http_server.get("port"),
+                "auth_required": bool(cfg.http_server.get("auth_token")),
+                "anonymization_profile": cfg.anonymization.get("profile"),
+                "defacing": {"enabled": sm.defacer.enabled,
+                             "device": sm.defacer.device if sm.defacer.enabled else None,
+                             "model_present": model_present if sm.defacer.enabled else None},
+                "export": {"dicom": dicom_export, "http": http_export},
+                "retain_after_export_days": cfg.storage.get("retain_after_export_days"),
+                "max_storage_gb": cfg.storage.get("max_storage_gb"),
+                "completion_timeout_s": cfg.study.get("completion_timeout"),
+                "sop_classes": [c.name for c in SUPPORTED_STORAGE_SOP_CLASSES],
+            },
+            "packages": {
+                "core": {n: versions[n] for n in _CORE_PACKAGES},
+                "deface": {n: versions[n] for n in _DEFACE_PACKAGES},
+            },
         })
 
     async def handle_health(self, request: web.Request) -> web.Response:

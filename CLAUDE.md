@@ -132,7 +132,7 @@ Single asyncio event loop. All blocking I/O (nnUNet inference, ZIP, file I/O) us
 |------|---------|
 | `pixieveil.py` | Entry point |
 | `pixieveil/config/settings.py` | Loads/validates `config/settings.yaml` via pydantic |
-| `pixieveil/dicom_server/server.py` | DICOM SCP (C-ECHO + C-STORE). Supported storage SOP classes: CT, MR, Secondary Capture, X-Ray Radiation Dose SR (RDSR) — anything else is refused at association negotiation, not received-then-filtered |
+| `pixieveil/dicom_server/server.py` | DICOM SCP (C-ECHO + C-STORE). Supported storage SOP classes (`SUPPORTED_STORAGE_SOP_CLASSES`, also listed on `/about`): CT, MR, Secondary Capture, X-Ray Radiation Dose SR (RDSR) — anything else is refused at association negotiation, not received-then-filtered |
 | `pixieveil/dicom_server/handlers.py` | C-STORE event handler |
 | `pixieveil/processing/anonymizer.py` | Profile-based field transforms (PSEUDO/PSEUDOUID/NEWUID/CLEAR/KEEP) |
 | `pixieveil/processing/series_filter.py` | Modality, image-type, and regex include/exclude filtering |
@@ -145,7 +145,7 @@ Single asyncio event loop. All blocking I/O (nnUNet inference, ZIP, file I/O) us
 | `pixieveil/storage/dicom_storage.py` | DICOM C-STORE export to remote node |
 | `pixieveil/storage/remote_storage.py` | HTTP multipart ZIP upload |
 | `pixieveil/storage/zip_manager.py` | ZIP archive creation |
-| `pixieveil/dashboard/server.py` | aiohttp web server: `/` status page + `/stats` (pipeline status counts, KPIs, grouped counters), `/health`, the `/studies` review page and its `/api/studies*` JSON API (list/detail/save/actions), `/api/options` (form vocabularies), `/static/*` |
+| `pixieveil/dashboard/server.py` | aiohttp web server: `/` status page + `/stats` (pipeline status counts, KPIs, grouped counters), `/health`, the `/studies` review page and its `/api/studies*` JSON API (list/detail/save/actions), `/api/options` (form vocabularies), `/about` + `/api/about` (version, instance config summary — never secrets, installed component versions, credits/citations, license), `/static/*` |
 | `pixieveil/dashboard/options.py` | RHYTHM region/indication combos, image-quality and contrast vocabularies served by `/api/options` (single source for the review form's dropdowns) |
 | `pixieveil/dashboard/static/` | Self-hosted `theme.css` (dark/light design tokens) and `common.js` (API/auth, toasts, dialogs, polling) — no CDN, works on an offline LAN |
 | `pixieveil/processing/exam_merge.py` | Manual-edit/provenance-overlay semantics for the exam sidecar — shared by the `/api/studies/{n}/exam` save handler and the manual re-extract action |

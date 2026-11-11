@@ -131,8 +131,8 @@
 
         @media (max-width: 900px) {
             body { overflow: auto; }
-            .workspace { grid-template-columns: 1fr; height: auto; min-height: calc(100vh - var(--header-h)); }
-            .worklist { border-right: 0; }
+            .workspace { grid-template-columns: minmax(0, 1fr); height: auto; min-height: calc(100vh - var(--header-h)); }
+            .worklist { border-right: 0; min-width: 0; }
             .wl-list { overflow: visible; }
             .inspector { display: none; }
             .workspace.show-insp .worklist { display: none; }
@@ -162,6 +162,7 @@
         <nav class="nav">
             <a href="/">Status</a>
             <a href="/studies" aria-current="page">Studies<span class="count" id="nav-needs" hidden></span></a>
+            <a href="/about">About</a>
         </nav>
         <div class="spacer"></div>
         <span class="conn" id="conn"><span class="dot"></span><span class="label">Connecting…</span></span>
