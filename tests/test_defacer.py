@@ -466,3 +466,14 @@ class TestDefaceSeriesOrchestration:
         assert (series_dir / "img1.dcm").read_bytes() == b"ORIGINAL"
         assert not (series_dir.parent / "0001_pre_deface").exists()
         assert not (series_dir.parent / "0001_staged").exists()
+
+
+class TestAirFillValue:
+    def test_median_of_air_range_ignores_padding(self):
+        np = pytest.importorskip("numpy")
+        data = np.array([-3024.0] * 50 + [-1010.0, -1000.0, -990.0] + [40.0] * 50)
+        assert Defacer._air_fill_value(data) == -1000.0
+
+    def test_no_air_voxels_falls_back_to_minus_1000(self):
+        np = pytest.importorskip("numpy")
+        assert Defacer._air_fill_value(np.array([0.0, 50.0, -3024.0])) == -1000.0

@@ -517,9 +517,8 @@ class Defacer:
         orig_img = nib.load(str(nifti_path))
         orig_data = np.asarray(orig_img.get_fdata())
 
-        # 1st percentile captures background air reliably without pulling in tissue.
-        fill_value = float(np.percentile(orig_data, 1))
-        logger.debug("Face fill value (1st percentile): %.1f", fill_value)
+        fill_value = self._air_fill_value(orig_data)
+        logger.debug("Face fill value (median of air voxels): %.1f", fill_value)
 
         defaced_data = np.where(mask, fill_value, orig_data)
         defaced_img = nib.Nifti1Image(defaced_data, orig_img.affine, orig_img.header)
@@ -797,6 +796,18 @@ class Defacer:
             lst.sort(key=_sort_key)
 
         return groups
+
+    @staticmethod
+    def _air_fill_value(image_data: "np.ndarray") -> float:
+        """Median of voxels in the true CT air range (-1100..-900 HU), or
+        -1000 if there are none. Ported from upstream CT-DEFACE (53d5390):
+        a low percentile can sit far below physical air
+        density (out-of-FOV padding, e.g. -2048/-3024), making the defaced
+        region look denser-than-nothing on windowing and after write-back.
+        """
+        import numpy as np
+        air = image_data[(image_data > -1100) & (image_data < -900)]
+        return float(np.median(air)) if air.size > 0 else -1000.0
 
     @staticmethod
     def _dilate_mask(mask: "np.ndarray", mask_img: "nib.Nifti1Image",
