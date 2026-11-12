@@ -99,7 +99,7 @@ class TestMissingRequired:
         return {
             "image_quality": "Diagnostic",
             "patient": {"age_years": 8.0, "weight_kg": 25.0},
-            "indication": {"region": "Head", "clinical_indication": "Trauma",
+            "indication": {"region": "Chest", "clinical_indication": "Fungal infections",
                            "iv_contrast": "Non-contrast"},
             "scanner": {"rhythm_scanner_id": "uuid"},
         }
@@ -123,6 +123,28 @@ class TestMissingRequired:
         data = self._full()
         data["patient"]["age_years"] = 0
         assert exam_merge.missing_required(data) == []
+
+    def test_weight_optional_for_head_and_mastoid(self):
+        for region in ("Head", "Mastoid bone/Inner Ear"):
+            data = self._full()
+            data["indication"]["region"] = region
+            data["patient"]["weight_kg"] = None
+            assert exam_merge.missing_required(data) == []
+            assert "patient.weight_kg" not in exam_merge.required_paths(data)
+
+    def test_weight_optional_for_pediatric_head_protocol(self):
+        data = self._full()
+        data["indication"]["region"] = "Chest"
+        data["protocol_type"] = "PEDIATRIC_HEAD"
+        data["patient"]["weight_kg"] = None
+        assert exam_merge.missing_required(data) == []
+
+    def test_weight_required_for_body_regions(self):
+        data = self._full()
+        data["indication"]["region"] = "Chest"
+        data["patient"]["weight_kg"] = None
+        assert exam_merge.missing_required(data) == ["patient.weight_kg"]
+        assert len(exam_merge.required_paths(data)) == len(exam_merge.REQUIRED_PATHS)
 
     def test_non_dict_intermediate_is_missing_not_an_error(self):
         data = self._full()

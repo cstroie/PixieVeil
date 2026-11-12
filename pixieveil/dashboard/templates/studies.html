@@ -458,7 +458,7 @@
             const ind = exam.indication || {};
             const sc = exam.scanner || {};
             const req = (exam.missing || []).length;
-            const total = (opts.required_fields || []).length || 7;
+            const total = (exam.required || opts.required_fields || []).length || 7;
             const filled = total - req;
 
             const riIdx = opts.region_indications.findIndex(o =>
@@ -623,7 +623,7 @@
             const insp = $('#inspector');
             const { study, exam } = state.detail;
             const ex = exam || {};
-            const total = state.options ? state.options.required_fields.length : 7;
+            const total = (ex.required || (state.options && state.options.required_fields) || []).length || 7;
             const missingCount = exam ? (exam.missing || []).length : 0;
             const notesCount = exam ? (exam.notes || []).length : 0;
             const archivedVia = study.archived_via ? ` via ${study.archived_via.toUpperCase()}` : '';
@@ -725,7 +725,10 @@
         async function loadDetail(n, { keepTab } = {}) {
             try {
                 const data = await PV.api(`/api/studies/${n}`);
-                if (data.exam) data.exam.missing = data.missing_fields || [];
+                if (data.exam) {
+                    data.exam.missing = data.missing_fields || [];
+                    data.exam.required = data.required_fields || null;
+                }
                 data.corrupt = !!data.exam_corrupt;
                 state.detail = data;
             } catch (err) {

@@ -105,13 +105,36 @@ def _get_dotted(data: dict, path: str) -> Any:
     return node
 
 
+# Mirrors RHYTHM's repository_study_id.HEAD_ANATOMICAL_REGIONS /
+# is_weight_optional(): weight isn't a dosimetry input for head exams (SSDE
+# uses head size/age), so RHYTHM doesn't require it there at any age.
+HEAD_ANATOMICAL_REGIONS = frozenset({"Head", "Mastoid bone/Inner Ear"})
+
+
+def is_weight_optional(data: Optional[dict]) -> bool:
+    """True when patient weight may be omitted (head/mastoid exam)."""
+    if not data:
+        return False
+    if data.get("protocol_type") == "PEDIATRIC_HEAD":
+        return True
+    return _get_dotted(data, "indication.region") in HEAD_ANATOMICAL_REGIONS
+
+
+def required_paths(data: Optional[dict]) -> list[str]:
+    """REQUIRED_PATHS that apply to *data* — drops weight for head exams."""
+    if is_weight_optional(data):
+        return [p for p in REQUIRED_PATHS if p != "patient.weight_kg"]
+    return list(REQUIRED_PATHS)
+
+
 def missing_required(data: Optional[dict]) -> list[str]:
-    """Return the REQUIRED_PATHS that are null/empty in *data* (all of them if
-    *data* is None). Blank/whitespace-only strings count as missing."""
+    """Return the applicable required paths (see required_paths) that are
+    null/empty in *data* (all of REQUIRED_PATHS if *data* is None).
+    Blank/whitespace-only strings count as missing."""
     if data is None:
         return list(REQUIRED_PATHS)
     missing = []
-    for path in REQUIRED_PATHS:
+    for path in required_paths(data):
         value = _get_dotted(data, path)
         if value is None or (isinstance(value, str) and not value.strip()):
             missing.append(path)

@@ -1124,7 +1124,7 @@ class StorageManager:
         manual = exam_data.get("manual") or {}
         patient = exam_data.get("patient") or {}
         missing = exam_merge.missing_required(exam_data)
-        required = len(exam_merge.REQUIRED_PATHS)
+        required = len(exam_merge.required_paths(exam_data))
         return {
             "protocol_type": exam_data.get("protocol_type"),
             "examination_group": exam_data.get("examination_group"),
@@ -1193,7 +1193,8 @@ class StorageManager:
 
         exam_path = ExamSidecar.path_for(self.base_path, study_number)
         result: dict = {"study": study_info, "exam": None, "exam_corrupt": False,
-                        "missing_fields": list(exam_merge.REQUIRED_PATHS)}
+                        "missing_fields": list(exam_merge.REQUIRED_PATHS),
+                        "required_fields": list(exam_merge.REQUIRED_PATHS)}
         if not exam_path.exists():
             return result
         try:
@@ -1206,6 +1207,7 @@ class StorageManager:
             return result
         result["exam"] = exam_data
         result["missing_fields"] = exam_merge.missing_required(exam_data)
+        result["required_fields"] = exam_merge.required_paths(exam_data)
         return result
 
     async def manual_send_dicom(self, study_number: int) -> dict:

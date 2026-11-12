@@ -525,7 +525,7 @@ class TestStatusCountsAndExamSummary:
         summary = StorageManager._exam_summary({
             "image_quality": None,
             "patient": {"age_years": 5.0, "weight_kg": None},
-            "indication": {"region": "Head", "clinical_indication": "Trauma",
+            "indication": {"region": "Chest", "clinical_indication": "Fungal infections",
                            "iv_contrast": "Non-contrast"},
             "scanner": {"rhythm_scanner_id": "uuid"},
         })

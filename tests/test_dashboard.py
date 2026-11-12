@@ -49,7 +49,7 @@ def _complete_exam(n: int) -> dict:
         "study_number": n,
         "image_quality": "Diagnostic",
         "patient": {"age_years": 8.0, "weight_kg": 25.0},
-        "indication": {"region": "Head", "clinical_indication": "Trauma",
+        "indication": {"region": "Chest", "clinical_indication": "Fungal infections",
                        "iv_contrast": "Non-contrast"},
         "scanner": {"manufacturer": "SIEMENS", "model": "Emotion 16",
                     "rhythm_scanner_id": "uuid-1"},
