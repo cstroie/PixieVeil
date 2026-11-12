@@ -102,6 +102,23 @@ class TestBuildManifestItem:
         assert item["size_bytes"] == 123456
         assert rm.manifest_item_blockers(item) == []
 
+    def test_retain_after_project_omitted_by_default(self):
+        item = rm.build_manifest_item(
+            _effective_sidecar(), study_number=1, zip_filename="x.zip",
+            site_code="S001", protocol_id=_PROTOCOL_UUID,
+        )
+        assert "retain_after_project" not in item
+
+    def test_retain_after_project_emitted_when_set(self):
+        for value in (True, False):
+            sidecar = _effective_sidecar()
+            sidecar["rhythm"] = {**(sidecar.get("rhythm") or {}), "retain_after_project": value}
+            item = rm.build_manifest_item(
+                sidecar, study_number=1, zip_filename="x.zip",
+                site_code="S001", protocol_id=_PROTOCOL_UUID,
+            )
+            assert item["retain_after_project"] is value
+
     def test_no_coded_fields_emitted(self):
         item = rm.build_manifest_item(
             _effective_sidecar(),

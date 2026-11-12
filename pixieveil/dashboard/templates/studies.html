@@ -466,6 +466,13 @@
                 // derives region/indication/contrast/type/group/scanner from
                 // the registered protocol.
                 const currentProtoKey = get(exam, 'rhythm.protocol_key') || '';
+                const retainVal = get(exam, 'rhythm.retain_after_project');
+                const retainOptions = [
+                    ['', 'Default (kept)'], ['true', 'Yes — consent given'], ['false', 'No — delete at project end'],
+                ].map(([v, l]) => {
+                    const cur = retainVal === true ? 'true' : retainVal === false ? 'false' : '';
+                    return `<option value="${v}" ${cur === v ? 'selected' : ''}>${l}</option>`;
+                }).join('');
                 const rhythmProtocolOptions = ['<option value="">—</option>'].concat(
                     (CAPABILITIES.rhythm_protocols || []).map(p => {
                         const selected = currentProtoKey === p.id ? 'selected' : '';
@@ -617,6 +624,13 @@
                                     <small>its UUID goes in the manifest;
                                         region/indication/contrast/scanner are derived from it
                                         upstream</small>
+                                </label>
+                                <label>Keep after project end
+                                    <select data-path="rhythm.retain_after_project" data-type="bool"
+                                        class="${isManual(exam, 'rhythm.retain_after_project') ? 'manual-set' : ''}">
+                                        ${retainOptions}
+                                    </select>
+                                    <small>patient's retention consent; default is kept</small>
                                 </label>
                             </div>
                         </fieldset>
@@ -805,6 +819,8 @@
                     if (input.type === 'number') {
                         const num = parseFloat(val);
                         if (!Number.isNaN(num)) fields[path] = num;
+                    } else if (input.dataset.type === 'bool') {
+                        fields[path] = val === 'true';
                     } else {
                         fields[path] = val;
                     }

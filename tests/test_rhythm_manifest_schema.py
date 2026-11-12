@@ -67,6 +67,11 @@ class TestItemAgainstSchema:
     def test_full_item_is_schema_valid(self, vendored):
         assert vendored.validate_manifest_v2_item(_full_item()) == []
 
+    def test_item_with_retain_after_project_is_schema_valid(self, vendored):
+        for value in (True, False):
+            assert vendored.validate_manifest_v2_item(
+                {**_full_item(), "retain_after_project": value}) == []
+
     def test_item_without_optional_dose_or_patient_data_is_valid(self, vendored):
         sidecar = _effective_sidecar(rdsr=None)
         sidecar["series"] = []

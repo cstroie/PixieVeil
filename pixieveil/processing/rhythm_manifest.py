@@ -132,6 +132,13 @@ def build_manifest_item(
         "dlp_mgy_cm": dlp,
     }
 
+    # Retention consent (RHYTHM schema, reference/uploader 2d1dd43): only
+    # emitted when the operator set it — omitted means RHYTHM's default
+    # (kept after the project ends). False = delete at end of the Grant.
+    retain = (sidecar.get("rhythm") or {}).get("retain_after_project")
+    if isinstance(retain, bool):
+        item["retain_after_project"] = retain
+
     if sha256 is not None:
         item["sha256"] = sha256
     if size_bytes is not None:

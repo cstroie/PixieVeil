@@ -52,6 +52,8 @@ MANUAL_EDITABLE_PATHS = {
     "scanner.rhythm_scanner_id",
     # local protocol key -> RHYTHM CTProtocol UUID via config/rhythm_protocols.yaml
     "rhythm.protocol_key",
+    # patient's retention consent -> manifest retain_after_project (bool)
+    "rhythm.retain_after_project",
     "series.<N>.dlp_mgy_cm",
     "series.<N>.ctdi_vol_mgy",
     "series.<N>.slice_thickness_mm",
