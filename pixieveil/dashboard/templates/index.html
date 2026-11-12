@@ -225,8 +225,10 @@
                 active: a.waiting || a.defacing,
                 state: a.defacing ? 'defacing' : 'extracting',
                 sub: data.defacing_enabled ? 'extract · deface' : 'extract · defacing off',
-                extra: sc.defacing_failed
-                    ? `<span class="pill bad">${sc.defacing_failed} deface failed</span>` : '',
+                extra: (sc.defacing_failed
+                    ? `<span class="pill bad">${sc.defacing_failed} deface failed</span>` : '')
+                    + (sc.defacing_disabled
+                    ? `<span class="pill bad">${sc.defacing_disabled} defacing disabled</span>` : ''),
             });
             setStage('st-ready', { count: sc.ready, tone: sc.ready ? 'ok' : '' });
             const targets = [caps.dicom && 'DICOM', caps.http && 'HTTP'].filter(Boolean);
@@ -287,6 +289,11 @@
                 items.push({ tone: 'bad', icon: 'alert', href: '/studies?filter=failed',
                     html: `<strong>${sc.defacing_failed} defacing failed</strong><br>
                            Export is blocked; a restart retries the undefaced series.` });
+            }
+            if (sc.defacing_disabled) {
+                items.push({ tone: 'bad', icon: 'alert', href: '/studies?filter=failed',
+                    html: `<strong>${sc.defacing_disabled} head ${sc.defacing_disabled === 1 ? 'study' : 'studies'} not defaced (defacing disabled)</strong><br>
+                           Export is blocked; enable defacing and restart to process them.` });
             }
             if (sc.ready) {
                 items.push({ tone: '', icon: 'send', href: '/studies?filter=ready',

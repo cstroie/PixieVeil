@@ -91,6 +91,7 @@ const PV = (() => {
         complete:        { label: 'Queued',        tone: 'busy' },
         defacing:        { label: 'Defacing',      tone: 'busy' },
         defacing_failed: { label: 'Deface failed', tone: 'bad' },
+        defacing_disabled: { label: 'Defacing disabled', tone: 'bad' },
         ready:           { label: 'Ready',         tone: 'ok' },
         archived:        { label: 'Exported',      tone: 'done' },
     };

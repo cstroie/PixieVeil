@@ -217,6 +217,14 @@ class TestRecoveryRequeue:
         sm.initialize_from_sidecars(tmp_path)
         assert sm._recovered_studies == ["uid-5"]
 
+    def test_defacing_disabled_study_is_requeued(self, tmp_path):
+        # Enabling defacing and restarting should deface it.
+        self._save(tmp_path, 6, "defacing_disabled")
+
+        sm = StudyManager(Settings())
+        sm.initialize_from_sidecars(tmp_path)
+        assert sm._recovered_studies == ["uid-6"]
+
     def test_ready_and_archived_studies_are_not_requeued(self, tmp_path):
         self._save(tmp_path, 3, "ready")
         self._save(tmp_path, 4, "archived")

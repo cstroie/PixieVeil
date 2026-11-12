@@ -797,6 +797,13 @@ class StorageManager:
                 finally:
                     with self.lock:
                         self._active_defacing -= 1
+            elif not already_processed:
+                # Defacing is off, but still classify series so a head scan
+                # is flagged (is_head=True, defaced=False) and the study is
+                # marked defacing_disabled below instead of looking "ready".
+                await asyncio.to_thread(
+                    self._deface_study, study_uid, study_number, study_dir, classify_only=True
+                )
 
             # Count images (blocking glob — run in thread)
             image_count = await asyncio.to_thread(
@@ -819,12 +826,21 @@ class StorageManager:
             # succeeded — manual_send_dicom/manual_upload_http both refuse to
             # export a study in that state.
             if self.study_manager.has_undefaced_head_series(study_uid):
-                logger.warning(
-                    "Study %04d has an undefaced head-scan series — marking "
-                    "defacing_failed instead of ready; export is blocked until resolved",
-                    study_number,
-                )
-                self.study_manager.mark_study_defacing_failed(study_uid)
+                if self.defacer.enabled:
+                    logger.warning(
+                        "Study %04d has an undefaced head-scan series — marking "
+                        "defacing_failed instead of ready; export is blocked until resolved",
+                        study_number,
+                    )
+                    self.study_manager.mark_study_defacing_failed(study_uid)
+                else:
+                    logger.warning(
+                        "Study %04d has a head-scan series but defacing is disabled — "
+                        "marking defacing_disabled; export is blocked until defacing "
+                        "is enabled and the study is reprocessed (restart)",
+                        study_number,
+                    )
+                    self.study_manager.mark_study_defacing_disabled(study_uid)
             else:
                 self.study_manager.mark_study_ready(study_uid)
         except Exception:
@@ -843,13 +859,18 @@ class StorageManager:
         data = self.exam_extractor.extract(study_dir, study_number, anonymized_study_uid)
         ExamSidecar(study_number, data).save(self.base_path)
 
-    def _deface_study(self, study_uid: str, study_number: int, study_dir: Path) -> None:
+    def _deface_study(self, study_uid: str, study_number: int, study_dir: Path,
+                      classify_only: bool = False) -> None:
         """
         Blocking: deface all head-scan series in one study.
         Called via asyncio.to_thread — must not use await.
+
+        With ``classify_only`` (defacing disabled) series are only classified
+        as head/topogram/other in the sidecar; nothing is defaced or counted.
         """
-        self.study_manager.mark_study_defacing(study_uid)
-        self.inc_counter('defacing', 'studies')
+        if not classify_only:
+            self.study_manager.mark_study_defacing(study_uid)
+            self.inc_counter('defacing', 'studies')
         for series_dir in sorted(study_dir.iterdir()):
             if not series_dir.is_dir():
                 continue
@@ -868,7 +889,8 @@ class StorageManager:
 
             if self.defacer.is_topogram(series_dir):
                 logger.info("Series %s is a topogram/scout — skipping defacing", series_dir.name)
-                self.inc_counter('defacing', 'series_skipped')
+                if not classify_only:
+                    self.inc_counter('defacing', 'series_skipped')
                 if orig_series_uid:
                     self.study_manager.set_series_classification(
                         study_uid, orig_series_uid, is_head=False, is_topogram=True
@@ -878,6 +900,12 @@ class StorageManager:
                     self.study_manager.set_series_classification(
                         study_uid, orig_series_uid, is_head=True, is_topogram=False
                     )
+                if classify_only:
+                    logger.warning(
+                        "Series %s in study %04d is a head scan but defacing is disabled",
+                        series_dir.name, study_number,
+                    )
+                    continue
                 logger.info("Defacing series %s in study %04d", series_dir.name, study_number)
                 ok = self.defacer.deface_series(series_dir, data_dir=self.base_path)
                 if ok:
@@ -888,7 +916,8 @@ class StorageManager:
                     self.inc_counter('defacing', 'errors')
             else:
                 logger.debug("Series %s is not a head scan — skipping defacing", series_dir.name)
-                self.inc_counter('defacing', 'series_skipped')
+                if not classify_only:
+                    self.inc_counter('defacing', 'series_skipped')
                 if orig_series_uid:
                     self.study_manager.set_series_classification(
                         study_uid, orig_series_uid, is_head=False, is_topogram=False
@@ -1118,7 +1147,8 @@ class StorageManager:
     # Every sidecar status a study can be in; get_status_counts_sync always
     # reports all of them (zero when absent) so callers need no defaults.
     _STUDY_STATUSES = (
-        "receiving", "complete", "defacing", "defacing_failed", "ready", "archived",
+        "receiving", "complete", "defacing", "defacing_failed", "defacing_disabled",
+        "ready", "archived",
     )
 
     def get_status_counts_sync(self) -> dict:
@@ -1193,10 +1223,9 @@ class StorageManager:
                 return {"ok": False, "message": "DICOM export is not configured"}
 
             sc = self.find_sidecar_by_number(study_number)
-            if sc is not None and sc.status == "defacing_failed":
-                return {"ok": False, "message":
-                        "defacing did not complete for this study (a head-scan series "
-                        "is still undefaced) — cannot export until that is resolved"}
+            blocked = self._deface_export_block(sc)
+            if blocked:
+                return {"ok": False, "message": blocked}
             first_export = sc is not None and sc.status != "archived"
 
             success = await self.dicom_storage.send_study(study_dir)
@@ -1228,6 +1257,19 @@ class StorageManager:
             with self.lock:
                 self._active_exporting -= 1
 
+    @staticmethod
+    def _deface_export_block(sc) -> str | None:
+        """Reason a study must not be exported for defacing reasons, or None."""
+        if sc is None:
+            return None
+        if sc.status == "defacing_failed":
+            return ("defacing did not complete for this study (a head-scan series "
+                    "is still undefaced) — cannot export until that is resolved")
+        if sc.status == "defacing_disabled":
+            return ("this study contains a head-scan series but defacing is disabled — "
+                    "enable defacing and restart to deface it before export")
+        return None
+
     async def manual_upload_http(self, study_number: int) -> dict:
         """Zip and upload a study to the configured HTTP endpoint at the user's request."""
         if study_number in self._manual_actions_in_progress:
@@ -1243,10 +1285,9 @@ class StorageManager:
                 return {"ok": False, "message": "HTTP export is not configured"}
 
             sc = self.find_sidecar_by_number(study_number)
-            if sc is not None and sc.status == "defacing_failed":
-                return {"ok": False, "message":
-                        "defacing did not complete for this study (a head-scan series "
-                        "is still undefaced) — cannot export until that is resolved"}
+            blocked = self._deface_export_block(sc)
+            if blocked:
+                return {"ok": False, "message": blocked}
             first_export = sc is not None and sc.status != "archived"
 
             zip_path = await self.zip_manager.create_zip(

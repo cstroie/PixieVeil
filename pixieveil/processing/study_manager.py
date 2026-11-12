@@ -121,7 +121,8 @@ class StudyManager:
                 # "ready" or "archived" are left alone — export is manual-only,
                 # never retried automatically.
                 needs_requeue = (
-                    sc.status in ("complete", "defacing", "defacing_failed")
+                    sc.status in ("complete", "defacing", "defacing_failed",
+                                  "defacing_disabled")
                 ) and study_dir.exists()
                 if needs_requeue:
                     self._recovered_studies.append(study_uid)
@@ -340,6 +341,15 @@ class StudyManager:
         still need it.
         """
         self._update_sidecar_status(original_study_uid, "defacing_failed")
+        with self.lock:
+            self.study_states.pop(original_study_uid, None)
+
+    def mark_study_defacing_disabled(self, original_study_uid: str) -> None:
+        """Called when a study has a head-scan series but defacing is turned
+        off in config. Export stays blocked like defacing_failed, and the
+        study is requeued on restart so enabling defacing then defaces it.
+        """
+        self._update_sidecar_status(original_study_uid, "defacing_disabled")
         with self.lock:
             self.study_states.pop(original_study_uid, None)
 

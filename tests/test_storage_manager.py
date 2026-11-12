@@ -454,6 +454,61 @@ class TestManualExportBlockedOnDefacingFailure:
         assert result["ok"] is True
 
 
+class TestDefacingDisabled:
+    """With defacing off, head-scan series are still classified so the study
+    lands in defacing_disabled (export blocked) instead of silently ready."""
+
+    def _study_with_series(self, sm, description):
+        sc = register_study(sm, 1, "complete")
+        sc.add_series("series-uid-1", 1, "anon-series-1")
+        sc.save(sm.base_path)
+        sm.study_manager._base_path = sm.base_path
+        sm.study_manager._active_waiting = 0
+        write_minimal_dicom(sm.base_path / "0001" / "0001" / "img1.dcm",
+                            SeriesDescription=description)
+        sm._active_waiting = 1
+        return sc
+
+    def test_head_study_is_marked_defacing_disabled(self, storage_manager):
+        assert storage_manager.defacer.enabled is False
+        self._study_with_series(storage_manager, "Head routine")
+
+        asyncio.run(storage_manager._process_study("study-uid-1"))
+
+        sc = storage_manager.study_manager.get_sidecar_by_number(1)
+        assert sc.status == "defacing_disabled"
+        rec = sc.series["series-uid-1"]
+        assert rec.is_head is True and rec.defaced is False
+
+    def test_non_head_study_is_ready(self, storage_manager):
+        self._study_with_series(storage_manager, "Abdomen")
+
+        asyncio.run(storage_manager._process_study("study-uid-1"))
+
+        assert storage_manager.study_manager.get_sidecar_by_number(1).status == "ready"
+
+    def test_head_study_with_defacing_enabled_but_failing_is_defacing_failed(
+            self, storage_manager, monkeypatch):
+        self._study_with_series(storage_manager, "Head routine")
+        storage_manager.defacer.enabled = True
+        monkeypatch.setattr(storage_manager.defacer, "deface_series",
+                            lambda *a, **k: False)
+
+        asyncio.run(storage_manager._process_study("study-uid-1"))
+
+        assert storage_manager.study_manager.get_sidecar_by_number(1).status == "defacing_failed"
+
+    def test_exports_refuse_a_defacing_disabled_study(self, tmp_path):
+        sm = TestManualExportBlockedOnDefacingFailure()._manager_with_dicom_configured(tmp_path)
+        register_study(sm, 1, "defacing_disabled")
+        (sm.base_path / "0001").mkdir(parents=True)
+
+        for action in (sm.manual_send_dicom, sm.manual_upload_http):
+            result = asyncio.run(action(1))
+            assert result["ok"] is False
+            assert "defacing is disabled" in result["message"]
+
+
 class TestStatusCountsAndExamSummary:
     def test_status_counts_report_every_status(self, storage_manager):
         register_study(storage_manager, 1, "ready")
@@ -463,7 +518,8 @@ class TestStatusCountsAndExamSummary:
         counts = storage_manager.get_status_counts_sync()
 
         assert counts == {"receiving": 0, "complete": 0, "defacing": 0,
-                          "defacing_failed": 0, "ready": 2, "archived": 1}
+                          "defacing_failed": 0, "defacing_disabled": 0,
+                          "ready": 2, "archived": 1}
 
     def test_exam_summary_reports_missing_fields_and_completeness(self):
         summary = StorageManager._exam_summary({

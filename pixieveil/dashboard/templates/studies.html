@@ -212,7 +212,7 @@
             { key: 'needs',    label: 'Needs input', test: PV.needsInput },
             { key: 'ready',    label: 'Ready',       test: s => s.status === 'ready' },
             { key: 'progress', label: 'Active', test: s => ['receiving', 'complete', 'defacing'].includes(s.status) },
-            { key: 'failed',   label: 'Failed',      test: s => s.status === 'defacing_failed' || s.exam_corrupt },
+            { key: 'failed',   label: 'Failed',      test: s => ['defacing_failed', 'defacing_disabled'].includes(s.status) || s.exam_corrupt },
             { key: 'exported', label: 'Exported',    test: s => s.status === 'archived' },
             { key: 'all',      label: 'All',         test: () => true },
         ];
@@ -428,6 +428,11 @@
                     A head-scan series still contains facial features, so export is blocked.
                     Restarting PixieVeil retries the remaining series.</div></div>`);
             }
+            if (study.status === 'defacing_disabled') {
+                out.push(`<div class="callout bad">${icon('alert')}<div><strong>Defacing is disabled.</strong>
+                    This study has a head-scan series that was not defaced, so export is blocked.
+                    Enable <span class="mono">defacing</span> in settings.yaml and restart PixieVeil to deface it.</div></div>`);
+            }
             if (study.location === 'absent') {
                 out.push(`<div class="callout warn">${icon('alert')}<div><strong>Study files not found.</strong>
                     The DICOM directory is gone from both storage and the retention area — only the exam record remains.</div></div>`);
@@ -593,8 +598,10 @@
         function actionButtons(study) {
             const absent = study.location === 'absent';
             const failed = study.status === 'defacing_failed';
+            const disabled = study.status === 'defacing_disabled';
             const processing = ['receiving', 'complete', 'defacing'].includes(study.status);
             const exportBlock = absent ? 'Study files not found' : failed ? 'Blocked: defacing incomplete'
+                : disabled ? 'Blocked: defacing disabled'
                 : processing ? 'Still processing' : '';
             const out = [`<button type="button" class="btn btn-ghost" data-act="reextract" ${absent ? 'disabled title="Study files not found"' : ''}>
                 ${icon('redo')} Re-extract</button>`];
