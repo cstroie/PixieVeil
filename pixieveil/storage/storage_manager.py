@@ -963,7 +963,9 @@ class StorageManager:
     def _merge_exam_hints_mem(self, study_uid: str, series_number: int,
                               raw: Dict[str, str]) -> None:
         """First-non-empty merge of one image's *raw* hints into the in-memory
-        per-study accumulator."""
+        per-study accumulator. *series_number* is the LOCAL folder number
+        (arrival order), not the DICOM SeriesNumber — ExamExtractor looks
+        series hints up by folder accordingly."""
         h = self._exam_hints.setdefault(study_uid, {"study": {}, "series": {}})
         for k in self._EXAM_HINT_STUDY_KEYS:
             if raw.get(k) and not h["study"].get(k):

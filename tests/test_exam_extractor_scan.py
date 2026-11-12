@@ -69,7 +69,8 @@ class TestStudyLevelHeaders:
             "study": {"manufacturer": "SIEMENS", "model": "Emotion 16",
                       "protocol_name": "CAP_SPIRAL_NATIV",
                       "study_description": "Head^CAP_SPIRAL_NATIV"},
-            "series": {"3": {"series_description": "CEREBRAL 5.0 H31s"}},
+            # keyed by local folder (0001 → "1"), not DICOM SeriesNumber 3
+            "series": {"1": {"series_description": "CEREBRAL 5.0 H31s"}},
         }
         scanned = make_extractor(tmp_path)._scan_dicom_files(study_dir, hints)
 
@@ -78,6 +79,22 @@ class TestStudyLevelHeaders:
         assert scanned["protocol_name"] == "CAP_SPIRAL_NATIV"
         assert scanned["study_description"] == "Head^CAP_SPIRAL_NATIV"
         assert scanned["series_records"]["3"]["series_description"] == "CEREBRAL 5.0 H31s"
+
+    def test_series_hints_follow_folder_not_series_number(self, tmp_path):
+        """Scanner sent series out of order (seen on a SOMATOM go.All): the
+        recon (SeriesNumber 2) arrived first → folder 0001, the topogram
+        (SeriesNumber 1) later → folder 0002. Hints are keyed by folder."""
+        study_dir = tmp_path / "study"
+        write_minimal_dicom(study_dir / "0001" / "img1.dcm", Modality="CT", SeriesNumber=2)
+        write_minimal_dicom(study_dir / "0002" / "img1.dcm", Modality="CT", SeriesNumber=1,
+                            ImageType=["ORIGINAL", "PRIMARY", "LOCALIZER"])
+        hints = {"series": {"1": {"series_description": "Torace Nativ 1,50 Br40"},
+                            "2": {"series_description": "Topogram 0,70 Tr20 cor"}}}
+        recs = make_extractor(tmp_path)._scan_dicom_files(study_dir, hints)["series_records"]
+
+        assert recs["1"]["series_description"] == "Topogram 0,70 Tr20 cor"
+        assert recs["2"]["series_description"] == "Torace Nativ 1,50 Br40"
+        assert all("_folder" not in r for r in recs.values())
 
     def test_real_header_wins_over_hint(self, tmp_path):
         study_dir = tmp_path / "study"

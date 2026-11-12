@@ -314,6 +314,63 @@ def _is_ct_image(ds: "pydicom.Dataset") -> bool:
     return not modality or modality == "CT"
 
 
+# Per-series CTDIvol is the max over a series' images; with tube-current
+# modulation that sits well above the RDSR's per-acquisition *mean* (seen up
+# to ~+16% on Siemens Emotion 16 / SOMATOM go.*), so "matches" is loose.
+_CTDIVOL_TOLERANCE = 0.25
+
+
+def _classify_per_image_ctdivol(series_ctdivols: List[float],
+                                acq_ctdivols: List[float]) -> Optional[str]:
+    """How a scanner's per-image CTDIvol tag relates to the RDSR record.
+
+    Returns ``"per_acquisition"`` when no series exceeds the largest single
+    acquisition (within tolerance), ``"cumulative"`` when every value that
+    does exceed it matches a running total of the acquisitions, else
+    ``"unclear"``; ``None`` when either side has no data.
+    """
+    acq = [a for a in acq_ctdivols if a is not None]
+    vals = [v for v in series_ctdivols if v is not None]
+    if not acq or not vals:
+        return None
+    tol = _CTDIVOL_TOLERANCE
+    ceiling = max(acq) * (1 + tol)
+    exceeding = [v for v in vals if v > ceiling]
+    if not exceeding:
+        return "per_acquisition"
+    running, totals = 0.0, []
+    for a in acq:
+        running += a
+        totals.append(running)
+    if all(any(abs(v - t) <= tol * t for t in totals) for v in exceeding):
+        return "cumulative"
+    return "unclear"
+
+
+_CTDIVOL_NOTES = {
+    "per_acquisition": (
+        "rdsr populated: per-image CTDIvol matches the RDSR per-acquisition values "
+        "(series[*].ctdi_vol_mgy is the max over a series' images, so it can sit above "
+        "the RDSR mean under tube-current modulation) — prefer "
+        "rdsr.acquisitions[*].mean_ctdivol_mgy as the authoritative record"
+    ),
+    "cumulative": (
+        "rdsr populated: per-image CTDIvol on this scanner reports the cumulative "
+        "dose-to-date, not the per-acquisition value — use "
+        "rdsr.acquisitions[*].mean_ctdivol_mgy, not series[*].ctdi_vol_mgy"
+    ),
+    "unclear": (
+        "rdsr populated: per-image CTDIvol doesn't line up with the RDSR acquisitions "
+        "(neither per-acquisition nor a running total) — prefer "
+        "rdsr.acquisitions[*].mean_ctdivol_mgy"
+    ),
+    None: (
+        "rdsr populated: prefer rdsr.acquisitions[*].mean_ctdivol_mgy over "
+        "series[*].ctdi_vol_mgy"
+    ),
+}
+
+
 def _is_topogram(ds: "pydicom.Dataset") -> bool:
     image_type = [str(v).upper() for v in (getattr(ds, "ImageType", None) or [])]
     return "LOCALIZER" in image_type
@@ -420,6 +477,10 @@ class ExamExtractor:
             series_number = getattr(ds, "SeriesNumber", None)
             key = str(series_number) if series_number is not None else "?"
             rec = series_records.setdefault(key, {
+                # Local storage folder (<study>/<NNNN>/, numbered by arrival
+                # order) — the key the pre-anonymization hints use. Not the
+                # DICOM SeriesNumber; popped before the record is returned.
+                "_folder": f.parent.name,
                 "series_number": series_number,
                 "series_description": str(getattr(ds, "SeriesDescription", "") or ""),
                 "is_topogram": False,
@@ -485,10 +546,16 @@ class ExamExtractor:
         protocol_name = protocol_name or study_hints.get("protocol_name", "")
         study_description = study_description or study_hints.get("study_description", "")
         series_hints = (hints or {}).get("series", {})
-        for skey, rec in series_records.items():
-            if not rec["series_description"]:
+        for rec in series_records.values():
+            # Hints are keyed by local folder number (StorageManager assigns
+            # those in arrival order), NOT DICOM SeriesNumber — matching on
+            # SeriesNumber attached e.g. a recon's description to the
+            # topogram whenever the scanner sent series out of order.
+            folder = rec.pop("_folder", "")
+            hkey = str(int(folder)) if folder.isdigit() else None
+            if not rec["series_description"] and hkey is not None:
                 rec["series_description"] = (
-                    series_hints.get(skey, {}).get("series_description", "")
+                    series_hints.get(hkey, {}).get("series_description", "")
                 )
 
         return {
@@ -578,11 +645,14 @@ class ExamExtractor:
                 "content tree); DLP needs to be read off the console dose screen manually"
             )
         else:
-            notes.append(
-                "rdsr populated: prefer rdsr.acquisitions[*].mean_ctdivol_mgy over "
-                "series[*].ctdi_vol_mgy — the per-image CTDIvol tag on this scanner "
-                "reports the cumulative dose-to-date, not the per-acquisition value"
+            # Derived from this study's own data rather than assumed per
+            # scanner: compare per-series CTDIvol against the RDSR record.
+            verdict = _classify_per_image_ctdivol(
+                [rec["ctdi_vol_mgy"] for rec in series_records.values()],
+                [a.get("mean_ctdivol_mgy") for a in rdsr_data.get("acquisitions", [])],
             )
+            rdsr_data["per_image_ctdivol"] = verdict
+            notes.append(_CTDIVOL_NOTES[verdict])
 
         region, indication, iv_contrast, indication_matched = self._match_indication(
             protocol_name, study_description, body_part

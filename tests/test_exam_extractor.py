@@ -9,6 +9,7 @@ exam_merge.recompute_buckets() both build on.
 import pydicom
 
 from pixieveil.processing.exam_extractor import (
+    _classify_per_image_ctdivol,
     _determine_bucket,
     _estimate_series_dlp,
     _first_float,
@@ -233,3 +234,27 @@ class TestIsTopogram:
     def test_missing_image_type(self):
         ds = pydicom.Dataset()
         assert _is_topogram(ds) is False
+
+
+class TestClassifyPerImageCtdivol:
+    """Numbers taken from real studies (series max vs RDSR acquisition mean)."""
+
+    def test_emotion16_two_spirals_is_per_acquisition(self):
+        # 0049: two 36.58 mGy spirals; a running total would read ~73.
+        assert _classify_per_image_ctdivol(
+            [0.16, 42.36, 42.36], [None, 36.58, 36.58]) == "per_acquisition"
+
+    def test_somatom_go_is_per_acquisition(self):
+        # 0060 (go.All) and 0062 (go.Now)
+        assert _classify_per_image_ctdivol([0.031, 0.889, 0.889], [0.03, 0.79]) == "per_acquisition"
+        assert _classify_per_image_ctdivol([0.033, 4.056, 4.259], [0.03, 4.05]) == "per_acquisition"
+
+    def test_running_total_is_cumulative(self):
+        assert _classify_per_image_ctdivol([0.1, 10.0, 20.1], [0.1, 10.0, 10.0]) == "cumulative"
+
+    def test_value_matching_neither_is_unclear(self):
+        assert _classify_per_image_ctdivol([50.0], [10.0, 10.0]) == "unclear"
+
+    def test_no_data_on_either_side(self):
+        assert _classify_per_image_ctdivol([], [10.0]) is None
+        assert _classify_per_image_ctdivol([10.0], [None]) is None
