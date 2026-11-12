@@ -13,7 +13,7 @@ import asyncio
 import logging
 import zipfile
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Callable, Optional
 
 from pixieveil.config import Settings
 
@@ -44,8 +44,15 @@ class ZipManager:
         self.settings = settings
 
     def create_zip_sync(self, study_uid: str, output_path: Path,
-                        source_dir: Optional[Path] = None) -> Optional[Path]:
-        """Synchronous ZIP creation — runs in a thread pool via create_zip."""
+                        source_dir: Optional[Path] = None,
+                        exclude: Optional[Callable[[Path], bool]] = None) -> Optional[Path]:
+        """Synchronous ZIP creation — runs in a thread pool via create_zip.
+
+        ``exclude`` is an optional predicate called with each candidate file
+        path; return True to leave it out of the archive (on top of the
+        always-applied ``_pre_deface`` skip). Used by the RHYTHM export path
+        to drop non-CT objects (e.g. the rendered Dose Report screenshot).
+        """
         study_dir = source_dir or Path(self.settings.storage["base_path"]) / study_uid
         zip_path = output_path / f"{study_uid}.zip"
         with zipfile.ZipFile(zip_path, "w") as zipf:
@@ -55,13 +62,21 @@ class ZipManager:
                 # Skip pre-deface backups
                 if any(part.endswith("_pre_deface") for part in file_path.parts):
                     continue
+                # Never ship the internal pre-anonymization extraction hints
+                # (Manufacturer / StationName / descriptions — exactly the
+                # values the rhythm profile strips from the .dcm files).
+                if file_path.name == ".exam_hints.json":
+                    continue
+                if exclude is not None and exclude(file_path):
+                    continue
                 arcname = file_path.relative_to(study_dir)
                 zipf.write(file_path, arcname)
         logger.info(f"Created zip file for study {study_uid}: {zip_path}")
         return zip_path
 
     async def create_zip(self, study_uid: str, output_path: Path,
-                         source_dir: Optional[Path] = None) -> Optional[Path]:
+                         source_dir: Optional[Path] = None,
+                         exclude: Optional[Callable[[Path], bool]] = None) -> Optional[Path]:
         """
         Create a zip file for a study.
 
@@ -86,7 +101,9 @@ class ZipManager:
             exist or cannot be accessed, the method will return None.
         """
         try:
-            return await asyncio.to_thread(self.create_zip_sync, study_uid, output_path, source_dir)
+            return await asyncio.to_thread(
+                self.create_zip_sync, study_uid, output_path, source_dir, exclude
+            )
         except Exception as e:
             logger.error(f"Failed to create zip for study {study_uid}: {e}")
             return None

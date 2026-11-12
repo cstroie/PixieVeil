@@ -48,8 +48,12 @@ class AnonymizationProfile(BaseModel):
         KeepPrivateTags: If False, remove private DICOM tags
         PixelBlackout: If True, set all pixel data to zeros
         RetainStudyDate: If True, keep study date and time unchanged
+        RemoveTags: DICOM keywords deleted outright as a final anonymization
+            pass (wins over any substitution). Used by the ``rhythm`` profile
+            to strip the tags RHYTHM's GDPR-strict validator requires absent
+            (dates/times, device identity, descriptions, ...).
     """
-    
+
     PatientName: Optional[str] = None
     PatientID: Optional[str] = None
     PatientBirthDate: Optional[str] = None
@@ -69,6 +73,7 @@ class AnonymizationProfile(BaseModel):
     KeepPrivateTags: bool = False
     PixelBlackout: bool = False
     RetainStudyDate: bool = False
+    RemoveTags: list[str] = Field(default_factory=list)
 
 
 class Settings(BaseModel):

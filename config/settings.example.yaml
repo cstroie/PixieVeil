@@ -11,17 +11,26 @@ storage:
   base_path: "./data/dicom"
   temp_path: "./data/tmp"
   max_storage_gb: 100
-  # Optional: keep a local copy of each already-anonymized study for N days
-  # after a successful export, instead of deleting it immediately. Useful
-  # for auditing or harvesting real acquisition parameters. Omit or set to
-  # 0/null to keep the default behavior (delete right after export).
-  # Stored under retain_path (defaults to a "retained" dir next to base_path)
-  # and outside max_storage_gb accounting — watch disk usage separately.
+  # Optional: keep each already-anonymized study on disk for N days after a
+  # successful export instead of deleting it immediately — useful for
+  # auditing or harvesting real acquisition parameters. The retention clock
+  # starts at export success (for RHYTHM, when the ingest job reaches
+  # COMPLETE). After the window the study directory, its export ZIP/manifest
+  # and its deface scratch are removed, but the <NNNN>.state.json /
+  # <NNNN>.exam.json records are kept permanently. Omit or set 0/null to
+  # keep the default (delete right after export). A study uploaded to RHYTHM
+  # but never confirmed COMPLETE keeps its export ZIP indefinitely as the
+  # retry source.
   #retain_after_export_days: 14
-  #retain_path: "./data/retained"
+  # HTTP/RHYTHM exports write <NNNN>.zip + <NNNN>.json here before sending;
+  # DICOM C-STORE exports produce no artifact. Defaults to an "export" dir
+  # next to base_path. Retained studies still count toward max_storage_gb.
+  #export_path: "./data/export"
 
   # Optional remote storage — remove entire block to keep archives local.
-  # DICOM C-STORE takes priority over HTTP ZIP upload if both are configured.
+  # Every export is manual (a Send/Upload click on the /studies dashboard);
+  # nothing is sent automatically. A study can be sent to more than one of
+  # these; the first successful export does the retain-or-delete bookkeeping.
   # Must nest under storage: (this indentation) — code reads it from
   # settings.storage["remote_storage"], not from a top-level key.
   #remote_storage:
@@ -35,6 +44,28 @@ storage:
   #    port: 4070
   #    ae_title: "ORTHANC"          # called AE title (remote node)
   #    calling_ae: "PIXIEVEIL_SCU"  # our AE title (defaults to dicom_server.ae_title)
+  #  # RHYTHM CT upload platform (v2 server-assigned batch API). Uploads a
+  #  # per-study ZIP over the resumable chunked-upload endpoints; RHYTHM
+  #  # re-validates GDPR anonymization, assigns the Repository Study ID
+  #  # asynchronously, and pushes to its Orthanc. Requires anonymization
+  #  # profile "gdpr" (research keeps study dates / non-regenerated UIDs
+  #  # that RHYTHM rejects) and a per-study image_quality set on the
+  #  # /studies page before a study can be sent.
+  #  rhythm:
+  #    base_url: "https://rhythm.your-domain"
+  #    auth_token: "rhythm-upload-token"   # `manage.py create_upload_token`, NOT a login
+  #    site_code: "S014"                   # assigned by RHYTHM per institution — read
+  #                                        # it off your RHYTHM profile, from the admin,
+  #                                        # or the S### segment of a Repository Study ID
+  #    #protocol_map: "config/rhythm_protocols.yaml"   # local protocol key -> registered
+  #                                        # CTProtocol UUID (this is the default path);
+  #                                        # see config/rhythm_protocols.example.yaml. Each
+  #                                        # study picks one on /studies; its UUID becomes
+  #                                        # the manifest item's protocol_id, from which
+  #                                        # RHYTHM derives region/indication/contrast/
+  #                                        # protocol type/exam group/scanner.
+  #    #chunk_size: 10485760               # bytes per chunk (default 10 MiB)
+  #    #max_chunk_retries: 3
 
 # HTTP Server Settings
 http_server:
@@ -134,3 +165,89 @@ anonymization:
       KeepPrivateTags: false
       PixelBlackout: false
       RetainStudyDate: false
+    rhythm:
+      # RHYTHM CT upload platform: passes RHYTHM's own GDPR-strict ingest
+      # validator (reference/uploader/ct_upload_platform/GDPR-strict.json).
+      # Every tag that validator marks "must be removed" is either emptied by
+      # a strategy below or deleted outright via RemoveTags. PatientName /
+      # PatientID are removed, not pseudonymised — RHYTHM keys studies on its
+      # own Repository Study ID, not the DICOM PatientID. PatientAge/Size/
+      # Weight are kept (GDPR-strict marks them KEEP; the RHYTHM manifest
+      # uses age/weight). Select this profile at receive time; anonymization
+      # is one-shot, so a study received under another profile can't be
+      # re-exported to RHYTHM — re-send the source DICOM.
+      # The RemoveTags list is cross-checked against the vendored
+      # GDPR-strict.json by tests/test_anonymizer_rhythm.py.
+      PatientName: null
+      PatientID: PSEUDO           # kept for the anontrail; RemoveTags then
+                                  # deletes it from every shipped file
+      PatientBirthDate: null
+      PatientAge: KEEP
+      PatientSex: CLEAR
+      InstitutionName: null
+      StudyID: null
+      StudyInstanceUID: NEWUID
+      StudyDescription: null
+      SeriesInstanceUID: NEWUID
+      SeriesDescription: null
+      FrameOfReferenceUID: NEWUID
+      ReferringPhysicianName: null
+      OperatorsName: null
+      PerformingPhysicianName: null
+      AccessionNumber: null
+      KeepPrivateTags: false
+      PixelBlackout: false
+      RetainStudyDate: false
+      RemoveTags:
+        - AcquisitionComments
+        - AcquisitionDate
+        - AcquisitionDateTime
+        - AcquisitionTime
+        - Allergies
+        - ConsultingPhysicianName
+        - ContentDate
+        - ContentTime
+        - CurveDate
+        - CurveTime
+        - DeviceSerialNumber
+        - DeviceUID
+        - DoseReferenceUID
+        - EthnicGroup
+        - FrameComments
+        - ImageComments
+        - Impressions
+        - InstanceCoercionDateTime
+        - InstanceCreatorUID
+        - InstitutionAddress
+        - InstitutionCodeSequence
+        - InstitutionalDepartmentName
+        - IssuerOfPatientID
+        - Manufacturer
+        - ManufacturerModelName
+        - NameOfPhysiciansReadingStudy
+        - Occupation
+        - OperatorIdentificationSequence
+        - OtherPatientIDs
+        - OtherPatientNames
+        - OverlayDate
+        - OverlayTime
+        - PatientAddress
+        - PatientBirthTime
+        - PatientID
+        - PatientName
+        - PatientTelecomInformation
+        - PatientTelephoneNumbers
+        - PerformingPhysicianIdentificationSequence
+        - ProtocolName
+        - ROIName
+        - ReferencedSeriesSequence
+        - ReferencedStudySequence
+        - ReferringPhysicianAddress
+        - ReferringPhysicianTelephoneNumbers
+        - SeriesDate
+        - SeriesTime
+        - StationName
+        - StudyDate
+        - StudyTime
+        - TimezoneOffsetFromUTC
+        - UID

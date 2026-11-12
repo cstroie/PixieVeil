@@ -20,3 +20,17 @@
 [x] rename data/pixieveil to data/dicom
 [ ] add support for filling dicom tags after aquisition (e.g. patient weight or size)
 [x] update the statistics with deface and remote dicom store
+[x] RHYTHM auto-uploader: v2 chunked batch upload, manual per-study trigger
+[x] RHYTHM v2 protocol_id: define protocols in config/rhythm_protocols.yaml
+    (local key -> registered CTProtocol UUID), pick per study on /studies
+[ ] RHYTHM: fetch the protocol list from RHYTHM's API instead of hand-maintaining
+    config/rhythm_protocols.yaml
+[x] check the reference/uploader: we need a protocol_id field in json manifest. this id is defined upstream, need a map
+[x] need a new anonymization profile, named 'rhythm', to pass the uploader check (see reference/anon_rhythm.json)
+[x] migrate the legacy sidecar names (<NNNN>.json -> <NNNN>.state.json,
+    <NNNN>_exam.json -> <NNNN>.exam.json; StudySidecar.migrate_legacy_sidecar_names)
+[x] check if we create v1 or v2 manifest for rhythm (v2:
+    "rhythm_server_assigned_upload_manifest", top-level type/items)
+[x] update the config files (retain_path -> export_path; retention model rewrite)
+[x] retention: study dir + export_path/<NNNN>.{zip,json} kept in base_path
+    for retain_after_export_days after export, then purged (records kept)

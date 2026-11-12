@@ -231,7 +231,7 @@
 
         const state = {
             studies: [],
-            caps: { dicom: false, http: false },
+            caps: { dicom: false, http: false, rhythm: false, rhythm_protocols: [] },
             options: null,
             filter: null,
             query: '',
@@ -291,6 +291,14 @@
                 `${svg(C * (1 - filled / required))}<span class="lbl">${lbl}</span></span>`;
         }
 
+        // RHYTHM ingest job state (set once a study was uploaded to RHYTHM).
+        const RHYTHM_TONE = { COMPLETE: 'ok', PARTIAL: 'warn', FAILED: 'bad', failed: 'bad' };
+        function rhythmPill(st) {
+            if (!st) return '';
+            const tone = RHYTHM_TONE[st] || 'busy';
+            return `<span class="pill ${tone}" title="RHYTHM ingest job state">RHYTHM ${esc(st)}</span>`;
+        }
+
         function rowHtml(s) {
             const ex = s.exam_summary || {};
             const ind = ex.indication || {};
@@ -311,7 +319,7 @@
                     <span class="row-sub" style="display:block">${esc(sub)}</span>
                     <span class="row-chips">${chips}</span>
                 </span>
-                <span class="row-side">${PV.statusPill(s.status)}${edited}</span>
+                <span class="row-side">${PV.statusPill(s.status)}${rhythmPill(s.rhythm_status)}${edited}</span>
             </button>`;
         }
 
@@ -334,7 +342,7 @@
 
             const ready = state.studies.filter(s => s.status === 'ready').length;
             const bulk = $('#btn-bulk');
-            bulk.hidden = !ready || !(state.caps.dicom || state.caps.http);
+            bulk.hidden = !ready || !(state.caps.dicom || state.caps.http || state.caps.rhythm);
             bulk.innerHTML = `${icon('send')} Export ready (${ready})`;
 
             const list = $('#list');
@@ -408,6 +416,19 @@
             </div>`;
         }
 
+        // Dropdown on the same data-path dirty tracking; `bool` saves
+        // "true"/"false" as JSON booleans (see collectChanges).
+        function selectField({ path, label, value, choices, hint, cls, missing, bool }) {
+            const id = `f-${path.replace(/\./g, '-')}`;
+            return `<div class="field ${cls || ''} ${missing ? 'is-missing' : ''}">
+                <label for="${id}">${esc(label)}${manualTag(path)}</label>
+                <select class="select" id="${id}" data-path="${path}" ${bool ? 'data-type="bool"' : ''}>
+                    ${choices.map(([v, l]) => `<option value="${esc(v)}" ${v === (value || '') ? 'selected' : ''}>${esc(l)}</option>`).join('')}
+                </select>
+                ${hint ? `<span class="hint">${hint}</span>` : ''}
+            </div>`;
+        }
+
         // A one-click choice backed by a hidden input, so it participates in
         // the same data-path dirty tracking / save path as plain inputs.
         function segField({ path, label, value, choices, tones, cls, missing }) {
@@ -470,12 +491,17 @@
                 : (ind.matched ? 'Auto-matched from the protocol name by indication_lookup.yaml.'
                     : 'No lookup rule matched this protocol — choose the RHYTHM indication.');
 
-            const scannerLabel = (opts.scanners.find(o => o.id === sc.rhythm_scanner_id) || {}).label;
             const detected = [sc.manufacturer, sc.model].filter(Boolean).join(' ');
-            const scannerHint = [
-                detected ? `Detected: <span class="mono">${esc(detected)}</span>` : 'Scanner not identified in headers',
-                scannerLabel ? '· in scanner_lookup.yaml' : (sc.rhythm_scanner_id ? '· not a known ID' : ''),
-            ].join(' ');
+            const scannerHint = detected ? `Detected scanner: <span class="mono">${esc(detected)}</span>.`
+                : 'Scanner not identified in headers.';
+            const rh = exam.rhythm || {};
+            const protoKey = rh.protocol_key || '';
+            const retainVal = rh.retain_after_project;
+            const protoChoices = (state.caps.rhythm_protocols || []).map(p =>
+                [p.id, (p.name || p.id) + (p.uuid_pending ? ' (UUID pending)' : '')]);
+            if (protoKey && !protoChoices.some(c => c[0] === protoKey)) {
+                protoChoices.unshift([protoKey, `${protoKey} (not in rhythm_protocols.yaml)`]);
+            }
 
             return `
             <div class="card">
@@ -504,11 +530,14 @@
                     </div>
                     ${segField({ path: 'indication.iv_contrast', label: 'IV contrast', value: ind.iv_contrast,
                         choices: opts.iv_contrast, missing: missing.has('indication.iv_contrast') })}
-                    ${inputField({ path: 'scanner.rhythm_scanner_id', label: 'RHYTHM scanner ID', type: 'text',
-                        value: sc.rhythm_scanner_id, list: 'scanner-ids', missing: missing.has('scanner.rhythm_scanner_id'),
-                        hint: scannerHint })}
-                    <datalist id="scanner-ids">${opts.scanners.map(o =>
-                        `<option value="${esc(o.id)}" label="${esc(o.label)}"></option>`).join('')}</datalist>
+                    ${selectField({ path: 'rhythm.protocol_key', label: 'RHYTHM protocol', cls: 'span-2',
+                        value: protoKey, missing: missing.has('rhythm.protocol_key'),
+                        choices: [['', '— Choose protocol —'], ...protoChoices],
+                        hint: `Its UUID becomes the manifest's protocol_id; RHYTHM derives scanner, region and contrast from it. ${scannerHint}` })}
+                    ${selectField({ path: 'rhythm.retain_after_project', label: 'Keep after project end', cls: 'span-2',
+                        value: retainVal === true ? 'true' : retainVal === false ? 'false' : '', bool: true,
+                        choices: [['', 'Default (kept)'], ['true', 'Yes — consent given'], ['false', 'No — delete at project end']],
+                        hint: "Patient's retention consent, sent as retain_after_project." })}
                 </div>
             </div>
             <div class="card">
@@ -595,6 +624,17 @@
                 : `<div class="empty">${icon('check')}<strong>No extraction notes</strong></div>`);
         }
 
+        // Why RHYTHM upload is unavailable for this study ('' if it isn't).
+        // The server re-checks all of this; this only explains a greyed button.
+        function rhythmBlock(study, exportBlock) {
+            if (state.caps.anonymization_profile !== 'rhythm') return "Requires the 'rhythm' anonymization profile";
+            if (exportBlock) return exportBlock;
+            const ex = (state.detail && state.detail.exam) || {};
+            if (!ex.image_quality) return 'Set image quality first';
+            if (!(ex.rhythm && ex.rhythm.protocol_key)) return 'Choose a RHYTHM protocol first';
+            return '';
+        }
+
         function actionButtons(study) {
             const absent = study.location === 'absent';
             const failed = study.status === 'defacing_failed';
@@ -613,7 +653,15 @@
                 out.push(`<button type="button" class="btn" data-act="upload_http" ${exportBlock ? `disabled title="${exportBlock}"` : ''}>
                     ${icon('upload')} Upload HTTP</button>`);
             }
-            if (!state.caps.dicom && !state.caps.http) {
+            if (state.caps.rhythm) {
+                const reason = rhythmBlock(study, exportBlock);
+                const label = study.rhythm_status && study.rhythm_status !== 'failed' ? 'Re-upload RHYTHM' : 'Upload RHYTHM';
+                out.push(`<a class="btn btn-ghost btn-sm" href="/api/studies/${study.study_number}/rhythm-manifest" target="_blank"
+                    rel="noopener" title="Preview this study's RHYTHM manifest item">${icon('info')} Manifest</a>`);
+                out.push(`<button type="button" class="btn" data-act="upload_rhythm" ${reason ? `disabled title="${esc(reason)}"` : ''}>
+                    ${icon('upload')} ${label}</button>`);
+            }
+            if (!state.caps.dicom && !state.caps.http && !state.caps.rhythm) {
                 out.push('<span class="faint" style="font-size:12px">No export target configured</span>');
             }
             return out.join('');
@@ -690,6 +738,8 @@
                 if (dirty && input.type === 'number') {
                     const num = parseFloat(val);
                     if (Number.isNaN(num)) dirty = false; else fields[input.dataset.path] = num;
+                } else if (dirty && input.dataset.type === 'bool') {
+                    fields[input.dataset.path] = val === 'true';
                 } else if (dirty) {
                     fields[input.dataset.path] = val;
                 }
@@ -807,7 +857,8 @@
             state.tab = tab;
         }
 
-        const TARGET = { send_dicom: 'the DICOM node', upload_http: 'HTTP storage' };
+        const TARGET = { send_dicom: 'the DICOM node', upload_http: 'HTTP storage', upload_rhythm: 'RHYTHM' };
+        const TARGET_TITLE = { send_dicom: 'Send to DICOM node', upload_http: 'Upload to HTTP storage', upload_rhythm: 'Upload to RHYTHM' };
 
         async function runAction(action, btn) {
             const n = state.sel;
@@ -835,7 +886,7 @@
                 }
                 parts.push(`<p>Send study <strong class="mono">${pad4(n)}</strong> to ${TARGET[action]}?</p>`);
                 const ok = await PV.modal({
-                    title: action === 'send_dicom' ? 'Send to DICOM node' : 'Upload to HTTP storage',
+                    title: TARGET_TITLE[action],
                     body: parts.join(''),
                     confirm: (noExam || missing.length) ? 'Export anyway' : (state.dirtyCount ? 'Save & send' : 'Send'),
                 });
@@ -861,8 +912,10 @@
             const ready = state.studies.filter(s => s.status === 'ready');
             const complete = ready.filter(s => !PV.needsInput(s));
             const incomplete = ready.length - complete.length;
-            const targets = [['send_dicom', 'DICOM node', state.caps.dicom], ['upload_http', 'HTTP storage', state.caps.http]]
+            const targets = [['send_dicom', 'DICOM node', state.caps.dicom], ['upload_http', 'HTTP storage', state.caps.http],
+                ['upload_rhythm', 'RHYTHM (one batch)', state.caps.rhythm && state.caps.anonymization_profile === 'rhythm']]
                 .filter(t => t[2]);
+            if (!targets.length) { PV.toast('No export target available.', 'warn'); return; }
             const body = `
                 <p>${ready.length} ${ready.length === 1 ? 'study is' : 'studies are'} ready:
                    <strong>${complete.length}</strong> complete, <strong>${incomplete}</strong> with missing exam data.</p>
@@ -878,6 +931,8 @@
             const batch = fd.get('incl') ? ready : complete;
             if (!batch.length) { PV.toast('Nothing to export — all ready studies are incomplete.', 'warn'); return; }
             if (!(await confirmDiscard())) return;
+
+            if (action === 'upload_rhythm') { await rhythmBatch(batch); return; }
 
             const t = PV.toast(`Exporting 0/${batch.length}…`);
             t.sticky();
@@ -896,6 +951,28 @@
             }
             t.update(failed ? `Exported ${sent}, failed ${failed}. ${errors.slice(0, 3).join(' · ')}` : `Exported ${sent} ${sent === 1 ? 'study' : 'studies'}.`,
                 failed ? 'bad' : 'ok');
+            await loadStudies();
+            state.dirtyCount = 0;
+            if (state.sel != null) await loadDetail(state.sel, { keepTab: true });
+        }
+
+        // RHYTHM: all selected studies go up as ONE batch (server-side).
+        async function rhythmBatch(batch) {
+            const t = PV.toast(`Uploading ${batch.length} to RHYTHM as one batch…`);
+            t.sticky();
+            try {
+                const res = await PV.api('/api/studies/rhythm-batch', {
+                    method: 'POST', body: { study_numbers: batch.map(s => s.study_number) },
+                });
+                const rs = Object.entries(res.results || {});
+                const bad = rs.filter(([, r]) => !r.ok);
+                t.update(bad.length
+                    ? `RHYTHM batch ${res.batch}: ${rs.length - bad.length} queued, ${bad.length} blocked. `
+                      + bad.slice(0, 3).map(([n, r]) => `${pad4(n)}: ${r.message}`).join(' · ')
+                    : `RHYTHM batch ${res.batch}: queued ${rs.length} for ingest.`, bad.length ? 'bad' : 'ok');
+            } catch (err) {
+                t.update(`RHYTHM batch failed: ${err.message}`, 'bad');
+            }
             await loadStudies();
             state.dirtyCount = 0;
             if (state.sel != null) await loadDetail(state.sel, { keepTab: true });

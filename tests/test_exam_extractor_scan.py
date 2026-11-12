@@ -59,6 +59,37 @@ class TestStudyLevelHeaders:
         assert scanned["study_description"] == "CT Head"
         assert scanned["body_part"] == "HEAD"
 
+    def test_hints_fill_blank_headers(self, tmp_path):
+        """rhythm-anonymized study: Manufacturer/model/descriptions gone from
+        the files, supplied via the pre-anon hints instead."""
+        study_dir = tmp_path / "study"
+        write_minimal_dicom(study_dir / "0001" / "img1.dcm", Modality="CT",
+                            SeriesNumber=3)  # no Manufacturer/ProtocolName/etc.
+        hints = {
+            "study": {"manufacturer": "SIEMENS", "model": "Emotion 16",
+                      "protocol_name": "CAP_SPIRAL_NATIV",
+                      "study_description": "Head^CAP_SPIRAL_NATIV"},
+            "series": {"3": {"series_description": "CEREBRAL 5.0 H31s"}},
+        }
+        scanned = make_extractor(tmp_path)._scan_dicom_files(study_dir, hints)
+
+        assert scanned["manufacturer"] == "SIEMENS"
+        assert scanned["model"] == "Emotion 16"
+        assert scanned["protocol_name"] == "CAP_SPIRAL_NATIV"
+        assert scanned["study_description"] == "Head^CAP_SPIRAL_NATIV"
+        assert scanned["series_records"]["3"]["series_description"] == "CEREBRAL 5.0 H31s"
+
+    def test_real_header_wins_over_hint(self, tmp_path):
+        study_dir = tmp_path / "study"
+        write_minimal_dicom(study_dir / "0001" / "img1.dcm", Modality="CT",
+                            SeriesNumber=1, Manufacturer="ACME",
+                            SeriesDescription="from header")
+        hints = {"study": {"manufacturer": "SIEMENS"},
+                 "series": {"1": {"series_description": "from hint"}}}
+        scanned = make_extractor(tmp_path)._scan_dicom_files(study_dir, hints)
+        assert scanned["manufacturer"] == "ACME"
+        assert scanned["series_records"]["1"]["series_description"] == "from header"
+
     def test_contrast_bolus_agent_present_sets_contrast_seen(self, tmp_path):
         study_dir = tmp_path / "study"
         write_minimal_dicom(

@@ -79,6 +79,22 @@ class TestCreateZipSync:
             assert zf.namelist() == ["0001/img.dcm"]
             assert zf.read("0001/img.dcm") == b"current"
 
+    def test_exam_hints_file_excluded(self, tmp_path):
+        base_path = tmp_path / "data"
+        study_dir = base_path / "0001"
+        (study_dir / "0001").mkdir(parents=True)
+        (study_dir / "0001" / "img.dcm").write_bytes(b"ct")
+        # holds Manufacturer/descriptions the rhythm profile strips — must
+        # never ride along in the archive RHYTHM extracts
+        (study_dir / ".exam_hints.json").write_text('{"study": {"manufacturer": "SIEMENS"}}')
+        output_dir = tmp_path / "out"
+        output_dir.mkdir()
+
+        zip_path = make_manager(base_path).create_zip_sync("0001", output_dir)
+
+        with zipfile.ZipFile(zip_path) as zf:
+            assert zf.namelist() == ["0001/img.dcm"]
+
     def test_empty_study_dir_produces_empty_zip(self, tmp_path):
         base_path = tmp_path / "data"
         (base_path / "0001").mkdir(parents=True)

@@ -102,6 +102,7 @@ class TestMissingRequired:
             "indication": {"region": "Chest", "clinical_indication": "Fungal infections",
                            "iv_contrast": "Non-contrast"},
             "scanner": {"rhythm_scanner_id": "uuid"},
+            "rhythm": {"protocol_key": "head_trauma"},
         }
 
     def test_complete_exam_has_nothing_missing(self):
@@ -113,10 +114,10 @@ class TestMissingRequired:
     def test_null_blank_and_absent_all_count_as_missing(self):
         data = self._full()
         data["image_quality"] = None
-        data["scanner"]["rhythm_scanner_id"] = "   "
+        data["rhythm"]["protocol_key"] = "   "
         del data["patient"]["weight_kg"]
         assert exam_merge.missing_required(data) == [
-            "image_quality", "patient.weight_kg", "scanner.rhythm_scanner_id",
+            "image_quality", "patient.weight_kg", "rhythm.protocol_key",
         ]
 
     def test_zero_is_a_value_not_missing(self):

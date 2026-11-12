@@ -231,7 +231,7 @@
                     ? `<span class="pill bad">${sc.defacing_disabled} defacing disabled</span>` : ''),
             });
             setStage('st-ready', { count: sc.ready, tone: sc.ready ? 'ok' : '' });
-            const targets = [caps.dicom && 'DICOM', caps.http && 'HTTP'].filter(Boolean);
+            const targets = [caps.dicom && 'DICOM', caps.http && 'HTTP', caps.rhythm && 'RHYTHM'].filter(Boolean);
             setStage('st-exported', {
                 count: sc.archived, active: a.exporting, state: 'sending',
                 sub: targets.length ? `via ${targets.join(' · ')}` : 'no export target set',
@@ -248,6 +248,7 @@
                     : '<span class="pill plain dim">Defacing off</span>',
                 caps.dicom ? '<span class="pill plain">DICOM export</span>' : '',
                 caps.http ? '<span class="pill plain">HTTP export</span>' : '',
+                caps.rhythm ? '<span class="pill plain">RHYTHM export</span>' : '',
             ].join('');
         }
 
@@ -299,7 +300,7 @@
                 items.push({ tone: '', icon: 'send', href: '/studies?filter=ready',
                     html: `<strong>${sc.ready} ready to export</strong><br>Nothing is sent automatically — review and send from Studies.` });
             }
-            if (stats && !stats.capabilities.dicom && !stats.capabilities.http) {
+            if (stats && !stats.capabilities.dicom && !stats.capabilities.http && !stats.capabilities.rhythm) {
                 items.push({ tone: 'info', icon: 'info', href: null,
                     html: '<strong>No export target configured</strong><br>Set <span class="mono">remote_storage.dicom</span> or <span class="mono">.http</span> in settings.yaml.' });
             }

@@ -29,7 +29,11 @@ deface = [
     "nnunetv2"
 ]
 test = [
-    "pytest>=8.0.0"
+    "pytest>=8.0.0",
+    # Used only by test_rhythm_manifest_schema.py to validate our built
+    # manifest items against RHYTHM's own vendored JSON Schema
+    # (reference/uploader). Same library RHYTHM's server uses.
+    "jsonschema>=4.0.0"
 ]
 lint = [
     "flake8>=7.0.0",

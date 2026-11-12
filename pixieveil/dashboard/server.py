@@ -12,6 +12,7 @@ Classes:
 import asyncio
 import functools
 import importlib.metadata
+import json
 import logging
 import platform
 import time
@@ -31,7 +32,9 @@ from pixieveil.storage.storage_manager import StorageManager
 
 logger = logging.getLogger(__name__)
 
-_VALID_ACTIONS = {"send_dicom", "reextract", "upload_http"}
+_VALID_ACTIONS = {
+    "send_dicom", "reextract", "upload_http", "upload_rhythm", "mark_exported",
+}
 
 _DASHBOARD_DIR = Path(__file__).parent
 _TEMPLATES_DIR = _DASHBOARD_DIR / "templates"
@@ -104,8 +107,13 @@ class Dashboard:
             web.get("/api/about", self.handle_about),
             web.get("/api/options", self.handle_options),
             web.get("/api/studies", self.handle_list_studies),
+            # Registered before /api/studies/{n} so "rhythm-manifest" isn't
+            # parsed as a study number.
+            web.get("/api/studies/rhythm-manifest", self.handle_rhythm_manifest),
             web.get("/api/studies/{n}", self.handle_get_study),
+            web.get("/api/studies/{n}/rhythm-manifest", self.handle_rhythm_manifest_one),
             web.put("/api/studies/{n}/exam", self.handle_save_exam),
+            web.post("/api/studies/rhythm-batch", self.handle_rhythm_batch),
             web.post("/api/studies/{n}/actions/{action}", self.handle_study_action),
             web.static("/static", _STATIC_DIR),
         ])
@@ -304,6 +312,7 @@ class Dashboard:
             "capabilities": {
                 "dicom": sm.dicom_storage.enabled,
                 "http": sm.remote_storage.enabled,
+                "rhythm": sm.rhythm_storage.enabled,
             },
             "pipeline": {
                 "active": sm.get_pipeline_status(),
@@ -412,6 +421,19 @@ class Dashboard:
             "capabilities": {
                 "dicom": storage_manager.dicom_storage.enabled,
                 "http": storage_manager.remote_storage.enabled,
+                "rhythm": storage_manager.rhythm_storage.enabled,
+                # so the page can explain a disabled RHYTHM button ("requires
+                # the 'gdpr' profile") rather than just greying it out.
+                "anonymization_profile": storage_manager.settings.anonymization.get(
+                    "profile", "research"
+                ),
+                # local protocol keys from config/rhythm_protocols.yaml, for
+                # the exam panel's "RHYTHM protocol" dropdown
+                "rhythm_protocols": [
+                    {"id": e.id, "name": e.name, "description": e.description,
+                     "uuid_pending": e.uuid_pending}
+                    for e in storage_manager.rhythm_storage.protocol_map.entries
+                ],
             },
             "auth_required": bool(self.settings.http_server.get("auth_token")),
         })
@@ -456,15 +478,111 @@ class Dashboard:
             return web.json_response({"error": f"unknown action {action!r}"}, status=400)
 
         storage_manager: StorageManager = request.app['storage_manager']
-        method = {
-            "send_dicom": storage_manager.manual_send_dicom,
-            "reextract": storage_manager.manual_reextract,
-            "upload_http": storage_manager.manual_upload_http,
-        }[action]
 
-        result = await method(n)
+        if action == "mark_exported":
+            # Out-of-band export: partner tooling shipped export_path/<n>.zip
+            # to RHYTHM itself and calls this so PixieVeil archives the study
+            # and starts its retention clock. Optional JSON body:
+            # {"via": "rhythm"|"http"|"dicom", "sha256": "<hex>"}.
+            via, sha256 = "rhythm", None
+            if request.can_read_body:
+                try:
+                    body = await request.json()
+                except Exception:
+                    return web.json_response({"error": "invalid JSON body"}, status=400)
+                if isinstance(body, dict):
+                    via = body.get("via", "rhythm")
+                    sha256 = body.get("sha256")
+            result = await storage_manager.mark_exported(n, via=via, sha256=sha256)
+        else:
+            method = {
+                "send_dicom": storage_manager.manual_send_dicom,
+                "reextract": storage_manager.manual_reextract,
+                "upload_http": storage_manager.manual_upload_http,
+                "upload_rhythm": storage_manager.manual_upload_rhythm,
+            }[action]
+            result = await method(n)
         if result.get("ok"):
             return web.json_response(result)
         message = result.get("message", "")
         status = 409 if "in progress" in message else 400
         return web.json_response(result, status=status)
+
+    async def _rhythm_manifest_response(
+        self, storage_manager: "StorageManager", numbers: list, request: web.Request
+    ) -> web.Response:
+        # For a single already-exported study, serve the manifest written to
+        # export_path/<NNNN>.json verbatim (real sha256/size_bytes, the batch
+        # it actually went up under) rather than minting a fresh preview with
+        # a new batch id and no checksums.
+        manifest = None
+        if len(numbers) == 1:
+            manifest = await asyncio.to_thread(
+                storage_manager.load_export_manifest_sync, numbers[0]
+            )
+        if manifest is None:
+            manifest = await asyncio.to_thread(
+                storage_manager.build_rhythm_manifest_preview_sync, numbers
+            )
+        if request.query.get("download"):
+            # Pristine v2 manifest, as a file — strip the preview-only
+            # `blockers` key so it can go straight into RHYTHM's own
+            # validate-manifest endpoint / json-validator page.
+            manifest = {k: v for k, v in manifest.items() if k != "blockers"}
+            return web.Response(
+                text=json.dumps(manifest, indent=2),
+                content_type="application/json",
+                headers={
+                    "Content-Disposition": 'attachment; filename="rhythm_manifest.json"'
+                },
+            )
+        return web.json_response(manifest)
+
+    async def handle_rhythm_manifest(self, request: web.Request) -> web.Response:
+        """Preview/download the RHYTHM v2 batch manifest for the studies in
+        the ``?studies=1,2,3`` query (add ``&download=1`` for a file). Builds
+        the manifest without uploading; the JSON view adds a top-level
+        `blockers` key naming anything that would stop a real upload (the
+        download omits it)."""
+        storage_manager: StorageManager = request.app['storage_manager']
+        raw = request.query.get("studies", "")
+        try:
+            numbers = [int(x) for x in raw.split(",") if x.strip()]
+        except ValueError:
+            return web.json_response(
+                {"error": "studies must be a comma-separated list of integers"},
+                status=400,
+            )
+        if not numbers:
+            return web.json_response({"error": "no study numbers given"}, status=400)
+        return await self._rhythm_manifest_response(storage_manager, numbers, request)
+
+    async def handle_rhythm_manifest_one(self, request: web.Request) -> web.Response:
+        """Same as handle_rhythm_manifest for a single study (a 1-item batch).
+
+        If the study has already been exported, this returns the manifest
+        saved at export_path/<NNNN>.json verbatim.
+        """
+        n = self._coerce_study_number(request)
+        storage_manager: StorageManager = request.app['storage_manager']
+        return await self._rhythm_manifest_response(storage_manager, [n], request)
+
+    async def handle_rhythm_batch(self, request: web.Request) -> web.Response:
+        """Upload several studies to RHYTHM as one batch (one dashboard
+        action → one server-assigned batch id)."""
+        storage_manager: StorageManager = request.app['storage_manager']
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response({"error": "invalid JSON body"}, status=400)
+
+        numbers = body.get("study_numbers")
+        if not isinstance(numbers, list) or not all(
+            isinstance(x, int) for x in numbers
+        ):
+            return web.json_response(
+                {"error": 'body must be {"study_numbers": [int, ...]}'}, status=400
+            )
+
+        result = await storage_manager.manual_upload_rhythm_batch(numbers)
+        return web.json_response(result)

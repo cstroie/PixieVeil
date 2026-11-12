@@ -62,7 +62,7 @@ http_server:
   port: 8070
 ```
 
-`config/settings.yaml` is gitignored — it can hold a remote-export bearer token (`storage.remote_storage.http.auth_token`), which is why `./install`'s systemd/OpenRC modes `chmod 600` it automatically. Everything else in `settings.example.yaml` has sensible defaults; see [QUICKSTART.md](QUICKSTART.md) for the full option reference (series filtering, defacing, anonymization profiles, remote export).
+`config/settings.yaml` is gitignored — it can hold a remote-export bearer token (`storage.remote_storage.http.auth_token` or `storage.remote_storage.rhythm.auth_token`), which is why `./install`'s systemd/OpenRC modes `chmod 600` it automatically. Everything else in `settings.example.yaml` has sensible defaults; see [QUICKSTART.md](QUICKSTART.md) for the full option reference (series filtering, defacing, anonymization profiles, remote export).
 
 ## Running directly
 

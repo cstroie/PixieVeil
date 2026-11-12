@@ -111,8 +111,8 @@ class TestPersistence:
     def test_save_is_atomic_no_leftover_tmp_file(self, tmp_path):
         sc = _make(study_number=5)
         sc.save(tmp_path)
-        assert (tmp_path / "0005.json").exists()
-        assert not (tmp_path / "0005.tmp").exists()
+        assert (tmp_path / "0005.state.json").exists()
+        assert not (tmp_path / "0005.state.tmp").exists()
 
     def test_load_all_keys_by_original_study_uid(self, tmp_path):
         _make(study_number=1).save(tmp_path)
@@ -126,7 +126,22 @@ class TestPersistence:
 
     def test_load_all_skips_corrupt_file(self, tmp_path):
         _make(study_number=1).save(tmp_path)
-        (tmp_path / "0002.json").write_text("{not valid json")
+        (tmp_path / "0002.state.json").write_text("{not valid json")
 
         sidecars = StudySidecar.load_all(tmp_path)
         assert len(sidecars) == 1
+
+    def test_load_all_migrates_legacy_filenames(self, tmp_path):
+        # A pre-rename install: <NNNN>.json + <NNNN>_exam.json
+        _make(study_number=7).save(tmp_path)
+        legacy = tmp_path / "0007.state.json"
+        legacy.rename(tmp_path / "0007.json")
+        (tmp_path / "0007_exam.json").write_text('{"study_number": 7}')
+
+        sidecars = StudySidecar.load_all(tmp_path)
+
+        assert set(sidecars) == {"1.2.3.orig"}
+        assert (tmp_path / "0007.state.json").exists()
+        assert not (tmp_path / "0007.json").exists()
+        assert (tmp_path / "0007.exam.json").exists()
+        assert not (tmp_path / "0007_exam.json").exists()

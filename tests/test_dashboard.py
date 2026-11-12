@@ -53,6 +53,7 @@ def _complete_exam(n: int) -> dict:
                        "iv_contrast": "Non-contrast"},
         "scanner": {"manufacturer": "SIEMENS", "model": "Emotion 16",
                     "rhythm_scanner_id": "uuid-1"},
+        "rhythm": {"protocol_key": "head_trauma"},
         "rdsr": {}, "series": [], "notes": [],
     }
 
@@ -95,7 +96,7 @@ class TestStats:
         assert kpis["received"]["value"] == 10
         assert {"received", "anonymized", "exported", "errors"} <= set(kpis)
         assert all("title" in g and "rows" in g for g in body["details"])
-        assert body["capabilities"] == {"dicom": False, "http": False}
+        assert body["capabilities"] == {"dicom": False, "http": False, "rhythm": False}
         assert body["uptime_s"] >= 0
 
 

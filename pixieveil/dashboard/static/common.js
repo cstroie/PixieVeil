@@ -110,6 +110,7 @@ const PV = (() => {
         'indication.clinical_indication': 'Indication',
         'indication.iv_contrast': 'Contrast',
         'scanner.rhythm_scanner_id': 'Scanner ID',
+        'rhythm.protocol_key': 'RHYTHM protocol',
     };
     function missingLabels(paths) {
         return [...new Set((paths || []).map(p => FIELD_LABELS[p] || p))];

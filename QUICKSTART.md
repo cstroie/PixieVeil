@@ -98,7 +98,7 @@ data/
 
 ## Optional: remote export
 
-Two export transports are supported. Only one is active at a time; DICOM takes priority if both are configured.
+Three export transports are supported. Export is always manual — a Send/Upload click on the `/studies` dashboard; nothing leaves automatically. A study can be sent via more than one transport; the first successful export does the retain-or-delete bookkeeping (DICOM wins if sent via both DICOM and HTTP).
 
 ### DICOM C-STORE (recommended)
 
@@ -126,7 +126,36 @@ storage:
       auth_token: "your-bearer-token"
 ```
 
-If neither transport is configured, archives stay local.
+### RHYTHM CT upload platform
+
+Uploads a per-study ZIP to the [RHYTHM](https://github.com/jsfakian/rhythm) platform over its v2 resumable chunked-upload API. RHYTHM re-validates GDPR anonymization, assigns the Repository Study ID asynchronously, and pushes to its own Orthanc. On the dashboard the study shows an `uploaded` RHYTHM badge until PixieVeil polls the job to `COMPLETE`, at which point the local copy is removed (or retained per `retain_after_export_days`).
+
+```yaml
+storage:
+  remote_storage:
+    rhythm:
+      base_url: "https://rhythm.your-domain"
+      auth_token: "rhythm-upload-token"   # from `manage.py create_upload_token`, not a login
+      site_code: "S014"                   # your institution's code, assigned by RHYTHM
+      # protocol_map: "config/rhythm_protocols.yaml"   # optional, this is the default
+      # chunk_size: 10485760              # optional, default 10 MiB
+```
+
+**`site_code`** is assigned by RHYTHM when your institution registers — you can't pick your own. Find it on your RHYTHM profile page, ask the repository admin, or read it off an existing Repository Study ID (the `S###` segment of `RHY-S014-HEADTRAUMA-NC-PH-G4-000001`). All three keys must be set before `RhythmStorage.enabled` is true and the dashboard button activates.
+
+**Protocol map.** RHYTHM v2 manifest items name one `protocol_id` — the UUID of a `CTProtocol` you've registered on RHYTHM's Protocol Records page (`<base_url>/protocols/records/`); RHYTHM derives anatomical region, clinical indication, contrast, protocol type, examination group and scanner from it. Copy `config/rhythm_protocols.example.yaml` → `config/rhythm_protocols.yaml` and add one entry per registered protocol (`id` = your own short key, `uuid` = the one from Protocol Records). Each study picks a protocol from the "RHYTHM protocol" dropdown on the `/studies` page. The human-facing definition of what to register upstream lives in `integrations/rhythm/*_protocol.yaml`. If the map file sets a top-level `site_code` it must match the one in `settings.yaml` or PixieVeil won't start.
+
+Requirements before a study can be sent to RHYTHM:
+- `anonymization.profile: rhythm` — only this profile strips every tag RHYTHM's GDPR-strict ingest validator requires absent (dates/times, device identity like `Manufacturer`/`StationName`/`DeviceSerialNumber`, all descriptions, and `PatientName`/`PatientID` entirely — RHYTHM keys studies on its own Repository Study ID). The `research` and `gdpr` profiles both fail that validator. The dashboard button is disabled otherwise. **This gate reads the *current* config, not what each study was anonymized with**: a study received under `research`/`gdpr` and only later switched to `rhythm` will pass the button but be rejected by RHYTHM at ingest. Anonymization runs once, at receive time, and PixieVeil keeps only the anonymized copy — so re-send the original DICOM through PixieVeil under the `rhythm` profile rather than trying to re-export an old study.
+- a per-study **Image quality** value, set on the `/studies` page (extraction leaves it blank)
+- a per-study **RHYTHM protocol** selected on the `/studies` page (its UUID becomes the manifest's `protocol_id`)
+- defacing completed (a `defacing_failed` study is blocked)
+
+The Dose Report screenshot and any RDSR object are excluded from the RHYTHM ZIP automatically — it carries CT images only.
+
+**Preview the manifest before uploading.** `GET /api/studies/{n}/rhythm-manifest` (or `?studies=1,2,3` for a batch) returns the exact v2 manifest PixieVeil would send, with a `blockers` key listing anything still missing; add `&download=1` for a clean `rhythm_manifest.json` to paste into RHYTHM's own `/json-validator` page or `POST /api/v1/uploads/validate-manifest/`. The `/studies` page has per-study and bulk "preview / download" links.
+
+If no transport is configured, archives stay local.
 
 ### Recovery on restart
 

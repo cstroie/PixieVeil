@@ -32,6 +32,35 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).astimezone().isoformat(timespec="microseconds")
 
 
+def migrate_legacy_sidecar_names(base_path: Path) -> int:
+    """Rename pre-rename sidecars in *base_path* to the current scheme:
+
+        ``<NNNN>.json``       → ``<NNNN>.state.json``   (this module)
+        ``<NNNN>_exam.json``  → ``<NNNN>.exam.json``    (ExamSidecar)
+
+    Idempotent — only renames when the target name is free — so it is safe
+    to call on every startup. Returns the number of files renamed.
+    """
+    if not base_path.exists():
+        return 0
+    renamed = 0
+    for p in sorted(base_path.iterdir()):
+        if not p.is_file() or p.suffix != ".json":
+            continue
+        stem = p.stem
+        target: Path | None = None
+        if len(stem) == 4 and stem.isdigit():
+            target = p.with_name(f"{stem}.state.json")
+        elif len(stem) == 9 and stem.endswith("_exam") and stem[:4].isdigit():
+            target = p.with_name(f"{stem[:4]}.exam.json")
+        if target is not None and not target.exists():
+            p.rename(target)
+            renamed += 1
+    if renamed:
+        logger.info("Migrated %d legacy sidecar filename(s) under %s", renamed, base_path)
+    return renamed
+
+
 # ---------------------------------------------------------------------------
 # Data model
 # ---------------------------------------------------------------------------
@@ -65,9 +94,17 @@ class StudySidecar:
     - ``archived``   a manual export succeeded; terminal state
 
     ``archived_via`` is set when the study is archived:
-    - ``"dicom"``  sent via C-STORE to a DICOM node
-    - ``"http"``   uploaded as a ZIP via HTTP
-    - ``None``     archived without a remote export (kept locally only)
+    - ``"dicom"``   sent via C-STORE to a DICOM node
+    - ``"http"``    uploaded as a ZIP via HTTP
+    - ``"rhythm"``  uploaded to the RHYTHM platform (v2 chunked batch API)
+    - ``None``      archived without a remote export (kept locally only)
+
+    The ``rhythm_*`` fields track a RHYTHM upload's async server-side job
+    (RHYTHM assigns the Repository Study ID out-of-band): ``rhythm_batch``
+    is the batch id the upload was grouped under, ``rhythm_status`` is the
+    last observed job state (``uploaded``/``COMPLETE``/``PARTIAL``/
+    ``FAILED``/``failed``). They are set on every attempt, success or not,
+    so the dashboard can show progress or the failure reason.
     """
 
     study_number: int
@@ -79,7 +116,33 @@ class StudySidecar:
     received_at: str
     last_received_at: str
     series: Dict[str, SeriesRecord] = field(default_factory=dict)
-    archived_via: Optional[str] = None   # "dicom" | "http" | None
+    archived_via: Optional[str] = None   # "dicom" | "http" | "rhythm" | None
+
+    # RHYTHM upload job tracking (see StorageManager.manual_upload_rhythm).
+    # All optional with a default so sidecars written before this existed
+    # still load via from_dict's cls(**data).
+    rhythm_batch: Optional[str] = None
+    rhythm_session_id: Optional[str] = None
+    rhythm_job_id: Optional[str] = None
+    rhythm_job_status_url: Optional[str] = None
+    rhythm_status: Optional[str] = None
+    # Set once the export ZIP has been written to export_path/<NNNN>.zip
+    # (always, for HTTP/RHYTHM): the sha256/size RHYTHM verified, reused
+    # verbatim in export_path/<NNNN>.json so it stays truthful without
+    # re-zipping.
+    rhythm_zip_sha256: Optional[str] = None
+    rhythm_zip_size: Optional[int] = None
+
+    # Retention. ``exported_at`` is stamped when the study is first
+    # successfully exported by any method (for RHYTHM: when the ingest job
+    # reaches COMPLETE). ``enforce_retention_purge`` removes the study
+    # directory, the ``export_path/<NNNN>.{zip,json}`` pair and the
+    # ``pixieveil_deface_<NNNN>_*`` scratch dirs ``retain_after_export_days``
+    # later — but keeps this ``.state.json`` and the ``.exam.json`` beside it
+    # as the permanent record. ``purged_at`` marks that that has happened;
+    # a study with ``purged_at`` set has no directory on disk.
+    exported_at: Optional[str] = None
+    purged_at: Optional[str] = None
 
     # ------------------------------------------------------------------
     # Construction helpers
@@ -168,7 +231,7 @@ class StudySidecar:
 
     @staticmethod
     def path_for(base_path: Path, study_number: int) -> Path:
-        return base_path / f"{study_number:04d}.json"
+        return base_path / f"{study_number:04d}.state.json"
 
     def save(self, base_path: Path) -> None:
         """Atomically write this sidecar to disk."""
@@ -191,13 +254,16 @@ class StudySidecar:
     @classmethod
     def load_all(cls, base_path: Path) -> Dict[str, "StudySidecar"]:
         """
-        Load every ``????.json`` sidecar under *base_path*.
+        Load every ``????.state.json`` sidecar under *base_path*.
 
         Returns a dict keyed by ``original_study_uid``.  Corrupt files are
         skipped with a warning so a single bad sidecar does not block startup.
+        Legacy ``<NNNN>.json`` / ``<NNNN>_exam.json`` names are migrated to
+        the current scheme first.
         """
+        migrate_legacy_sidecar_names(base_path)
         sidecars: Dict[str, "StudySidecar"] = {}
-        for p in sorted(base_path.glob("????.json")):
+        for p in sorted(base_path.glob("????.state.json")):
             try:
                 sc = cls.load(p)
                 sidecars[sc.original_study_uid] = sc
