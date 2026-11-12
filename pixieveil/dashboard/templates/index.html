@@ -17,7 +17,6 @@
         .hero h1 { font-size: 22px; }
         .hero .meta { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
         .hero .spacer { flex: 1; }
-        .refresh-ctl { display: flex; align-items: center; gap: 6px; color: var(--text-faint); font-size: 12px; }
 
         /* ------------------------------------------------ pipeline */
         .pipeline { padding: 26px 22px 22px; }
@@ -128,12 +127,6 @@
                 <h1>Pipeline</h1>
                 <div class="meta" id="meta"><span class="skeleton" style="width:220px"></span></div>
             </div>
-            <div class="spacer"></div>
-            <div class="refresh-ctl">
-                <span id="updated">—</span>
-                <button type="button" class="btn btn-ghost btn-icon btn-sm" id="btn-pause" title="Pause auto-refresh"></button>
-                <button type="button" class="btn btn-ghost btn-icon btn-sm" id="btn-refresh" title="Refresh now"></button>
-            </div>
         </section>
 
         <section class="card pipeline" aria-label="Processing pipeline">
@@ -195,12 +188,11 @@
     <script>
         'use strict';
         const { esc, fmtInt, icon } = PV;
-        let lastOk = 0;
         let tick = 0;
+        let live = null;   // PV.live() handle, set below
         let studies = null;
 
         document.querySelectorAll('[data-icon]').forEach(el => { el.innerHTML = icon(el.dataset.icon); });
-        document.getElementById('btn-refresh').innerHTML = icon('refresh');
 
         function setStage(id, { count, active, sub, state, tone, extra }) {
             const el = document.getElementById(id);
@@ -317,19 +309,21 @@
         }
 
         let lastStats = null;
-        async function refresh() {
+        // withStudies: also refetch the study list. It reads every exam
+        // sidecar, so plain polls only do it every third tick; live
+        // study/exam events always do.
+        async function refresh(withStudies) {
             try {
                 const [stats, list] = await Promise.all([
                     PV.api('/stats'),
-                    // The study list reads every exam sidecar — refresh it
-                    // every third tick (15 s) instead of every 5 s.
-                    tick % 3 === 0 ? PV.api('/api/studies') : Promise.resolve(null),
+                    withStudies || tick % 3 === 0 ? PV.api('/api/studies') : Promise.resolve(null),
                 ]);
                 tick++;
                 if (list) studies = list.studies || [];
                 lastStats = stats;
-                lastOk = Date.now();
-                PV.setConn(true);
+                // With SSE the stream owns the indicator; plain polling only
+                // claims "connected" when there's no live stream at all.
+                if (!live) PV.setConn(true);
                 renderPipeline(stats);
                 renderKpis(stats.kpis);
                 renderDetails(stats.details);
@@ -338,33 +332,21 @@
                 console.error(err);
                 PV.setConn(false);
             }
-            updateAgo();
         }
 
-        function updateAgo() {
-            document.getElementById('updated').textContent = lastOk ? `Updated ${PV.fmtAgo(Date.now() - lastOk)}` : '—';
-        }
-        setInterval(updateAgo, 1000);
-
-        const poller = PV.poll(refresh, 5000);
+        const poller = PV.poll(() => refresh(false), 5000);
         // Live updates: any study/counter change triggers one debounced
         // refresh; polling drops to a 60 s safety net while connected.
-        const liveRefresh = PV.debounce(() => { if (!poller.paused) refresh(); }, 400);
-        PV.live({
-            study: liveRefresh,
-            exam: liveRefresh,
-            counters: liveRefresh,
-            resync: liveRefresh,
-            state: ok => { poller.slow(ok); if (ok) liveRefresh(); },
+        let needStudies = false;
+        const flush = PV.debounce(() => { const w = needStudies; needStudies = false; refresh(w); }, 400);
+        const liveRefresh = withStudies => { needStudies = needStudies || withStudies; flush(); };
+        live = PV.live({
+            study: () => liveRefresh(true),
+            exam: () => liveRefresh(true),
+            counters: () => liveRefresh(false),
+            resync: () => liveRefresh(true),
+            state: ok => { poller.slow(ok); PV.setConn(ok, ok ? 'Live' : 'Reconnecting…'); if (ok) liveRefresh(true); },
         });
-        const pauseBtn = document.getElementById('btn-pause');
-        const drawPause = () => {
-            pauseBtn.innerHTML = icon(poller.paused ? 'play' : 'pause');
-            pauseBtn.title = poller.paused ? 'Resume auto-refresh' : 'Pause auto-refresh';
-        };
-        drawPause();
-        pauseBtn.addEventListener('click', () => { poller.paused ? poller.resume() : poller.pause(); drawPause(); });
-        document.getElementById('btn-refresh').addEventListener('click', () => { tick = 0; poller.now(); });
 
         // Remember whether the counters drawer was left open.
         const drawer = document.getElementById('drawer');

@@ -244,6 +244,7 @@
             dirtyCount: 0,
             busy: false,
             progress: {},     // study number → latest progress event (SSE)
+            live: null,       // PV.live() handle
         };
 
         const $ = sel => document.querySelector(sel);
@@ -388,7 +389,7 @@
         async function loadStudies() {
             try {
                 const data = await PV.api('/api/studies');
-                PV.setConn(true);
+                if (!state.live) PV.setConn(true);  // SSE owns the indicator when present
                 state.studies = data.studies || [];
                 state.caps = data.capabilities || state.caps;
                 if (state.filter === null) {
@@ -1131,7 +1132,7 @@
                 touched.add('*');
                 syncFromServer();
             }, 20000);
-            PV.live({
+            state.live = PV.live({
                 study: d => { delete state.progress[d.n]; paintProgress(d.n); changed(d); },
                 exam: changed,
                 progress: d => { state.progress[d.n] = d; paintProgress(d.n); },
