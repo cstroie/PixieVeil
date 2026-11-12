@@ -14,7 +14,7 @@ import logging
 import time
 import threading
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 from pixieveil.config import Settings
 from pixieveil.storage.study_sidecar import StudySidecar
@@ -62,7 +62,21 @@ class StudyManager:
         self._recovered_studies: List[str] = []
 
         self.lock = threading.Lock()
+
+        # Optional hook called after every successful sidecar write (status,
+        # series, RHYTHM job, …) — StorageManager points it at the dashboard
+        # event bus. Must be cheap and thread-safe; exceptions are swallowed.
+        self.on_change: Optional[Callable[[StudySidecar], None]] = None
         logger.debug("StudyManager initialised")
+
+    def _save(self, sc: StudySidecar) -> None:
+        """Persist *sc* and notify ``on_change``. Caller holds ``self.lock``."""
+        sc.save(self._base_path)
+        if self.on_change is not None:
+            try:
+                self.on_change(sc)
+            except Exception:
+                logger.warning("StudyManager.on_change hook failed", exc_info=True)
 
     # ------------------------------------------------------------------
     # Startup
@@ -221,7 +235,7 @@ class StudyManager:
                 sc = self._sidecars[original_study_uid]
 
             sc.add_series(original_series_uid, series_number, anonymized_series_uid)
-            sc.save(self._base_path)
+            self._save(sc)
 
     def set_series_classification(self, original_study_uid: str,
                                    original_series_uid: str,
@@ -234,7 +248,7 @@ class StudyManager:
             if sc is None:
                 return
             sc.set_series_classification(original_series_uid, is_head, is_topogram)
-            sc.save(self._base_path)
+            self._save(sc)
 
     def mark_series_defaced(self, original_study_uid: str,
                              original_series_uid: str) -> None:
@@ -246,7 +260,7 @@ class StudyManager:
             if sc is None:
                 return
             sc.mark_series_defaced(original_series_uid)
-            sc.save(self._base_path)
+            self._save(sc)
 
     def is_series_defaced(self, original_study_uid: str,
                            original_series_uid: str) -> bool:
@@ -389,7 +403,7 @@ class StudyManager:
                 return
             for key, value in fields.items():
                 setattr(sc, key, value)
-            sc.save(self._base_path)
+            self._save(sc)
 
     def _update_sidecar_status(self, original_study_uid: str, status: str) -> None:
         if self._base_path is None:
@@ -399,7 +413,7 @@ class StudyManager:
             if sc is None:
                 return
             sc.status = status
-            sc.save(self._base_path)
+            self._save(sc)
 
     _RHYTHM_JOB_FIELDS = frozenset(
         {"batch", "session_id", "job_id", "job_status_url", "status",
@@ -424,7 +438,7 @@ class StudyManager:
             for key, value in fields.items():
                 if key in self._RHYTHM_JOB_FIELDS:
                     setattr(sc, f"rhythm_{key}", value)
-            sc.save(self._base_path)
+            self._save(sc)
 
     # ------------------------------------------------------------------
     # Queries

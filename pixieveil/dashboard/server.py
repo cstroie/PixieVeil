@@ -102,6 +102,7 @@ class Dashboard:
             web.get("/", self.handle_index),
             web.get("/stats", self.handle_stats),
             web.get("/health", self.handle_health),
+            web.get("/api/events", self.handle_events),
             web.get("/studies", self.handle_studies_page),
             web.get("/about", self.handle_about_page),
             web.get("/api/about", self.handle_about),
@@ -194,6 +195,9 @@ class Dashboard:
         - Logs the shutdown completion
         """
         logger.info("Stopping dashboard")
+        # Wake every open /api/events stream so it returns; otherwise the
+        # site/runner shutdown below waits on those long-lived responses.
+        self.app['storage_manager'].events.close_all()
         if self.site:
             try:
                 await asyncio.wait_for(self.site.stop(), timeout=5.0)
@@ -215,6 +219,57 @@ class Dashboard:
                 self.runner = None
 
         logger.info("Dashboard stopped")
+
+    SSE_PING_S = 15.0
+
+    async def handle_events(self, request: web.Request) -> web.StreamResponse:
+        """Server-Sent Events stream of thin dashboard notifications.
+
+        Frames: ``hello`` (on connect), ``study``/``exam``/``progress``/
+        ``counters``. The page re-fetches via the regular endpoints; events
+        carry no data beyond study numbers, statuses and progress counters.
+        A ``: ping`` comment every SSE_PING_S keeps proxies from idling out.
+        """
+        bus = request.app['storage_manager'].events
+        last_raw = request.headers.get("Last-Event-ID") or request.query.get("last_id")
+        try:
+            last_id: Optional[int] = int(last_raw) if last_raw else None
+        except ValueError:
+            last_id = None
+
+        resp = web.StreamResponse(headers={
+            "Content-Type": "text/event-stream",
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        })
+        await resp.prepare(request)
+        sub, resync = bus.subscribe(last_id)
+
+        async def send(event_id: Optional[int], type_: str, data: dict) -> None:
+            frame = ""
+            if event_id is not None:
+                frame += f"id: {event_id}\n"
+            frame += f"event: {type_}\ndata: {json.dumps(data)}\n\n"
+            await resp.write(frame.encode())
+
+        try:
+            await send(bus.last_id or None, "hello", {
+                "server_started": bus.started_at, "resync": resync,
+            })
+            while not sub.dropped:
+                try:
+                    ev = await asyncio.wait_for(sub.queue.get(), timeout=self.SSE_PING_S)
+                except asyncio.TimeoutError:
+                    await resp.write(b": ping\n\n")
+                    continue
+                if ev.type == "_close":
+                    break
+                await send(ev.id, ev.type, ev.data)
+        except ConnectionResetError:
+            pass  # client went away mid-write
+        finally:
+            bus.unsubscribe(sub)
+        return resp
 
     @staticmethod
     async def _serve_template(name: str) -> web.Response:

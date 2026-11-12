@@ -70,7 +70,7 @@ class FakeRhythm:
         self.calls: list[dict] = []
         self.job_checks: list[str] = []
 
-    async def upload_study(self, zip_path, manifest_item, batch, *, file_hash=None):
+    async def upload_study(self, zip_path, manifest_item, batch, *, file_hash=None, progress=None):
         self.calls.append(
             {
                 "zip_exists": zip_path.exists(),

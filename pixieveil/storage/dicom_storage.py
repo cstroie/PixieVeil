@@ -18,7 +18,10 @@ Configuration (under storage.remote_storage.dicom in settings.yaml)::
 import asyncio
 import logging
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
+
+# progress(done, total) — called after each file; must be cheap/thread-safe.
+ProgressFn = Callable[[int, int], None]
 
 import pydicom
 from pynetdicom import AE, StoragePresentationContexts
@@ -47,7 +50,8 @@ class DicomStorage:
         )
         self.enabled: bool = bool(self.host and self.port)
 
-    async def send_study(self, study_dir: Path) -> bool:
+    async def send_study(self, study_dir: Path,
+                         progress: Optional[ProgressFn] = None) -> bool:
         """
         Send all DICOM files in *study_dir* to the configured remote node.
 
@@ -55,12 +59,15 @@ class DicomStorage:
         call in a thread pool so the event loop stays free.
 
         Returns True if every file was sent successfully, False otherwise.
+        *progress*, if given, is called as ``progress(done, total)`` after
+        each file (from the worker thread).
         """
         if not self.enabled:
             return False
-        return await asyncio.to_thread(self._send_study_sync, study_dir)
+        return await asyncio.to_thread(self._send_study_sync, study_dir, progress)
 
-    def _send_study_sync(self, study_dir: Path) -> bool:
+    def _send_study_sync(self, study_dir: Path,
+                         progress: Optional[ProgressFn] = None) -> bool:
         """Blocking C-STORE transfer — runs in a thread pool."""
         if self.host is None or self.port is None:
             # send_study() already guards on self.enabled before offloading
@@ -96,8 +103,11 @@ class DicomStorage:
             return False
 
         errors = 0
+        total = len(dcm_files)
         try:
-            for dcm_path in dcm_files:
+            for done, dcm_path in enumerate(dcm_files, start=1):
+                if progress is not None and done > 1:
+                    progress(done - 1, total)
                 try:
                     ds = pydicom.dcmread(str(dcm_path))
                 except Exception as exc:
@@ -119,6 +129,8 @@ class DicomStorage:
                         "C-STORE failed for %s: status=0x%04X", dcm_path.name, status.Status
                     )
                     errors += 1
+            if progress is not None:
+                progress(total, total)
         finally:
             assoc.release()
 

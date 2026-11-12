@@ -162,6 +162,15 @@ class TestSendStudySync:
         assert len(assoc.sent_sop_uids) == 2
         assert assoc.released is True
 
+    def test_progress_reported_once_per_file(self, tmp_path):
+        for i in range(3):
+            write_minimal_dicom(tmp_path / "0001" / f"img{i}.dcm")
+        calls = []
+
+        assert make_storage()._send_study_sync(tmp_path, lambda d, t: calls.append((d, t)))
+
+        assert calls == [(1, 3), (2, 3), (3, 3)]
+
     def test_one_failed_file_makes_the_whole_send_fail(self, tmp_path, monkeypatch):
         p1 = tmp_path / "0001" / "img1.dcm"
         p2 = tmp_path / "0001" / "img2.dcm"
@@ -219,7 +228,7 @@ class TestSendStudyDelegation:
         storage = make_storage()
         calls = []
 
-        def fake_sync(study_dir):
+        def fake_sync(study_dir, progress=None):
             calls.append(study_dir)
             return True
 

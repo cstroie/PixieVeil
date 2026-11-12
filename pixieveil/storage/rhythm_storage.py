@@ -29,7 +29,7 @@ import hashlib
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import aiohttp
 
@@ -151,6 +151,7 @@ class RhythmStorage:
         batch: str,
         *,
         file_hash: str | None = None,
+        progress: Callable[[int, int], None] | None = None,
     ) -> RhythmUploadResult:
         """Upload *zip_path* as one item of *batch*, tagged with *manifest_item*.
 
@@ -163,7 +164,8 @@ class RhythmStorage:
         poll ``check_job`` for that. Never raises for an expected failure
         (misconfig, missing file, HTTP error, rejected manifest item) — those
         come back as ``RhythmUploadResult(ok=False, ...)``. Only a genuinely
-        unexpected error propagates.
+        unexpected error propagates. *progress*, if given, is called as
+        ``progress(chunks_sent, total_chunks)`` after each chunk.
         """
         if not self.enabled:
             logger.warning("RHYTHM storage not configured")
@@ -186,7 +188,8 @@ class RhythmStorage:
                     return init
 
                 sent = await self._send_chunks(
-                    session, zip_path, init.session_id, server_total_chunks
+                    session, zip_path, init.session_id, server_total_chunks,
+                    progress=progress,
                 )
                 if sent is not None:
                     sent.session_id = init.session_id
@@ -286,6 +289,7 @@ class RhythmStorage:
     async def _send_chunks(
         self, session: aiohttp.ClientSession, zip_path: Path, session_id: str,
         server_total_chunks: int | None = None,
+        progress: Callable[[int, int], None] | None = None,
     ) -> RhythmUploadResult | None:
         """Upload every chunk. Returns None on success, or a failure result."""
         total_size = zip_path.stat().st_size
@@ -316,6 +320,8 @@ class RhythmStorage:
                 )
                 if err is not None:
                     return err
+                if progress is not None:
+                    progress(chunk_number + 1, total_chunks)
         logger.info("RHYTHM: all %d chunk(s) uploaded for %s", total_chunks, session_id)
         return None
 

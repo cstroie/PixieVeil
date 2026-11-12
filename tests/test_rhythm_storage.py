@@ -257,6 +257,15 @@ class TestHappyPath:
         assert chunk_calls[2]["data"] == b"x" * 5
 
 
+    def test_progress_reported_after_each_chunk(self, tmp_path, monkeypatch):
+        routes = happy_routes()
+        routes["init"] = [FakeResp(201, {"session_id": "s", "total_chunks": 3})]
+        install(monkeypatch, routes)
+        calls = []
+        asyncio.run(make_storage(chunk_size=10).upload_study(
+            a_zip(tmp_path, b"x" * 25), ITEM, "b", progress=lambda d, t: calls.append((d, t))))
+        assert calls == [(1, 3), (2, 3), (3, 3)]
+
 # -- failure modes -------------------------------------------------
 
 

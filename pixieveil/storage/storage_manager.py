@@ -34,6 +34,7 @@ from pixieveil.config import Settings
 from pixieveil.storage.remote_storage import RemoteStorage
 from pixieveil.storage.dicom_storage import DicomStorage
 from pixieveil.storage.rhythm_storage import RhythmStorage, sha256_file
+from pixieveil.events import EventBus
 from pixieveil.storage.zip_manager import ZipManager
 from pixieveil.processing.anonymizer import Anonymizer
 from pixieveil.processing.series_filter import SeriesFilter
@@ -108,6 +109,13 @@ class StorageManager:
         from pixieveil.processing.study_manager import StudyManager
         self.study_manager = StudyManager(settings)
         self.study_manager.initialize_from_sidecars(self.base_path)
+        # Live dashboard updates (SSE). Thin notifications only — the page
+        # re-fetches through the regular endpoints. No-op until start() binds
+        # it to the running loop, so tests/CLI paths are unaffected.
+        self.events = EventBus()
+        self.study_manager.on_change = lambda sc: self.events.publish(
+            "study", n=sc.study_number, status=sc.status)
+        self._recv_counts: dict[int, int] = {}
         self.series_filter = SeriesFilter(settings)
         self.anonymizer = Anonymizer(settings)
         self.defacer = Defacer(settings.defacing, temp_path=self.temp_path)
@@ -243,6 +251,7 @@ class StorageManager:
             return
 
         logger.info("Starting StorageManager background study‑completion checker")
+        self.events.bind(asyncio.get_running_loop())
         self._stop_event = asyncio.Event()
         self._completion_task = asyncio.create_task(self.completion_loop())
 
@@ -445,6 +454,9 @@ class StorageManager:
             if subcategory not in self.counters[category]:
                 self.counters[category][subcategory] = 0
             self.counters[category][subcategory] += increment
+        events = getattr(self, "events", None)  # inc_counter may run mid-__init__
+        if events is not None:
+            events.counters()
 
     def _init_counters_from_sidecars(self) -> None:
         """Seed in-memory counters from the sidecars loaded at startup."""
@@ -671,6 +683,10 @@ class StorageManager:
 
             # Assign study/series/image numbers using StudyManager
             study_number, series_number, image_number, is_new_series = self.study_manager.add_image_to_study(study_uid, series_uid)
+            with self.lock:
+                received = self._recv_counts.get(study_number, 0) + 1
+                self._recv_counts[study_number] = received
+            self.events.progress(study_number, "receive", received)
 
             # Accumulate the pre-anon extraction hints (first non-empty value
             # per field wins), and flush to disk once per series so a crash
@@ -825,6 +841,8 @@ class StorageManager:
                 return
 
             logger.info("Processing completed study: %04d (%s)", study_number, study_uid)
+            with self.lock:
+                self._recv_counts.pop(study_number, None)
 
             # RHYTHM exam extraction only needs anonymized headers, which are
             # already final at this point — defacing only ever rewrites
@@ -929,6 +947,7 @@ class StorageManager:
             study_dir, study_number, anonymized_study_uid, hints=hints
         )
         ExamSidecar(study_number, data).save(self.base_path)
+        self.events.publish("exam", n=study_number)
 
     # -- pre-anonymization extraction hints --------------------------------
     #
@@ -991,11 +1010,14 @@ class StorageManager:
         if not classify_only:
             self.study_manager.mark_study_defacing(study_uid)
             self.inc_counter('defacing', 'studies')
-        for series_dir in sorted(study_dir.iterdir()):
-            if not series_dir.is_dir():
-                continue
-            if series_dir.name.endswith("_pre_deface"):
-                continue
+        series_dirs = [
+            d for d in sorted(study_dir.iterdir())
+            if d.is_dir() and not d.name.endswith("_pre_deface")
+        ]
+        for idx, series_dir in enumerate(series_dirs):
+            if not classify_only:
+                self.events.progress(study_number, "deface", idx, len(series_dirs),
+                                     label=series_dir.name, force=True)
 
             series_number = int(series_dir.name) if series_dir.name.isdigit() else None
             orig_series_uid = (
@@ -1042,7 +1064,9 @@ class StorageManager:
                     self.study_manager.set_series_classification(
                         study_uid, orig_series_uid, is_head=False, is_topogram=False
                     )
-    
+        if not classify_only:
+            self.events.progress(study_number, "deface", len(series_dirs), len(series_dirs))
+
     def _clear_deface_temp_sync(self, study_number: int) -> None:
         """Remove the persistent ``pixieveil_deface_<NNNN>_<SSSS>`` NIfTI
         scratch directories the Defacer keeps for manual inspection. Called
@@ -1394,7 +1418,11 @@ class StorageManager:
                 return {"ok": False, "message": blocked}
             first_export = sc is not None and sc.status != "archived"
 
-            success = await self.dicom_storage.send_study(study_dir)
+            success = await self.dicom_storage.send_study(
+                study_dir,
+                progress=lambda done, total: self.events.progress(
+                    study_number, "dicom", done, total),
+            )
             if success:
                 image_count = await asyncio.to_thread(
                     lambda: sum(
@@ -1996,7 +2024,9 @@ class StorageManager:
             )
 
             result = await self.rhythm_storage.upload_study(
-                zip_path, item, batch, file_hash=zip_sha
+                zip_path, item, batch, file_hash=zip_sha,
+                progress=lambda done, total: self.events.progress(
+                    study_number, "rhythm", done, total),
             )
 
             # Persist whatever RHYTHM handed back — success or not — so the
@@ -2262,6 +2292,7 @@ class StorageManager:
         )
         merged = exam_merge.merge_extracted(fresh, previous)
         ExamSidecar(study_number, merged).save(self.base_path)
+        self.events.publish("exam", n=study_number)
         return merged
 
     async def manual_reextract(self, study_number: int) -> dict:
@@ -2306,6 +2337,7 @@ class StorageManager:
         exam_merge.apply_manual(data, manual)
         exam_merge.recompute_buckets(data)
         ExamSidecar(study_number, data).save(self.base_path)
+        self.events.publish("exam", n=study_number)
 
         # Weight/age corrections are worth pushing into the DICOM headers
         # themselves, not just the exam sidecar — otherwise the correction

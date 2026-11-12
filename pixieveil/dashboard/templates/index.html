@@ -347,6 +347,16 @@
         setInterval(updateAgo, 1000);
 
         const poller = PV.poll(refresh, 5000);
+        // Live updates: any study/counter change triggers one debounced
+        // refresh; polling drops to a 60 s safety net while connected.
+        const liveRefresh = PV.debounce(() => { if (!poller.paused) refresh(); }, 400);
+        PV.live({
+            study: liveRefresh,
+            exam: liveRefresh,
+            counters: liveRefresh,
+            resync: liveRefresh,
+            state: ok => { poller.slow(ok); if (ok) liveRefresh(); },
+        });
         const pauseBtn = document.getElementById('btn-pause');
         const drawPause = () => {
             pauseBtn.innerHTML = icon(poller.paused ? 'play' : 'pause');

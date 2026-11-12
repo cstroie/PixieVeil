@@ -739,3 +739,50 @@ class TestStatusCountsAndExamSummary:
         assert summary["missing_fields"] == ["image_quality", "patient.weight_kg"]
         assert summary["completeness"] == {"filled": 5, "required": 7}
         assert summary["patient"] == {"age_years": 5.0, "weight_kg": None}
+
+
+class RecordingBus:
+    """Stands in for EventBus: records publish/progress calls, no loop."""
+
+    def __init__(self):
+        self.events: list[tuple] = []
+
+    def publish(self, type_, **data):
+        self.events.append((type_, data))
+
+    def progress(self, n, kind, done, total=None, label=None, *, force=False):
+        self.events.append(("progress", {"n": n, "kind": kind, "done": done, "total": total}))
+
+    def counters(self):
+        pass
+
+    def of(self, type_):
+        return [d for t, d in self.events if t == type_]
+
+
+class TestLiveEvents:
+    def test_status_transitions_publish_study_events(self, storage_manager):
+        bus = storage_manager.events = RecordingBus()
+        register_study(storage_manager, 1, "complete")
+        storage_manager.study_manager._base_path = storage_manager.base_path
+
+        storage_manager.study_manager.mark_study_ready("study-uid-1")
+        storage_manager.study_manager.mark_study_archived("study-uid-1", via="dicom")
+
+        assert bus.of("study") == [{"n": 1, "status": "ready"}, {"n": 1, "status": "archived"}]
+
+    def test_defacing_publishes_per_series_progress(self, storage_manager, monkeypatch):
+        bus = storage_manager.events = RecordingBus()
+        sc = register_study(storage_manager, 1, "complete")
+        for i in (1, 2):
+            sc.add_series(f"series-uid-{i}", i, f"anon-{i}")
+            write_minimal_dicom(storage_manager.base_path / "0001" / f"{i:04d}" / "img.dcm",
+                                SeriesDescription="Head routine")
+        storage_manager.study_manager._base_path = storage_manager.base_path
+        storage_manager.defacer.enabled = True
+        monkeypatch.setattr(storage_manager.defacer, "deface_series", lambda *a, **k: True)
+
+        storage_manager._deface_study("study-uid-1", 1, storage_manager.base_path / "0001")
+
+        prog = [(p["done"], p["total"]) for p in bus.of("progress") if p["kind"] == "deface"]
+        assert prog == [(0, 2), (1, 2), (2, 2)]

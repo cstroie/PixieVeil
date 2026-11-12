@@ -61,6 +61,9 @@
         .row-chips:empty { display: none; }
         .row-side { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
         .row-side .edited { color: var(--accent); }
+        .live-prog { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-dim); white-space: nowrap; }
+        .live-prog .bar { width: 56px; height: 4px; border-radius: 99px; background: var(--bg-sunken); overflow: hidden; }
+        .live-prog .bar i { display: block; height: 100%; background: var(--accent); transition: width 0.3s; }
         .row-side .edited svg { width: 14px; height: 14px; }
 
         .ring { width: 34px; height: 34px; position: relative; display: grid; place-items: center; }
@@ -240,6 +243,7 @@
             tab: 'review',
             dirtyCount: 0,
             busy: false,
+            progress: {},     // study number → latest progress event (SSE)
         };
 
         const $ = sel => document.querySelector(sel);
@@ -299,6 +303,22 @@
             return `<span class="pill ${tone}" title="RHYTHM ingest job state">RHYTHM ${esc(st)}</span>`;
         }
 
+        // Live progress (SSE "progress" events) — receive has no total.
+        const PROG_LABEL = { receive: 'Receiving', deface: 'Defacing', dicom: 'Sending', rhythm: 'RHYTHM', zip: 'Zipping' };
+        function progressHtml(n) {
+            const p = state.progress[n];
+            if (!p) return '';
+            const name = PROG_LABEL[p.kind] || p.kind;
+            if (!p.total) return `<span class="live-prog">${esc(name)} ${fmtNum(p.done)} images</span>`;
+            const pct = Math.min(100, Math.round((p.done / p.total) * 100));
+            const txt = p.kind === 'rhythm' ? `${pct}%` : `${p.done}/${p.total}`;
+            return `<span class="live-prog" title="${esc(name)}${p.label ? ' · series ' + esc(p.label) : ''}">
+                <span class="bar"><i style="width:${pct}%"></i></span>${esc(name)} ${txt}</span>`;
+        }
+        function paintProgress(n) {
+            document.querySelectorAll(`[data-prog="${n}"]`).forEach(el => { el.innerHTML = progressHtml(n); });
+        }
+
         function rowHtml(s) {
             const ex = s.exam_summary || {};
             const ind = ex.indication || {};
@@ -319,7 +339,8 @@
                     <span class="row-sub" style="display:block">${esc(sub)}</span>
                     <span class="row-chips">${chips}</span>
                 </span>
-                <span class="row-side">${PV.statusPill(s.status)}${rhythmPill(s.rhythm_status)}${edited}</span>
+                <span class="row-side">${PV.statusPill(s.status)}${rhythmPill(s.rhythm_status)}${edited}
+                    <span data-prog="${s.study_number}">${progressHtml(s.study_number)}</span></span>
             </button>`;
         }
 
@@ -684,6 +705,7 @@
                         <div class="insp-title">
                             <h2>Study <span class="mono">${pad4(study.study_number)}</span></h2>
                             ${PV.statusPill(study.status)}
+                            <span data-prog="${study.study_number}">${progressHtml(study.study_number)}</span>
                             ${study.status === 'archived' && archivedVia ? `<span class="faint" style="font-size:12px">${esc(archivedVia)}</span>` : ''}
                         </div>
                         <div class="insp-meta">
@@ -1019,6 +1041,7 @@
                 return;
             }
             if (t.dataset.act) { runAction(t.dataset.act, t); return; }
+            if (t.id === 'btn-reload-detail') { loadDetail(state.sel, { keepTab: true }); return; }
             if (t.id === 'btn-save') save();
             else if (t.id === 'btn-discard') discard();
             else if (t.id === 'btn-back') deselect();
@@ -1072,17 +1095,49 @@
             }
             // Keep the worklist current (new arrivals, processing progress)
             // without touching the inspector the operator may be editing.
-            let first = true;
-            PV.poll(async () => {
-                if (first) { first = false; return; }
-                const prev = state.sel != null ? state.studies.find(s => s.study_number === state.sel) : null;
-                const prevStatus = prev && prev.status;
+            // SSE pushes change hints; polling is the fallback (60 s while
+            // the stream is up, 20 s when it's down).
+            const touched = new Set();
+            const syncFromServer = PV.debounce(async () => {
+                const sel = state.sel;
+                const statusOf = () => (state.studies.find(s => s.study_number === sel) || {}).status;
+                const before = statusOf();
+                const pushed = sel != null && touched.has(sel);
+                const polled = touched.has('*');
+                touched.clear();
                 if (!(await loadStudies())) return;
-                const now = state.sel != null ? state.studies.find(s => s.study_number === state.sel) : null;
-                if (now && prevStatus && now.status !== prevStatus && !state.dirtyCount) {
-                    await loadDetail(state.sel, { keepTab: true });
+                // A pushed event for the open study always refreshes it; a
+                // plain poll only does when its status actually changed.
+                const selTouched = sel != null && (pushed || (polled && before && statusOf() !== before));
+                if (!selTouched || state.sel !== sel) return;
+                if (state.dirtyCount) {
+                    // Never overwrite what the operator is typing.
+                    const b = document.querySelector('#inspector .banners');
+                    if (b && !b.querySelector('#btn-reload-detail')) {
+                        b.insertAdjacentHTML('afterbegin', `<div class="callout info">${icon('info')}<div>
+                            This study was updated on the server.
+                            <button type="button" class="btn btn-ghost btn-sm" id="btn-reload-detail">Reload</button>
+                            (discards your unsaved changes)</div></div>`);
+                    }
+                } else {
+                    await loadDetail(sel, { keepTab: true });
                 }
+            }, 300);
+            const changed = d => { touched.add(d.n); syncFromServer(); };
+
+            let first = true;
+            const poller = PV.poll(async () => {
+                if (first) { first = false; return; }
+                touched.add('*');
+                syncFromServer();
             }, 20000);
+            PV.live({
+                study: d => { delete state.progress[d.n]; paintProgress(d.n); changed(d); },
+                exam: changed,
+                progress: d => { state.progress[d.n] = d; paintProgress(d.n); },
+                resync: () => { state.progress = {}; touched.add('*'); if (state.sel != null) touched.add(state.sel); syncFromServer(); },
+                state: ok => { poller.slow(ok); PV.setConn(ok, ok ? 'Live' : 'Reconnecting…'); },
+            });
         })();
     </script>
 </body>

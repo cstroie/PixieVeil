@@ -248,6 +248,7 @@ const PV = (() => {
     // poll(fn, ms): runs fn now and every ms while the tab is visible.
     function poll(fn, ms) {
         let timer = null;
+        const baseMs = ms;
         let paused = false;
         const tick = async () => {
             clearTimeout(timer);
@@ -264,7 +265,61 @@ const PV = (() => {
             pause() { paused = true; clearTimeout(timer); },
             resume() { paused = false; tick(); },
             get paused() { return paused; },
+            // slow(true) while the live stream is up (polling is only a
+            // safety net then); slow(false) restores the original interval.
+            slow(on) {
+                const next = on ? Math.max(baseMs, 60000) : baseMs;
+                if (next === ms) return;
+                ms = next;
+                if (!paused && !document.hidden) { clearTimeout(timer); timer = setTimeout(tick, ms); }
+            },
         };
+    }
+
+    // ------------------------------------------------------------ live (SSE)
+    // live(handlers) subscribes to /api/events. handlers: {study, exam,
+    // progress, counters} get the event data; resync() runs when the server
+    // restarted or missed events can't be replayed; state(connected) runs on
+    // connect/disconnect. Events are hints — handlers re-fetch via the API.
+    // Returns null when EventSource is unavailable (polling then carries on).
+    function live(handlers) {
+        if (!window.EventSource) return null;
+        let es = null;
+        let serverStarted = null;
+        let connected = false;
+        const setState = ok => {
+            if (ok === connected) return;
+            connected = ok;
+            if (handlers.state) handlers.state(ok);
+        };
+        const open = () => {
+            es = new EventSource('/api/events');
+            es.addEventListener('hello', e => {
+                const d = JSON.parse(e.data);
+                setState(true);
+                const restarted = serverStarted !== null && d.server_started !== serverStarted;
+                serverStarted = d.server_started;
+                if ((restarted || d.resync) && handlers.resync) handlers.resync();
+            });
+            ['study', 'exam', 'progress', 'counters'].forEach(type => {
+                es.addEventListener(type, e => {
+                    if (handlers[type]) handlers[type](JSON.parse(e.data));
+                });
+            });
+            // EventSource reconnects by itself (resending Last-Event-ID).
+            es.onerror = () => setState(false);
+        };
+        open();
+        return {
+            get connected() { return connected; },
+            close() { if (es) es.close(); setState(false); },
+        };
+    }
+
+    // debounce(fn, ms): one trailing call per burst of events.
+    function debounce(fn, ms) {
+        let t = null;
+        return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
     }
 
     // ------------------------------------------------------------ init
@@ -276,7 +331,7 @@ const PV = (() => {
 
     return {
         esc, pad4, fmtInt, fmtNum, fmtDate, fmtAgo, fmtDuration,
-        icon, toast, modal, api, poll, setConn, askToken,
+        icon, toast, modal, api, poll, live, debounce, setConn, askToken,
         STATUS, statusPill, FIELD_LABELS, missingLabels,
     };
 })();

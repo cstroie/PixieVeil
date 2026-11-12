@@ -258,3 +258,80 @@ class TestAbout:
         assert body["instance"]["export"]["http"] == {"host": "up.example"}
         text = str(body)
         assert "s3cret" not in text and "key=q" not in text
+
+
+class TestEventsStream:
+    """GET /api/events (SSE) — read raw frames off the in-process client."""
+
+    @staticmethod
+    async def _frame(resp) -> dict:
+        """Read one SSE frame (skipping ': ping' comments) → {id?, event, data}."""
+        import json as _json
+        frame: dict = {}
+        while True:
+            line = (await asyncio.wait_for(resp.content.readline(), timeout=3)).decode()
+            if line == "\n":
+                if frame:
+                    return frame
+                continue
+            if line.startswith(":"):
+                continue
+            key, _, value = line.rstrip("\n").partition(": ")
+            frame[key] = _json.loads(value) if key == "data" else value
+
+    def test_hello_then_study_event_on_status_change(self, tmp_path):
+        d = _dashboard(tmp_path)
+        sm = d.app["storage_manager"]
+        register_study(sm, 1, "complete")
+
+        async def go():
+            async with TestClient(TestServer(d.app)) as client:
+                sm.events.bind(asyncio.get_running_loop())
+                resp = await client.get("/api/events")
+                assert resp.status == 200
+                assert resp.headers["Content-Type"].startswith("text/event-stream")
+                assert resp.headers["Cache-Control"] == "no-cache"
+                hello = await self._frame(resp)
+                sm.study_manager.mark_study_ready("study-uid-1")
+                study = await self._frame(resp)
+                resp.close()
+                return hello, study
+        hello, study = asyncio.run(go())
+        assert hello["event"] == "hello"
+        assert hello["data"]["resync"] is False
+        assert "server_started" in hello["data"]
+        assert study["event"] == "study"
+        assert study["data"] == {"n": 1, "status": "ready"}
+        assert study["id"] == "1"
+
+    def test_reconnect_with_last_event_id_replays_missed_events(self, tmp_path):
+        d = _dashboard(tmp_path)
+        sm = d.app["storage_manager"]
+
+        async def go():
+            async with TestClient(TestServer(d.app)) as client:
+                sm.events.bind(asyncio.get_running_loop())
+                sm.events.publish("exam", n=4)
+                sm.events.publish("exam", n=5)
+                resp = await client.get("/api/events", headers={"Last-Event-ID": "1"})
+                await self._frame(resp)            # hello
+                replayed = await self._frame(resp)
+                resp.close()
+                return replayed
+        assert asyncio.run(go())["data"] == {"n": 5}
+
+    def test_close_all_ends_the_stream_and_unsubscribes(self, tmp_path):
+        d = _dashboard(tmp_path)
+        sm = d.app["storage_manager"]
+
+        async def go():
+            async with TestClient(TestServer(d.app)) as client:
+                sm.events.bind(asyncio.get_running_loop())
+                resp = await client.get("/api/events")
+                await self._frame(resp)
+                assert sm.events.subscriber_count == 1
+                sm.events.close_all()
+                rest = await asyncio.wait_for(resp.content.read(), timeout=3)
+                return rest, sm.events.subscriber_count
+        rest, count = asyncio.run(go())
+        assert rest == b"" and count == 0
