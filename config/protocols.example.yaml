@@ -1,6 +1,6 @@
 # PixieVeil scanners & protocols catalog — example.
 #
-# Normally you never edit this by hand: use the dashboard's Protocols page
+# Full guide: PROTOCOLS.md. Normally you never edit this by hand: use the dashboard's Protocols page
 # (/protocols, admins only), which writes config/protocols.yaml for you. On
 # first start, PixieVeil builds that file from the legacy lookups if they
 # exist (config/rhythm_protocols.yaml, integrations/rhythm/scanner_lookup.yaml

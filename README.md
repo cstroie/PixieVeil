@@ -414,7 +414,7 @@ jq 'select(.original.study_uid == "1.2.840...") | .anonymized.study_number' anon
 
 ## Dashboard
 
-The web dashboard is available at `http://<http_server.ip>:<http_server.port>/` once the application is running. Every page and API route except `/login` and `/health` needs a signed-in user. Users are created with `python -m pixieveil.auth add <name> [--admin]` (there is no self-registration), and admins can manage them on `/users`. Scripts authenticate with a per-user API token (`python -m pixieveil.auth token-add <name> <label>`, or **API tokens** in the account menu), sent as `Authorization: Bearer pv_…`. See [USERS.md](USERS.md).
+The web dashboard is available at `http://<http_server.ip>:<http_server.port>/` once the application is running. Every page and API route except `/login` and `/health` needs a signed-in user. Users are created with `python -m pixieveil.auth add <name> [--admin]` (there is no self-registration), and admins can manage them on `/users`. Scripts authenticate with a per-user API token (`python -m pixieveil.auth token-add <name> <label>`, or **API tokens** in the account menu), sent as `Authorization: Bearer pv_…`. See [USERS.md](USERS.md). Scanners, protocols and their RHYTHM mapping are managed on `/protocols`: see [PROTOCOLS.md](PROTOCOLS.md).
 
 | Endpoint | Description |
 |---|---|

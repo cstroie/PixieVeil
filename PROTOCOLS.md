@@ -1,0 +1,220 @@
+# Scanners & protocols
+
+PixieVeil has to know, for every study, **which scanner** it came from and **which
+protocol** was run. It needs this to:
+
+- send the study to RHYTHM. Each upload names one RHYTHM protocol by its UUID, and
+  RHYTHM derives region, indication, contrast, protocol type, examination group and
+  scanner from it.
+- pre-fill the study's **region / clinical indication / IV contrast** on `/studies`,
+  so the operator only adds image quality, weight and age.
+
+All of this is set up on the dashboard's **Protocols** page (`/protocols`). Nobody
+needs to edit files on the server.
+
+---
+
+## The page at a glance
+
+```
+┌───────────────────────┬────────────────────────────────────────────────────┐
+│ ▣ Unmatched      3    │  GE Optima CT520                    [Delete scanner]│
+│                       │  Display name   RHYTHM scanner ID                   │
+│ SCANNERS              │  Manufacturer   Model                               │
+│  Siemens Emotion 16 7 │  ─────────────────────────────────────────────────  │
+│  GE Optima CT520    1 │  Protocol │ Matches names │ Region/indication │ UUID │
+│                       │  CAP …    │ CAP_SPIRAL_…  │ Chest — …         │ …    │
+│ [Add scanner]         │  [Add protocol]                                     │
+└───────────────────────┴────────────────────────────────────────────────────┘
+                                         Unsaved changes  [Discard] [Save changes]
+```
+
+- **Left:** the **Unmatched** inbox (studies nothing matches yet), then the list of
+  scanners.
+- **Right:** the selected scanner's details and its protocol table, or the inbox.
+- **Bottom:** a save bar appears as soon as something is changed. Nothing takes
+  effect until **Save changes** is clicked.
+
+**Who can edit:** admins only. Other logged-in users see the same page read-only.
+
+---
+
+## How a study is matched
+
+Matching happens automatically when a study finishes arriving, and again over all
+waiting studies whenever the catalog is saved.
+
+1. **Scanner.** The study's DICOM *Manufacturer* and *Manufacturer Model Name* are
+   compared with each scanner's **Manufacturer** and **Model**. The comparison
+   ignores upper/lower case and must otherwise match exactly.
+2. **Protocol.** Within that scanner, the study's protocol name is compared with
+   each protocol's **names**. The comparison ignores case and extra spaces. The
+   protocol name is taken from:
+   - DICOM *ProtocolName*, or, when that is empty,
+   - the protocol part of *StudyDescription*: the text after the last `^`, without
+     a trailing `( … )`.
+
+   | StudyDescription                    | Protocol name used     |
+   |-------------------------------------|------------------------|
+   | `Head^CAP_SPIRAL_CONTRAST (Adult)`  | `CAP_SPIRAL_CONTRAST`  |
+   | `Thorax^ThoraxRoutine`              | `ThoraxRoutine`        |
+   | `ThoraxRoutine (Child)`             | `ThoraxRoutine`        |
+
+3. **"Any scanner" groups.** A scanner whose manufacturer **and** model are both
+   blank matches studies from every scanner. It is tried after the study's own
+   scanner, which is useful for protocols named the same everywhere.
+
+The same protocol name on two different scanners stays two separate protocols, each
+with its own RHYTHM UUID. That is intended, because RHYTHM registers protocols per
+scanner.
+
+### What a match fills in
+
+| Study field                          | Filled from the protocol | Notes |
+|--------------------------------------|--------------------------|-------|
+| RHYTHM protocol                      | always                   | its UUID becomes the upload's `protocol_id` |
+| Region / clinical indication         | when set on the protocol | |
+| IV contrast                          | when set on the protocol | otherwise guessed from the images (contrast agent tag) |
+| Scanner (name, RHYTHM scanner ID)    | from the scanner         | display only |
+
+**Manual edits always win.** If an operator chose a value on `/studies`, matching
+never overwrites it. If a protocol is deleted or renamed so a study no longer
+matches, the values that match had filled in are cleared again. Hand-entered values
+stay.
+
+Studies that are already **exported** are never changed.
+
+---
+
+## Everyday tasks
+
+### A new scanner starts sending studies
+
+1. Open **Protocols → Unmatched**. The studies show up grouped as
+   *unknown* `GE MEDICAL SYSTEMS | Optima CT520 Series` with their protocol names.
+2. Click **Add scanner + protocol**. This creates the scanner with the exact
+   manufacturer/model and a first protocol named after the study's protocol, then
+   opens the new scanner.
+3. Fill in, for the protocol:
+   - **Region / indication**: pick one of RHYTHM's 8 combinations. Contrast is set
+     to that combination's default and can be changed.
+   - **RHYTHM protocol UUID**: from RHYTHM's *Protocol Records* page.
+4. **Save changes.** A notice says how many studies were re-matched.
+
+### A known scanner sends a new protocol name
+
+In **Unmatched**, for that row, do one of these:
+
+- **New protocol** if it really is a different protocol; then fill in its details as above.
+- **Add as alias of…** if it's another name for an existing protocol (e.g. the
+  technologists renamed it on the console). The name is added to that protocol's
+  *Matches names* list.
+
+Then **Save changes**.
+
+### Adding things by hand
+
+- **Add scanner** (left column) asks for the manufacturer and model. Enter them
+  exactly as the DICOM header has them. Leave both blank for an "any scanner" group.
+- **Add protocol** (below a scanner's table) adds an empty row. Typing the
+  **Protocol** label also sets its matching name and internal key.
+- **Matches names**: type a name and press Enter to add it; click × on a name to
+  remove it.
+
+### Setting or changing a RHYTHM UUID
+
+Paste it into the protocol's **RHYTHM protocol UUID** field and save. Until a
+protocol has a UUID it shows **UUID pending — export blocked**: studies still match
+it and pre-fill, but RHYTHM upload refuses them with a message pointing here.
+
+### Deleting
+
+- **Delete** on a protocol row. The *Studies* column shows how many studies use it.
+  Those studies lose the auto-filled protocol and indication on save, unless an
+  operator set them by hand.
+- **Delete scanner** removes the scanner and all its protocols.
+
+---
+
+## Field reference
+
+**Scanner**
+
+| Field | Meaning |
+|---|---|
+| Display name | shown on the dashboard |
+| Manufacturer / Model | DICOM `Manufacturer` / `ManufacturerModelName`, exactly as the scanner sends them. Both blank means an "any scanner" group |
+| RHYTHM scanner ID | optional, for reference. RHYTHM takes the scanner from the protocol |
+
+**Protocol**
+
+| Field | Meaning |
+|---|---|
+| Protocol (label) | display name; the grey text under it is the internal key (stored on each study, kept stable) |
+| Matches names | exact protocol names that select this protocol (one or more) |
+| Region / indication | one of RHYTHM's 8 region + clinical-indication combinations, or empty |
+| Contrast | `Non-contrast` / `Contrast-enhanced`, or empty |
+| RHYTHM protocol UUID | the registered RHYTHM *CTProtocol* UUID; empty = pending |
+| Studies | how many studies currently use this protocol |
+
+### Rules checked on save
+
+The page refuses to save, and lists the problems at the top, when:
+
+- two scanners have the same manufacturer + model;
+- a name appears twice on the same scanner;
+- a UUID isn't a valid UUID;
+- a region/indication isn't one of RHYTHM's combinations;
+- the catalog's site code doesn't match `storage.remote_storage.rhythm.site_code`.
+
+If someone else saved in the meantime, the page asks you to reload instead of
+overwriting their changes.
+
+---
+
+## Where it is stored
+
+Everything lives in **`config/protocols.yaml`**. Another path can be set with
+`storage.protocols_file` in `config/settings.yaml`. The page writes the file
+atomically, and the server re-reads it if it is changed on disk. Editing it by
+hand is possible but not needed. See
+[`config/protocols.example.yaml`](config/protocols.example.yaml) for the format.
+
+### Upgrading from the old lookup files
+
+Before this page existed, the same information was split across:
+
+- `integrations/rhythm/scanner_lookup.yaml` (scanners)
+- `integrations/rhythm/indication_lookup.yaml` (indication rules)
+- `config/rhythm_protocols.yaml` (protocol → RHYTHM UUID)
+
+On the first start without `config/protocols.yaml`, PixieVeil builds it from those
+files and logs a warning. The old files are then no longer read; they carry a
+*RETIRED* header.
+
+- **Protocol keys are kept**, so studies that already had a RHYTHM protocol still
+  resolve.
+- **Protocols go under the one scanner** when there was exactly one. Otherwise they
+  go into an **"Any scanner"** group to sort out on the page.
+- **Region / indication** is copied from an old indication rule only when the rule
+  named that exact protocol. Other rules are listed in the log and must be recreated
+  on the page.
+
+**After upgrading:**
+
+1. Check the migrated UUIDs. Every protocol needs its *own* RHYTHM protocol UUID.
+2. Save the page once, even with no changes. This re-matches studies processed
+   before the upgrade.
+
+---
+
+## API
+
+| Request | Who | What |
+|---|---|---|
+| `GET /api/protocols` | any user | the catalog, its `version`, per-protocol study counts, `editable` |
+| `PUT /api/protocols` | admin | body `{"catalog": {...}, "version": "<from GET>"}`; `409` if changed since, `400` with `errors` if invalid; on success re-matches waiting studies and returns them as `restudied` |
+| `GET /api/protocols/unmatched` | any user | unmatched studies grouped by manufacturer, model and protocol name |
+
+These need a login or an API token, like the rest of the dashboard (see
+[USERS.md](USERS.md)).
