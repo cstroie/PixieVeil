@@ -1,0 +1,43 @@
+# PixieVeil dashboard users — example.
+#
+# Copy to config/users.yaml (or the path in http_server.users_file) and keep
+# it private:  cp config/users.example.yaml config/users.yaml && chmod 600 config/users.yaml
+#
+# There is no sign-up page. Add users here, with `python -m pixieveil.auth`
+# (`./pixieveil.sh users ...`), or as an admin on the dashboard's /users page.
+#
+# Adding a user by hand: write a plaintext `password`. On the next request
+# the server hashes it into `password_hash`, removes the plaintext, fills in
+# the remaining fields and rewrites this file. No restart is needed. Setting
+# `password` on an existing user resets it and logs them out everywhere.
+#
+# Usernames: 2-32 chars, lowercase letters, digits, '.', '_' or '-'.
+# Passwords: at least 8 characters.
+
+users:
+  # A new admin, written by hand. Only `password` is required; `admin`
+  # defaults to false and `disabled` to false.
+  alice:
+    password: "change-me-now"
+    admin: true
+
+  # A new regular user.
+  bob:
+    password: "another-secret"
+
+  # What an entry looks like once the server (or the CLI) has processed it.
+  # Don't write these fields by hand, except `admin` / `disabled`, which
+  # you can toggle here.
+  carol:
+    password_hash: "scrypt$16384$8$1$<salt-base64>$<hash-base64>"
+    admin: false
+    disabled: false          # true = cannot log in, API tokens stop working
+    created_at: "2026-11-13T10:00:00+00:00"
+    last_login: null
+    session_version: 1       # bumped to log the user out everywhere
+    tokens:                  # API tokens: create with `token-add`, never by hand
+      - id: "a1b2c3d4"
+        name: "export watcher"
+        hash: "<sha256-hex-of-secret>"
+        created_at: "2026-11-13T10:05:00+00:00"
+        last_used: null
