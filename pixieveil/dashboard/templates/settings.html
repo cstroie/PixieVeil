@@ -41,6 +41,14 @@
         .savebar[hidden] { display: none; }
         .savebar .msg { margin-right: auto; color: var(--warn); font-size: 13px; }
         #restart[hidden], #errors[hidden] { display: none; }
+        .token-help { margin-top: 18px; border-top: 1px solid var(--border); padding-top: 14px; }
+        .token-help h4 { font-size: 14px; margin: 0 0 6px; }
+        .token-help ol { margin: 6px 0 10px 18px; padding: 0; color: var(--text-dim); font-size: 13px; }
+        .token-help li { margin: 3px 0; }
+        .bookmarklet { display: inline-flex; gap: 6px; align-items: center; padding: 6px 12px; border-radius: 999px;
+                       border: 1px dashed var(--accent); color: var(--accent); text-decoration: none; cursor: grab; }
+        .snippet { width: 100%; font-family: var(--mono); font-size: 11.5px; min-height: 64px; }
+        .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
     </style>
 </head>
 <body>
@@ -187,8 +195,25 @@
             document.getElementById('sections').innerHTML = snap.sections.map(sec => {
                 sec.fields.forEach(f => fields.set(f.path, f));
                 const test = sec.id === 'rhythm' ? `<div style="margin-top:14px">
-                    <button type="button" class="btn" id="rhythm-test">Test connection</button>
-                    <div class="test-result" id="rhythm-result" hidden></div></div>` : '';
+                    <div class="row"><button type="button" class="btn" id="rhythm-test">Test connection</button></div>
+                    <div class="test-result" id="rhythm-result" hidden></div></div>
+                    <div class="token-help">
+                        <h4>Getting your API token</h4>
+                        <p class="hint">RHYTHM gives out the token only when you sign in. Use one of these:</p>
+                        <p style="margin:10px 0 4px"><b>A. From your open RHYTHM tab</b> (your password never reaches PixieVeil)</p>
+                        <ol>
+                            <li>Drag this to your bookmarks bar:
+                                <a class="bookmarklet" id="bookmarklet" href="#" title="Drag me to the bookmarks bar">${icon('lock')} Copy RHYTHM token</a></li>
+                            <li>Switch to the RHYTHM tab where you are signed in and click the bookmark.
+                                It checks the token and copies it; it also shows the RHYTHM address for <i>Base URL</i>.</li>
+                            <li>Paste the token into <i>API token</i> above and click <b>Save changes</b>.</li>
+                        </ol>
+                        <details><summary class="hint">Bookmarks blocked? Paste this into the RHYTHM tab's browser console (F12) instead</summary>
+                            <textarea class="textarea snippet" id="snippet" readonly></textarea></details>
+                        <p style="margin:14px 0 4px"><b>B. Sign in to RHYTHM from here</b></p>
+                        <p class="hint">Your username, password and 2FA code go to RHYTHM through this server, and the token is saved directly.</p>
+                        <button type="button" class="btn" id="rhythm-signin" style="margin-top:6px">Sign in to RHYTHM…</button>
+                    </div>` : '';
                 return `<section class="card" style="margin-bottom:20px">
                     <div class="card-head"><div><h3>${esc(sec.title)}</h3>
                         ${sec.help ? `<p class="sub">${esc(sec.help)}</p>` : ''}</div></div>
@@ -200,6 +225,12 @@
                     ? '<span class="faint">(default)</span>' : esc(String(r.value))}</dd>`).join('');
             showRestart(snap.restart_pending);
             document.getElementById('errors').hidden = true;
+            const bm = document.getElementById('bookmarklet');
+            if (bm) {
+                const src = `(${rhythmTokenHelper.toString()})()`;
+                bm.href = 'javascript:' + encodeURIComponent(src);
+                document.getElementById('snippet').value = src;
+            }
             refreshDirty();
         }
         function showRestart(paths) {
@@ -229,6 +260,81 @@
             box.hidden = false;
         }
 
+        // Runs on the RHYTHM tab (bookmarklet / console), NOT on this page:
+        // self-contained, talks only to RHYTHM's own origin.
+        function rhythmTokenHelper() {
+            (async () => {
+                let token = null, user = {};
+                try { token = localStorage.getItem('token'); user = JSON.parse(localStorage.getItem('user') || '{}'); }
+                catch (_e) { /* storage blocked */ }
+                if (!token) {
+                    alert('No RHYTHM token in this tab. Open this RHYTHM site\'s login page, sign in (with your 2FA code), then click again.');
+                    return;
+                }
+                let note = '';
+                try {
+                    const r = await fetch('/api/v1/scanner-profiles/', { headers: { Authorization: 'Bearer ' + token } });
+                    if (r.status === 401 || r.status === 403) {
+                        alert('RHYTHM rejected the stored token. Sign out of RHYTHM, sign in again, then click again.');
+                        return;
+                    }
+                    const d = await r.json().catch(() => ({}));
+                    if (r.ok) note = '\nScanner profiles visible: ' + (d.count != null ? d.count : (d.results || d || []).length) + '.';
+                } catch (_e) { note = '\n(Could not verify the token: ' + _e + ')'; }
+                let copied = false;
+                try { await navigator.clipboard.writeText(token); copied = true; } catch (_e) { /* no clipboard */ }
+                const who = user.username ? ' for RHYTHM user "' + user.username + '"' : '';
+                if (copied) {
+                    alert('Token' + who + ' copied.' + note + '\n\nBase URL: ' + location.origin +
+                          '\n\nPaste it into PixieVeil > Settings > API token and click Save changes.');
+                } else {
+                    prompt('Copy this token' + who + ' (Ctrl+C), then paste it into PixieVeil > Settings > API token. Base URL: ' + location.origin, token);
+                }
+            })();
+        }
+
+        async function rhythmSignIn() {
+            const baseEl = document.querySelector('[data-path="storage.remote_storage.rhythm.base_url"]');
+            const base = (baseEl && baseEl.value.trim()) || '';
+            const fd = await PV.modal({
+                title: 'Sign in to RHYTHM',
+                body: `<div class="field"><label class="label">Base URL</label>
+                        <input class="input" name="base" value="${esc(base)}" placeholder="https://rhythm.example.org"></div>
+                    <div class="field" style="margin-top:10px"><label class="label">RHYTHM username</label>
+                        <input class="input" name="user" autocomplete="off" autocapitalize="none"></div>
+                    <div class="field" style="margin-top:10px"><label class="label">RHYTHM password</label>
+                        <input class="input" type="password" name="pass" autocomplete="off"></div>`,
+                confirm: 'Sign in',
+            });
+            if (!fd) return;
+            const body = { base_url: String(fd.get('base') || ''), username: String(fd.get('user') || ''),
+                           password: String(fd.get('pass') || '') };
+            await finishSignIn(await api('/api/settings/rhythm-login', { method: 'POST', body }).catch(e => e.data || { message: e.message }));
+        }
+        async function finishSignIn(r) {
+            while (r && r.needs_2fa) {
+                const fd = await PV.modal({
+                    title: 'RHYTHM two-factor code',
+                    body: `<p class="hint">${esc(r.message || '')}</p>
+                        <input class="input mono" name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="8">`,
+                    confirm: 'Verify',
+                });
+                if (!fd) return;
+                const pending = r.pending;
+                r = await api('/api/settings/rhythm-login/verify', { method: 'POST',
+                    body: { pending, code: String(fd.get('code') || '') } })
+                    .catch(e => e.data || { message: e.message });
+                if (r && !r.ok && !r.needs_2fa && /code/i.test(r.message || '') && !/expired/i.test(r.message || '')) {
+                    toast(r.message, 'bad');
+                    r = { needs_2fa: true, pending, message: 'Try the code again' };
+                }
+            }
+            if (r && r.ok) {
+                toast(`Token saved for RHYTHM user ${r.username || ''} — restart to apply.`, 'ok', 6000);
+                await load();
+            } else toast((r && r.message) || 'Sign-in failed', 'bad', 8000);
+        }
+
         async function load() {
             try {
                 snap = await api('/api/settings');
@@ -256,6 +362,12 @@
                 input.placeholder = 'will be cleared on save';
                 secretTouched.set(path, 'clear');
                 refreshDirty();
+                return;
+            }
+            if (e.target.closest('#rhythm-signin')) { rhythmSignIn(); return; }
+            if (e.target.closest('#bookmarklet')) {
+                e.preventDefault();
+                toast('Drag this link to your bookmarks bar, then click it on your RHYTHM tab.', 'info', 6000);
                 return;
             }
             if (e.target.closest('#rhythm-test')) {

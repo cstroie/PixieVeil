@@ -436,3 +436,66 @@ async def probe_connection(base_url: str, auth_token: str,
         # A paginated answer lists only its first page: "missing" may be wrong.
         out["partial"] = bool(isinstance(body, dict) and body.get("next"))
     return out
+
+
+# -- obtaining a token: RHYTHM's own login (+ 2FA) ---------------------------
+#
+# RHYTHM hands out its API token only at the end of an interactive login:
+#   POST /api/v1/auth/login/       {username, password}
+#       -> {token, ...}                 (2FA not required)
+#       -> {requires_2fa: true}         (enter the TOTP code next)
+#       -> {requires_2fa_setup: true}   (2FA not enrolled yet)
+#   POST /api/v1/auth/verify-2fa/  {code}   (same Django session cookie)
+#       -> {token, username, ...}
+# The cookie jar carries that session between the two calls.
+
+LOGIN_PATH = "/api/v1/auth/login/"
+VERIFY_2FA_PATH = "/api/v1/auth/verify-2fa/"
+
+
+async def _auth_post(base_url: str, path: str, payload: dict, jar: aiohttp.CookieJar,
+                     timeout_s: float) -> dict[str, Any]:
+    url = f"{base_url.rstrip('/')}{path}"
+    try:
+        async with aiohttp.ClientSession(
+            cookie_jar=jar, timeout=aiohttp.ClientTimeout(total=timeout_s)
+        ) as session:
+            async with session.post(url, json=payload) as resp:
+                body = await _json(resp)
+                status = resp.status
+    except Exception as e:  # noqa: BLE001 - reported to the operator
+        logger.warning("RHYTHM sign-in request to %s failed: %s", url, e.__class__.__name__)
+        return {"ok": False, "message": f"Cannot reach {base_url}: {e.__class__.__name__}: {e}"}
+    if not isinstance(body, dict):
+        body = {}
+    if status == 200 and body.get("token"):
+        return {"ok": True, "token": str(body["token"]),
+                "username": body.get("username"), "jar": jar}
+    if status == 200 and body.get("requires_2fa"):
+        return {"ok": False, "needs_2fa": True, "jar": jar,
+                "message": "Enter the 6-digit code from your authenticator app"}
+    if status == 200 and body.get("requires_2fa_setup"):
+        return {"ok": False, "message": "Two-factor authentication is not set up for this "
+                                        "account yet: sign in once on RHYTHM's own login page "
+                                        "to enrol, then try again"}
+    err = body.get("error") or body.get("detail") or body.get("non_field_errors")
+    if isinstance(err, list):
+        err = " ".join(str(e) for e in err)
+    return {"ok": False, "status": status,
+            "message": str(err) if err else f"RHYTHM answered HTTP {status}"}
+
+
+async def rhythm_login(base_url: str, username: str, password: str,
+                       timeout_s: float = 15.0) -> dict[str, Any]:
+    """Step 1 of RHYTHM's login. Returns ``{"ok", "token"?, "needs_2fa"?,
+    "jar"?, "message"?}``; keep ``jar`` for :func:`rhythm_verify_2fa`.
+    The password is used for this one request only and never logged."""
+    jar = aiohttp.CookieJar(unsafe=True)   # unsafe: allow cookies from IP hosts
+    return await _auth_post(base_url, LOGIN_PATH,
+                            {"username": username, "password": password}, jar, timeout_s)
+
+
+async def rhythm_verify_2fa(base_url: str, jar: aiohttp.CookieJar, code: str,
+                            timeout_s: float = 15.0) -> dict[str, Any]:
+    """Step 2: send the TOTP *code* in the session started by rhythm_login."""
+    return await _auth_post(base_url, VERIFY_2FA_PATH, {"code": code}, jar, timeout_s)

@@ -20,6 +20,10 @@ Admins can change the routine parts of `config/settings.yaml` on the dashboard's
 
 - **API token:** never shown again once saved. Type a new one to replace it, or click
   **Clear**.
+- **Getting the token:** the RHYTHM card offers a **Copy RHYTHM token** bookmarklet
+  (run it on your signed-in RHYTHM tab; it checks and copies the token) and
+  **Sign in to RHYTHM…** (username, password and 2FA code; the token is saved
+  directly and never shown). Details in [RHYTHM_API.md](RHYTHM_API.md).
 - **Test connection** checks RHYTHM with the values in the form, or the saved ones
   when a field is left empty. It reports whether the server is reachable and the
   token accepted, and which of the protocol catalog's UUIDs RHYTHM knows.
@@ -58,5 +62,7 @@ shown on the page but changed only by editing the file and restarting.
 | `GET /api/settings` | fields with current values (secrets only as `is_set`), read-only values, `version`, `restart_pending` |
 | `PUT /api/settings` | `{"changes": {"<dotted.path>": value}, "version": "<from GET>"}`; `400` with `errors` by path, `409` if stale; returns `changed`, `applied_live`, `restart_required` |
 | `POST /api/settings/rhythm-test` | optional `{"base_url", "auth_token"}`; returns `ok`, `status`, `message`, `found`/`missing` UUIDs |
+| `POST /api/settings/rhythm-login` | `{"base_url", "username", "password"}`: signs in to RHYTHM; saves the token, or returns `{needs_2fa, pending}` |
+| `POST /api/settings/rhythm-login/verify` | `{"pending", "code"}`: finishes the 2FA step and saves the token (never returned) |
 
-All three are admin-only and need a login or an API token (see [USERS.md](USERS.md)).
+All of these are admin-only and need a login or an API token (see [USERS.md](USERS.md)).

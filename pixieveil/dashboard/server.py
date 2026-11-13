@@ -16,6 +16,7 @@ import json
 import logging
 import platform
 import re
+import secrets
 import time
 from pathlib import Path
 from typing import Any, Optional
@@ -47,6 +48,7 @@ CSRF_HEADER = "X-Requested-With"
 CSRF_VALUE = "PixieVeil"
 LOGIN_MAX_FAILURES = 5
 LOGIN_LOCKOUT_S = 300.0
+RHYTHM_LOGIN_TTL_S = 300.0
 
 _VALID_ACTIONS = {
     "send_dicom", "reextract", "upload_http", "upload_rhythm", "mark_exported",
@@ -141,6 +143,9 @@ class Dashboard:
             )
         # Routes are registered here rather than in start() so tests can
         # wrap self.app in an aiohttp TestServer without binding a port.
+        # RHYTHM sign-ins waiting for their 2FA code: id -> (admin, base_url,
+        # cookie jar, expires). Never holds the password.
+        self._rhythm_logins: dict[str, tuple[str, str, Any, float]] = {}
         # First-run wizard: its state lives next to the users file (config/).
         self.setup = SetupState(self, users_file.parent)
         self.app.add_routes(SetupRoutes(self, self.setup).routes())
@@ -161,6 +166,8 @@ class Dashboard:
             web.get("/api/settings", self.handle_settings_get),
             web.put("/api/settings", self.handle_settings_put),
             web.post("/api/settings/rhythm-test", self.handle_settings_rhythm_test),
+            web.post("/api/settings/rhythm-login", self.handle_settings_rhythm_login),
+            web.post("/api/settings/rhythm-login/verify", self.handle_settings_rhythm_verify),
             web.get("/users", self.handle_users_page),
             web.get("/api/users", self.handle_users_list),
             web.post("/api/users", self.handle_users_add),
@@ -539,6 +546,87 @@ class Dashboard:
         uuids = [p.rhythm_uuid for p in sm.protocol_catalog.entries if not p.uuid_pending]
         return web.json_response(
             await rhythm_storage_mod.probe_connection(base_url, token, uuids))
+
+    async def handle_settings_rhythm_login(self, request: web.Request) -> web.Response:
+        """``{"base_url", "username", "password"}``: sign in to RHYTHM.
+
+        Either the token comes back at once (no 2FA) and is saved, or a
+        ``pending`` id is returned for ``/rhythm-login/verify``. The token is
+        never sent to the browser.
+        """
+        self._require_admin(request)
+        editor = self._editor()
+        body = await self._json_body(request)
+        username = str(body.get("username") or "").strip()
+        password = str(body.get("password") or "")
+        try:
+            base_url = settings_editor.validate_value(
+                settings_editor.FIELDS_BY_PATH["storage.remote_storage.rhythm.base_url"],
+                str(body.get("base_url") or "").strip())
+        except ValueError as e:
+            return web.json_response({"ok": False, "message": f"Base URL {e}"}, status=400)
+        if not base_url or not username or not password:
+            return web.json_response(
+                {"ok": False, "message": "Base URL, username and password are all needed"},
+                status=400)
+        result = await rhythm_storage_mod.rhythm_login(base_url, username, password)
+        admin = self._actor(request) or "?"
+        if result.get("needs_2fa"):
+            now = time.time()
+            self._rhythm_logins = {k: v for k, v in self._rhythm_logins.items()
+                                   if v[3] > now and v[0] != admin}
+            pending = secrets.token_urlsafe(16)
+            self._rhythm_logins[pending] = (admin, base_url, result["jar"],
+                                            now + RHYTHM_LOGIN_TTL_S)
+            return web.json_response({"ok": True, "needs_2fa": True, "pending": pending,
+                                      "message": result["message"]})
+        if not result.get("ok"):
+            return web.json_response({"ok": False, "message": result.get("message")})
+        return await self._save_rhythm_token(request, editor, base_url, result)
+
+    async def handle_settings_rhythm_verify(self, request: web.Request) -> web.Response:
+        """``{"pending", "code"}``: finish a RHYTHM sign-in with the 2FA code."""
+        self._require_admin(request)
+        editor = self._editor()
+        body = await self._json_body(request)
+        pending = str(body.get("pending") or "")
+        code = str(body.get("code") or "").strip().replace(" ", "")
+        entry = self._rhythm_logins.get(pending)
+        if (entry is None or entry[3] < time.time()
+                or entry[0] != (self._actor(request) or "?")):
+            self._rhythm_logins.pop(pending, None)
+            return web.json_response(
+                {"ok": False, "message": "This sign-in expired — start again"}, status=400)
+        if not code:
+            return web.json_response({"ok": False, "message": "Enter the code"}, status=400)
+        _admin, base_url, jar, _exp = entry
+        result = await rhythm_storage_mod.rhythm_verify_2fa(base_url, jar, code)
+        if not result.get("ok"):
+            # RHYTHM drops the pending login after a few wrong codes; keep ours
+            # until it expires so a typo can be retried.
+            return web.json_response({"ok": False, "message": result.get("message")})
+        self._rhythm_logins.pop(pending, None)
+        return await self._save_rhythm_token(request, editor, base_url, result)
+
+    async def _save_rhythm_token(self, request: web.Request,
+                                 editor: settings_editor.SettingsEditor,
+                                 base_url: str, result: dict) -> web.Response:
+        changes = {"storage.remote_storage.rhythm.base_url": base_url,
+                   "storage.remote_storage.rhythm.auth_token": result["token"]}
+        try:
+            snap = await asyncio.to_thread(editor.snapshot)
+            saved = await asyncio.to_thread(editor.apply_changes, changes, snap["version"])
+        except settings_editor.SettingsValidationError as e:
+            return web.json_response({"ok": False, "message": "; ".join(e.errors.values())},
+                                     status=400)
+        except (OSError, yaml.YAMLError, settings_editor.SettingsError) as e:
+            logger.error(f"Cannot save the RHYTHM token: {e}")
+            return web.json_response({"ok": False, "message": f"cannot save settings: {e}"},
+                                     status=500)
+        logger.info(f"Audit: user={self._actor(request)} action=rhythm_token_obtained "
+                    f"rhythm_user={result.get('username')!r} paths={saved.changed}")
+        return web.json_response({"ok": True, "username": result.get("username"),
+                                  "restart_required": saved.restart_required})
 
     # ------------------------------------------------------------ admin: users
     @staticmethod
