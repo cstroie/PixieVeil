@@ -39,7 +39,7 @@ from pixieveil.events import EventBus
 from pixieveil.storage.zip_manager import ZipManager
 from pixieveil.processing.anonymizer import Anonymizer
 from pixieveil.processing.series_filter import SeriesFilter
-from pixieveil.processing.defacer import Defacer
+from pixieveil.processing.defacer import Defacer, DefacingCancelled
 from pixieveil.processing.exam_extractor import ExamExtractor
 from pixieveil.processing import exam_merge
 from pixieveil.processing import rhythm_manifest
@@ -250,6 +250,7 @@ class StorageManager:
         This method is idempotent – calling it multiple times will only
         create a single task.
         """
+        Defacer.reset_cancel()
         if self._completion_task is not None:
             logger.debug("StorageManager.start() called but task already running")
             return
@@ -263,6 +264,9 @@ class StorageManager:
         """
         Gracefully stop the background completion‑check task.
         """
+        # Defacing runs nnU-Net in a child process; stop it now so shutdown
+        # doesn't wait minutes for inference (the study resumes on restart).
+        Defacer.cancel_all()
         if self._completion_task is None:
             logger.debug("StorageManager.stop() called but no task is running")
             return
@@ -929,6 +933,11 @@ class StorageManager:
                 await asyncio.to_thread(
                     self._prepare_export_artifacts_sync, study_number
                 )
+        except DefacingCancelled:
+            # Shutdown: the study keeps its "defacing" status, which is in the
+            # restart re-queue set; series already defaced are skipped then.
+            logger.info("Defacing of study %s interrupted by shutdown — it resumes on "
+                        "restart", study_uid)
         except Exception:
             logger.exception("Unexpected error processing study %s", study_uid)
         finally:

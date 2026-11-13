@@ -89,3 +89,13 @@ def write_minimal_dicom(path: Path, **attrs) -> None:
 
 def read_dicom(path: Path) -> "pydicom.Dataset":
     return pydicom.dcmread(str(path))
+
+
+@pytest.fixture(autouse=True)
+def _reset_defacing_cancel():
+    """Defacer's shutdown switch is class-level; never leak it between tests."""
+    from pixieveil.processing.defacer import Defacer
+
+    Defacer.reset_cancel()
+    yield
+    Defacer.reset_cancel()

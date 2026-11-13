@@ -7,11 +7,14 @@ capabilities for implementing a defacing pipeline. The full defacing workflow
 """
 
 import logging
+import os
 import re
+import signal
+import subprocess
+import sys
 import shutil
 import tempfile
 import threading
-import warnings
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -30,6 +33,12 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
+class DefacingCancelled(Exception):
+    """Defacing was stopped because the server is shutting down. The series
+    is left untouched (not marked defaced), so it is retried on restart."""
+
+
 # DICOM tags used for head-scan detection
 _HEAD_BODY_PARTS = {"HEAD", "BRAIN", "NECK", "SKULL"}
 
@@ -39,6 +48,95 @@ class Defacer:
 
     # One nnUNet inference at a time — class-level so all instances share it.
     _nnunet_semaphore = threading.Semaphore(1)
+    # Shutdown: set by cancel_all(); running nnU-Net child processes are
+    # tracked so they can be terminated (a thread can't be interrupted).
+    _cancel = threading.Event()
+    _procs: set = set()
+    _procs_lock = threading.Lock()
+    CANCEL_GRACE_S = 5.0
+
+    @classmethod
+    def cancel_all(cls) -> int:
+        """Stop all defacing now (server shutdown). Running nnU-Net processes
+        get SIGTERM — their whole process group, so nnU-Net's own worker
+        pool goes too — then SIGKILL after CANCEL_GRACE_S. Returns how many
+        were running. Non-blocking."""
+        cls._cancel.set()
+        with cls._procs_lock:
+            procs = [p for p in cls._procs if p.poll() is None]
+        for proc in procs:
+            cls._signal_group(proc, signal.SIGTERM)
+
+        def _reap() -> None:
+            for proc in procs:
+                try:
+                    proc.wait(timeout=cls.CANCEL_GRACE_S)
+                except subprocess.TimeoutExpired:
+                    cls._signal_group(proc, signal.SIGKILL)
+        if procs:
+            logger.warning("Stopping %d running defacing job(s) for shutdown", len(procs))
+            threading.Thread(target=_reap, name="deface-reaper", daemon=True).start()
+        return len(procs)
+
+    @classmethod
+    def reset_cancel(cls) -> None:
+        """Allow defacing again (startup; tests)."""
+        cls._cancel.clear()
+
+    @staticmethod
+    def _signal_group(proc: "subprocess.Popen", sig: int) -> None:
+        try:
+            os.killpg(proc.pid, sig)
+        except (ProcessLookupError, PermissionError):
+            pass
+        except OSError:
+            try:
+                proc.send_signal(sig)
+            except OSError:
+                pass
+
+    @classmethod
+    def _check_cancelled(cls) -> None:
+        if cls._cancel.is_set():
+            raise DefacingCancelled("server is shutting down")
+
+    @classmethod
+    def _run_cancellable(cls, cmd: list[str], log_path: Path, poll_s: float = 0.5) -> None:
+        """Run *cmd* in its own process group, output to *log_path*. Raises
+        DefacingCancelled if cancel_all() is called meanwhile (the process is
+        terminated by cancel_all), RuntimeError on a non-zero exit."""
+        cls._check_cancelled()
+        with open(log_path, "wb") as log:
+            proc = subprocess.Popen(cmd, stdout=log, stderr=subprocess.STDOUT,
+                                    stdin=subprocess.DEVNULL,
+                                    start_new_session=True)  # Ctrl-C doesn't hit it
+        with cls._procs_lock:
+            cls._procs.add(proc)
+        try:
+            while True:
+                try:
+                    code = proc.wait(timeout=poll_s)
+                    break
+                except subprocess.TimeoutExpired:
+                    if cls._cancel.is_set():
+                        cls._signal_group(proc, signal.SIGTERM)
+                        try:
+                            proc.wait(timeout=cls.CANCEL_GRACE_S)
+                        except subprocess.TimeoutExpired:
+                            cls._signal_group(proc, signal.SIGKILL)
+                            proc.wait()
+                        raise DefacingCancelled("server is shutting down")
+        finally:
+            with cls._procs_lock:
+                cls._procs.discard(proc)
+        if cls._cancel.is_set():
+            raise DefacingCancelled("server is shutting down")
+        if code != 0:
+            try:
+                tail = log_path.read_text(errors="replace")[-2000:]
+            except OSError:
+                tail = ""
+            raise RuntimeError(f"nnU-Net exited with status {code}: {tail.strip()}")
 
     def __init__(self, config: dict | None = None, temp_path: Path | None = None):
         """
@@ -233,6 +331,8 @@ class Defacer:
         nifti_out_dir.mkdir(parents=True, exist_ok=True)
         dicom_out_dir.mkdir(parents=True, exist_ok=True)
 
+        self._check_cancelled()
+
         # Step 1: DICOM → NIfTI
         try:
             nifti_path = self.dicom_to_nifti(str(series_dir), str(nifti_in_dir))
@@ -247,6 +347,8 @@ class Defacer:
             defaced_nifti = self._run_defacing_tool(
                 Path(nifti_path), nifti_in_dir, nifti_out_dir, data_dir=data_dir
             )
+        except DefacingCancelled:
+            raise
         except Exception as e:
             logger.error("Defacing tool failed for %s: %s", series_dir, e)
             return False
@@ -370,8 +472,9 @@ class Defacer:
         ``model_dir`` comes from config (``defacing.model_dir``) or falls back
         to ``<data_dir>.parent/nnUNet`` when *data_dir* is supplied.
 
-        Calls ``nnUNetPredictor`` directly — no subprocess.  The model folder
-        is resolved from ``model_root`` and the
+        Runs ``nnUNetPredictor`` in a child process (``nnunet_worker``) so a
+        server shutdown can terminate it; raises DefacingCancelled then. The
+        model folder is resolved from ``model_root`` and the
         ``nnUNetTrainer__nnUNetPlans__3d_fullres`` configuration is assumed.
 
         Args:
@@ -397,55 +500,28 @@ class Defacer:
         os.environ.setdefault("nnUNet_preprocessed", str(model_root))
         os.environ.setdefault("nnUNet_raw",          str(model_root))
 
-        import torch
-        from nnunetv2.inference.predict_from_raw_data import nnUNetPredictor
-
         logger.info(
             "nnU-Net citation: Isensee F, Jaeger PF, Kohl SAA, Petersen J, Maier-Hein KH. "
             "nnU-Net: a self-configuring method for deep learning-based biomedical image "
             "segmentation. Nat Methods. 2021;18(2):203-211. doi:10.1038/s41592-020-01008-z"
         )
-
-        torch_device = torch.device(device)
         use_mirroring = device != "cpu"  # mirroring TTA is slow on CPU
-
         model_folder = str(model_root / self._MODEL_DATASET / "nnUNetTrainer__nnUNetPlans__3d_fullres")
-
         logger.info(
             "Running nnUNet inference: model=%s device=%s mirroring=%s",
             model_folder, device, use_mirroring,
         )
-        perform_on_device = torch_device.type == "cuda"
+        # In a child process, not this thread, so a shutdown can stop it
+        # (see cancel_all / nnunet_worker).
+        cmd = [sys.executable, "-m", "pixieveil.processing.nnunet_worker",
+               model_folder, str(nifti_in_dir), str(nifti_out_dir), "--device", device]
+        if use_mirroring:
+            cmd.append("--mirroring")
 
         logger.debug("Waiting for nnUNet semaphore")
         with self._nnunet_semaphore:
             logger.debug("nnUNet semaphore acquired")
-            with warnings.catch_warnings():
-                warnings.filterwarnings(
-                    "ignore",
-                    message=".*old nnU-Net plans format.*",
-                    category=UserWarning,
-                )
-                predictor = nnUNetPredictor(
-                    tile_step_size=0.5,
-                    use_gaussian=True,
-                    use_mirroring=use_mirroring,
-                    perform_everything_on_device=perform_on_device,
-                    device=torch_device,
-                    verbose=False,
-                    allow_tqdm=True,
-                )
-                predictor.initialize_from_trained_model_folder(
-                    model_folder,
-                    use_folds=("all",),
-                    checkpoint_name="checkpoint_final.pth",
-                )
-            predictor.predict_from_files(
-                str(nifti_in_dir),
-                str(nifti_out_dir),
-                save_probabilities=False,
-                overwrite=True,
-            )
+            self._run_cancellable(cmd, nifti_out_dir.parent / "nnunet_worker.log")
 
         logger.info("nnUNet inference complete; output in %s", nifti_out_dir)
 
