@@ -25,6 +25,32 @@ All endpoints below are relative to `<base_url>/api/v1/`, where `base_url` is
 - Browser pages on RHYTHM itself also accept the logged-in session cookie. That
   only matters inside RHYTHM.
 
+### Lifetime: permanent, no refresh needed
+
+- RHYTHM uses DRF's stock `TokenAuthentication` (`uploads/auth.py`
+  `BearerTokenAuthentication` only adds the `Bearer` keyword). A token is a
+  database row checked by lookup. It has **no expiry date**, and the only other
+  check is that the user is active.
+- RHYTHM's settings file defines `TOKEN_EXPIRY_DAYS` (30) and
+  `UPLOAD_TOKEN_EXPIRY_DAYS` (90), but **nothing in the vendored code reads them**.
+  If a newer RHYTHM starts enforcing `TOKEN_EXPIRY_DAYS`, the token would expire
+  after 30 days. Re-check after a submodule update.
+- Logging in again **reuses** the existing token (`Token.objects.get_or_create`),
+  so fetching it again (bookmarklet, sign-in) always gives the same value.
+- The token stops working only when:
+  - an admin **rotates** it (`manage.py create_upload_token <user> --force`) or
+    deletes it in Django admin;
+  - the RHYTHM user is **deactivated or deleted**;
+  - RHYTHM's optional **IP whitelist** (`IP_WHITELIST`, off by default) is enabled
+    without this server's address.
+
+  Then uploads fail with an authentication error and **Test connection** reports
+  the token as rejected. Get it again with either helper below and restart.
+- RHYTHM's 1-hour idle session timeout (`SESSION_TIMEOUT_SECONDS`) affects only
+  the RHYTHM website in a browser, not the API token.
+- **Ask the RHYTHM admin** not to rotate the token PixieVeil uses, and whether the
+  IP whitelist is on (if so, give them this server's address).
+
 ### How the token is issued
 
 There is no "show my token" page. RHYTHM returns the token only at the end of
