@@ -370,6 +370,14 @@ def _legacy_protocols_to_scanner_protocols(rows: list) -> list[dict]:
         if not isinstance(row, dict):
             continue
         key = _str(row.get("id"))
+        if key and not _SLUG_RE.match(key):
+            # Old files allowed any id ("cap-spiral-nativ-6+"); catalog keys
+            # are slugs. "+" becomes "plus" so "x-6+" and "x-6" stay distinct.
+            fixed = slugify(key.replace("+", "plus"))
+            logger.warning("Legacy protocol id %r is not a valid key; using %r — exams "
+                           "that used the old id need their RHYTHM protocol chosen again",
+                           key, fixed)
+            key = fixed
         name = _str(row.get("name"))
         uuid_str = _opt(row.get("uuid"))
         out.append({

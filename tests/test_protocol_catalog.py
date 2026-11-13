@@ -548,3 +548,15 @@ class TestProtocolsApi:
             nav = html[html.index('<nav class="nav">'):html.index("</nav>")]
             order = [nav.index(f'href="/{p}"') for p in ("studies", "protocols", "about")]
             assert order == sorted(order), page
+
+
+def test_legacy_ids_that_are_not_slugs_are_fixed_on_migration():
+    from pixieveil.processing.protocol_catalog import (
+        _legacy_protocols_to_scanner_protocols, validate_document)
+    protos = _legacy_protocols_to_scanner_protocols(
+        [{"id": "cap-spiral-nativ-6+", "name": "CAP_N_PESTE_6A"},
+         {"id": "cap-spiral-nativ-6", "name": "CAP_6"}])
+    assert [p["key"] for p in protos] == ["cap-spiral-nativ-6plus", "cap-spiral-nativ-6"]
+    doc = {"scanners": [{"id": "s", "manufacturer": "SIEMENS", "model": "Emotion 16",
+                         "protocols": protos}]}
+    assert validate_document(doc) == []
