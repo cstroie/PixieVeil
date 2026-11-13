@@ -1,0 +1,2026 @@
+{
+ "_source": "reference/uploader populate_protocol_choices.py (offline fallback; the live /api/v1/protocol-choices/ wins when reachable)",
+ "categories": [
+  {
+   "key": "detector_rows",
+   "label": "Detector Rows / Coverage",
+   "options": [
+    {
+     "value": "16 rows",
+     "display": "16 rows",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "32 rows",
+     "display": "32 rows",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "40 mm coverage",
+     "display": "40 mm coverage",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "64 rows",
+     "display": "64 rows",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "80 rows",
+     "display": "80 rows",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "128 rows",
+     "display": "128 rows",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "160 rows",
+     "display": "160 rows",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "256 rows",
+     "display": "256 rows",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "320 rows / 16 cm coverage",
+     "display": "320 rows / 16 cm coverage",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Dual source",
+     "display": "Dual source",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Photon-counting CT",
+     "display": "Photon-counting CT",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Other: Please Specify",
+     "display": "Other: Please Specify",
+     "applicable_protocol_types": []
+    }
+   ]
+  },
+  {
+   "key": "year_of_installation",
+   "label": "Year of Installation",
+   "options": [
+    {
+     "value": "Unknown",
+     "display": "Unknown",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "2000",
+     "display": "2000",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "2001",
+     "display": "2001",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "2002",
+     "display": "2002",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "2003",
+     "display": "2003",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "2004",
+     "display": "2004",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "2005",
+     "display": "2005",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "2006",
+     "display": "2006",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "2007",
+     "display": "2007",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "2008",
+     "display": "2008",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "2009",
+     "display": "2009",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "2010",
+     "display": "2010",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "2011",
+     "display": "2011",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "2012",
+     "display": "2012",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "2013",
+     "display": "2013",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "2014",
+     "display": "2014",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "2015",
+     "display": "2015",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "2016",
+     "display": "2016",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "2017",
+     "display": "2017",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "2018",
+     "display": "2018",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "2019",
+     "display": "2019",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "2020",
+     "display": "2020",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "2021",
+     "display": "2021",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "2022",
+     "display": "2022",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "2023",
+     "display": "2023",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "2024",
+     "display": "2024",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "2025",
+     "display": "2025",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "2026",
+     "display": "2026",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Other: Please Specify",
+     "display": "Other: Please Specify",
+     "applicable_protocol_types": []
+    }
+   ]
+  },
+  {
+   "key": "protocol_name",
+   "label": "Protocol Name",
+   "options": [
+    {
+     "value": "Brain non-contrast",
+     "display": "Brain non-contrast",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Brain CTA",
+     "display": "Brain CTA",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Brain perfusion",
+     "display": "Brain perfusion",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Sinuses",
+     "display": "Sinuses",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Temporal bone",
+     "display": "Temporal bone",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Maxillofacial",
+     "display": "Maxillofacial",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Neck soft tissue",
+     "display": "Neck soft tissue",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Cervical spine",
+     "display": "Cervical spine",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Chest low dose",
+     "display": "Chest low dose",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Chest routine",
+     "display": "Chest routine",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "HRCT chest",
+     "display": "HRCT chest",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "CTPA",
+     "display": "CTPA",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Cardiac calcium score",
+     "display": "Cardiac calcium score",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Coronary CTA",
+     "display": "Coronary CTA",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Abdomen routine",
+     "display": "Abdomen routine",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Abdomen-pelvis portal venous",
+     "display": "Abdomen-pelvis portal venous",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Renal colic low dose",
+     "display": "Renal colic low dose",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Liver multiphase",
+     "display": "Liver multiphase",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Pancreas multiphase",
+     "display": "Pancreas multiphase",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "CT urography",
+     "display": "CT urography",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Aorta CTA",
+     "display": "Aorta CTA",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Whole-body trauma",
+     "display": "Whole-body trauma",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Extremity CT",
+     "display": "Extremity CT",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Other: Please Specify",
+     "display": "Other: Please Specify",
+     "applicable_protocol_types": []
+    }
+   ]
+  },
+  {
+   "key": "clinical_indication_pediatric_head",
+   "label": "Clinical Indication – Pediatric Head",
+   "options": [
+    {
+     "value": "Head trauma",
+     "display": "Head trauma",
+     "applicable_protocol_types": [
+      "PEDIATRIC_HEAD"
+     ]
+    },
+    {
+     "value": "Suspected intracranial haemorrhage",
+     "display": "Suspected intracranial haemorrhage",
+     "applicable_protocol_types": [
+      "PEDIATRIC_HEAD"
+     ]
+    },
+    {
+     "value": "Hydrocephalus / VP shunt check",
+     "display": "Hydrocephalus / VP shunt check",
+     "applicable_protocol_types": [
+      "PEDIATRIC_HEAD"
+     ]
+    },
+    {
+     "value": "Seizure",
+     "display": "Seizure",
+     "applicable_protocol_types": [
+      "PEDIATRIC_HEAD"
+     ]
+    },
+    {
+     "value": "Headache",
+     "display": "Headache",
+     "applicable_protocol_types": [
+      "PEDIATRIC_HEAD"
+     ]
+    },
+    {
+     "value": "Suspected stroke",
+     "display": "Suspected stroke",
+     "applicable_protocol_types": [
+      "PEDIATRIC_HEAD"
+     ]
+    },
+    {
+     "value": "Brain tumour / follow-up",
+     "display": "Brain tumour / follow-up",
+     "applicable_protocol_types": [
+      "PEDIATRIC_HEAD"
+     ]
+    },
+    {
+     "value": "Craniosynostosis",
+     "display": "Craniosynostosis",
+     "applicable_protocol_types": [
+      "PEDIATRIC_HEAD"
+     ]
+    },
+    {
+     "value": "Sinusitis",
+     "display": "Sinusitis",
+     "applicable_protocol_types": [
+      "PEDIATRIC_HEAD"
+     ]
+    },
+    {
+     "value": "Temporal bone / mastoiditis",
+     "display": "Temporal bone / mastoiditis",
+     "applicable_protocol_types": [
+      "PEDIATRIC_HEAD"
+     ]
+    },
+    {
+     "value": "Facial trauma",
+     "display": "Facial trauma",
+     "applicable_protocol_types": [
+      "PEDIATRIC_HEAD"
+     ]
+    },
+    {
+     "value": "Cervical spine trauma",
+     "display": "Cervical spine trauma",
+     "applicable_protocol_types": [
+      "PEDIATRIC_HEAD"
+     ]
+    },
+    {
+     "value": "Other: Please Specify",
+     "display": "Other: Please Specify",
+     "applicable_protocol_types": [
+      "PEDIATRIC_HEAD"
+     ]
+    }
+   ]
+  },
+  {
+   "key": "clinical_indication_pediatric_body",
+   "label": "Clinical Indication – Pediatric Body",
+   "options": [
+    {
+     "value": "Appendicitis",
+     "display": "Appendicitis",
+     "applicable_protocol_types": [
+      "PEDIATRIC_BODY"
+     ]
+    },
+    {
+     "value": "Abdominal pain",
+     "display": "Abdominal pain",
+     "applicable_protocol_types": [
+      "PEDIATRIC_BODY"
+     ]
+    },
+    {
+     "value": "Trauma",
+     "display": "Trauma",
+     "applicable_protocol_types": [
+      "PEDIATRIC_BODY"
+     ]
+    },
+    {
+     "value": "Infection / abscess",
+     "display": "Infection / abscess",
+     "applicable_protocol_types": [
+      "PEDIATRIC_BODY"
+     ]
+    },
+    {
+     "value": "Oncology staging",
+     "display": "Oncology staging",
+     "applicable_protocol_types": [
+      "PEDIATRIC_BODY"
+     ]
+    },
+    {
+     "value": "Oncology follow-up",
+     "display": "Oncology follow-up",
+     "applicable_protocol_types": [
+      "PEDIATRIC_BODY"
+     ]
+    },
+    {
+     "value": "Chest infection",
+     "display": "Chest infection",
+     "applicable_protocol_types": [
+      "PEDIATRIC_BODY"
+     ]
+    },
+    {
+     "value": "HRCT / interstitial lung disease",
+     "display": "HRCT / interstitial lung disease",
+     "applicable_protocol_types": [
+      "PEDIATRIC_BODY"
+     ]
+    },
+    {
+     "value": "Pulmonary embolism",
+     "display": "Pulmonary embolism",
+     "applicable_protocol_types": [
+      "PEDIATRIC_BODY"
+     ]
+    },
+    {
+     "value": "Renal colic / urinary tract",
+     "display": "Renal colic / urinary tract",
+     "applicable_protocol_types": [
+      "PEDIATRIC_BODY"
+     ]
+    },
+    {
+     "value": "Congenital anomaly",
+     "display": "Congenital anomaly",
+     "applicable_protocol_types": [
+      "PEDIATRIC_BODY"
+     ]
+    },
+    {
+     "value": "Vascular / CTA",
+     "display": "Vascular / CTA",
+     "applicable_protocol_types": [
+      "PEDIATRIC_BODY"
+     ]
+    },
+    {
+     "value": "Other: Please Specify",
+     "display": "Other: Please Specify",
+     "applicable_protocol_types": [
+      "PEDIATRIC_BODY"
+     ]
+    }
+   ]
+  },
+  {
+   "key": "clinical_indication_adult",
+   "label": "Clinical Indication – Adult / Young Adult",
+   "options": [
+    {
+     "value": "Stroke / intracranial haemorrhage",
+     "display": "Stroke / intracranial haemorrhage",
+     "applicable_protocol_types": [
+      "YOUNG_ADULT"
+     ]
+    },
+    {
+     "value": "Head trauma",
+     "display": "Head trauma",
+     "applicable_protocol_types": [
+      "YOUNG_ADULT"
+     ]
+    },
+    {
+     "value": "Pulmonary embolism",
+     "display": "Pulmonary embolism",
+     "applicable_protocol_types": [
+      "YOUNG_ADULT"
+     ]
+    },
+    {
+     "value": "HRCT chest / ILD",
+     "display": "HRCT chest / ILD",
+     "applicable_protocol_types": [
+      "YOUNG_ADULT"
+     ]
+    },
+    {
+     "value": "Lung cancer staging",
+     "display": "Lung cancer staging",
+     "applicable_protocol_types": [
+      "YOUNG_ADULT"
+     ]
+    },
+    {
+     "value": "Oncology staging",
+     "display": "Oncology staging",
+     "applicable_protocol_types": [
+      "YOUNG_ADULT"
+     ]
+    },
+    {
+     "value": "Oncology follow-up",
+     "display": "Oncology follow-up",
+     "applicable_protocol_types": [
+      "YOUNG_ADULT"
+     ]
+    },
+    {
+     "value": "Acute abdomen",
+     "display": "Acute abdomen",
+     "applicable_protocol_types": [
+      "YOUNG_ADULT"
+     ]
+    },
+    {
+     "value": "Appendicitis",
+     "display": "Appendicitis",
+     "applicable_protocol_types": [
+      "YOUNG_ADULT"
+     ]
+    },
+    {
+     "value": "Renal colic",
+     "display": "Renal colic",
+     "applicable_protocol_types": [
+      "YOUNG_ADULT"
+     ]
+    },
+    {
+     "value": "Aortic dissection / CTA",
+     "display": "Aortic dissection / CTA",
+     "applicable_protocol_types": [
+      "YOUNG_ADULT"
+     ]
+    },
+    {
+     "value": "Polytrauma",
+     "display": "Polytrauma",
+     "applicable_protocol_types": [
+      "YOUNG_ADULT"
+     ]
+    },
+    {
+     "value": "Liver lesion",
+     "display": "Liver lesion",
+     "applicable_protocol_types": [
+      "YOUNG_ADULT"
+     ]
+    },
+    {
+     "value": "Pancreas protocol",
+     "display": "Pancreas protocol",
+     "applicable_protocol_types": [
+      "YOUNG_ADULT"
+     ]
+    },
+    {
+     "value": "CT colonography",
+     "display": "CT colonography",
+     "applicable_protocol_types": [
+      "YOUNG_ADULT"
+     ]
+    },
+    {
+     "value": "Other: Please Specify",
+     "display": "Other: Please Specify",
+     "applicable_protocol_types": [
+      "YOUNG_ADULT"
+     ]
+    }
+   ]
+  },
+  {
+   "key": "anatomical_region",
+   "label": "Anatomical Region",
+   "options": [
+    {
+     "value": "Brain",
+     "display": "Brain",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Head",
+     "display": "Head",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Head and neck",
+     "display": "Head and neck",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Sinuses",
+     "display": "Sinuses",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Temporal bone",
+     "display": "Temporal bone",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Maxillofacial",
+     "display": "Maxillofacial",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Neck",
+     "display": "Neck",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Cervical spine",
+     "display": "Cervical spine",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Chest",
+     "display": "Chest",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "HRCT chest",
+     "display": "HRCT chest",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Chest and upper abdomen",
+     "display": "Chest and upper abdomen",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Abdomen",
+     "display": "Abdomen",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Pelvis",
+     "display": "Pelvis",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Abdomen and pelvis",
+     "display": "Abdomen and pelvis",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Chest-abdomen-pelvis",
+     "display": "Chest-abdomen-pelvis",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Extremity",
+     "display": "Extremity",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Cardiac",
+     "display": "Cardiac",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Vascular",
+     "display": "Vascular",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Whole body / trauma",
+     "display": "Whole body / trauma",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Other: Please Specify",
+     "display": "Other: Please Specify",
+     "applicable_protocol_types": []
+    }
+   ]
+  },
+  {
+   "key": "scan_type",
+   "label": "Scan Type",
+   "options": [
+    {
+     "value": "Sequential / axial",
+     "display": "Sequential / axial",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Helical / spiral",
+     "display": "Helical / spiral",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Dynamic / perfusion",
+     "display": "Dynamic / perfusion",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "CTA",
+     "display": "CTA",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Multiphase",
+     "display": "Multiphase",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Low-dose",
+     "display": "Low-dose",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Ultra-low-dose",
+     "display": "Ultra-low-dose",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "HRCT",
+     "display": "HRCT",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Dual-energy / spectral",
+     "display": "Dual-energy / spectral",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Cardiac gated",
+     "display": "Cardiac gated",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Other: Please Specify",
+     "display": "Other: Please Specify",
+     "applicable_protocol_types": []
+    }
+   ]
+  },
+  {
+   "key": "contrast",
+   "label": "Contrast",
+   "options": [
+    {
+     "value": "No contrast",
+     "display": "No contrast",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "IV contrast only",
+     "display": "IV contrast only",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Oral contrast only",
+     "display": "Oral contrast only",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "IV + oral contrast",
+     "display": "IV + oral contrast",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Rectal contrast",
+     "display": "Rectal contrast",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Arterial phase",
+     "display": "Arterial phase",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Portal venous phase",
+     "display": "Portal venous phase",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Delayed phase",
+     "display": "Delayed phase",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "CT urography",
+     "display": "CT urography",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "CTA",
+     "display": "CTA",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "CTPA",
+     "display": "CTPA",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Other: Please Specify",
+     "display": "Other: Please Specify",
+     "applicable_protocol_types": []
+    }
+   ]
+  },
+  {
+   "key": "number_of_phases",
+   "label": "Number of Phases",
+   "options": [
+    {
+     "value": "1",
+     "display": "1",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "2",
+     "display": "2",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "3",
+     "display": "3",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "4",
+     "display": "4",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "5",
+     "display": "5",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": ">5 / dynamic",
+     "display": ">5 / dynamic",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Other: Please Specify",
+     "display": "Other: Please Specify",
+     "applicable_protocol_types": []
+    }
+   ]
+  },
+  {
+   "key": "auto_kvp_selection",
+   "label": "Automatic kVp Selection",
+   "options": [
+    {
+     "value": "Off",
+     "display": "Off",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Canon SUREkV",
+     "display": "Canon SUREkV",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "GE kV Assist",
+     "display": "GE kV Assist",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Philips DoseRight / automatic kV if available",
+     "display": "Philips DoseRight / automatic kV if available",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Siemens CARE kV",
+     "display": "Siemens CARE kV",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Siemens CARE kV Semi",
+     "display": "Siemens CARE kV Semi",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Tin filter / Sn mode",
+     "display": "Tin filter / Sn mode",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Other: Please Specify",
+     "display": "Other: Please Specify",
+     "applicable_protocol_types": []
+    }
+   ]
+  },
+  {
+   "key": "kvp",
+   "label": "kVp",
+   "options": [
+    {
+     "value": "70",
+     "display": "70",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "80",
+     "display": "80",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "90",
+     "display": "90",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "100",
+     "display": "100",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "110",
+     "display": "110",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "120",
+     "display": "120",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "130",
+     "display": "130",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "135",
+     "display": "135",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "140",
+     "display": "140",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "150",
+     "display": "150",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Sn100",
+     "display": "Sn100",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Sn110",
+     "display": "Sn110",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Sn140",
+     "display": "Sn140",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Sn150",
+     "display": "Sn150",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Dual energy / spectral",
+     "display": "Dual energy / spectral",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Other: Please Specify",
+     "display": "Other: Please Specify",
+     "applicable_protocol_types": []
+    }
+   ]
+  },
+  {
+   "key": "auto_ma_modulation",
+   "label": "Automatic mA Modulation",
+   "options": [
+    {
+     "value": "Off",
+     "display": "Off",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Canon SUREExposure 3D",
+     "display": "Canon SUREExposure 3D",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Canon Volume EC",
+     "display": "Canon Volume EC",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "GE Auto mA",
+     "display": "GE Auto mA",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "GE Smart mA",
+     "display": "GE Smart mA",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "GE Auto mA + Smart mA",
+     "display": "GE Auto mA + Smart mA",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "GE Organ Dose Modulation",
+     "display": "GE Organ Dose Modulation",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Philips DoseRight",
+     "display": "Philips DoseRight",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Philips Z-DOM",
+     "display": "Philips Z-DOM",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Philips D-DOM",
+     "display": "Philips D-DOM",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Philips 3D-DOM",
+     "display": "Philips 3D-DOM",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Philips DoseRight 3D-DOM",
+     "display": "Philips DoseRight 3D-DOM",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Siemens CARE Dose4D",
+     "display": "Siemens CARE Dose4D",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Siemens X-CARE / organ dose modulation",
+     "display": "Siemens X-CARE / organ dose modulation",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Siemens CARE Dose4D + X-CARE",
+     "display": "Siemens CARE Dose4D + X-CARE",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Other: Please Specify",
+     "display": "Other: Please Specify",
+     "applicable_protocol_types": []
+    }
+   ]
+  },
+  {
+   "key": "exposure_metric",
+   "label": "Exposure Metric / mAs Reference",
+   "options": [
+    {
+     "value": "Fixed mAs",
+     "display": "Fixed mAs",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Effective mAs",
+     "display": "Effective mAs",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Quality reference mAs",
+     "display": "Quality reference mAs",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Reference mAs",
+     "display": "Reference mAs",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Noise index",
+     "display": "Noise index",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Standard deviation",
+     "display": "Standard deviation",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "DoseRight index",
+     "display": "DoseRight index",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Dose modulation index",
+     "display": "Dose modulation index",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "min mA / max mA",
+     "display": "min mA / max mA",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Other: Please Specify",
+     "display": "Other: Please Specify",
+     "applicable_protocol_types": []
+    }
+   ]
+  },
+  {
+   "key": "pitch",
+   "label": "Pitch",
+   "options": [
+    {
+     "value": "N/A sequential",
+     "display": "N/A sequential",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "0.35-0.5",
+     "display": "0.35-0.5",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "0.5-0.8",
+     "display": "0.5-0.8",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "0.8-1.2",
+     "display": "0.8-1.2",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "1.2-1.5",
+     "display": "1.2-1.5",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": ">1.5",
+     "display": ">1.5",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Other: Please Specify",
+     "display": "Other: Please Specify",
+     "applicable_protocol_types": []
+    }
+   ]
+  },
+  {
+   "key": "rotation_time",
+   "label": "Rotation Time (s)",
+   "options": [
+    {
+     "value": "0.25",
+     "display": "0.25",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "0.28",
+     "display": "0.28",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "0.33",
+     "display": "0.33",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "0.35",
+     "display": "0.35",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "0.4",
+     "display": "0.4",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "0.5",
+     "display": "0.5",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "0.6",
+     "display": "0.6",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "0.75",
+     "display": "0.75",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "1",
+     "display": "1",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "1.5",
+     "display": "1.5",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Other: Please Specify",
+     "display": "Other: Please Specify",
+     "applicable_protocol_types": []
+    }
+   ]
+  },
+  {
+   "key": "slice_thickness",
+   "label": "Slice Thickness 1st Recon (mm)",
+   "options": [
+    {
+     "value": "0.5",
+     "display": "0.5",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "0.625",
+     "display": "0.625",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "0.75",
+     "display": "0.75",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "1",
+     "display": "1",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "1.25",
+     "display": "1.25",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "2",
+     "display": "2",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "2.5",
+     "display": "2.5",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "3",
+     "display": "3",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "5",
+     "display": "5",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Other: Please Specify",
+     "display": "Other: Please Specify",
+     "applicable_protocol_types": []
+    }
+   ]
+  },
+  {
+   "key": "scan_fov",
+   "label": "Scan Field of View",
+   "options": [
+    {
+     "value": "Small head",
+     "display": "Small head",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Head",
+     "display": "Head",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Large head",
+     "display": "Large head",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Pediatric body",
+     "display": "Pediatric body",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Small body",
+     "display": "Small body",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Medium body",
+     "display": "Medium body",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Large body",
+     "display": "Large body",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Cardiac",
+     "display": "Cardiac",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Extremity",
+     "display": "Extremity",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Other: Please Specify",
+     "display": "Other: Please Specify",
+     "applicable_protocol_types": []
+    }
+   ]
+  },
+  {
+   "key": "kernel_class",
+   "label": "Generic Kernel Class",
+   "options": [
+    {
+     "value": "Very soft",
+     "display": "Very soft",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Soft tissue",
+     "display": "Soft tissue",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Standard",
+     "display": "Standard",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Detail",
+     "display": "Detail",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Lung",
+     "display": "Lung",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Bone",
+     "display": "Bone",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Edge / high-resolution",
+     "display": "Edge / high-resolution",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Vascular",
+     "display": "Vascular",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Cardiac",
+     "display": "Cardiac",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Iterative kernel",
+     "display": "Iterative kernel",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Other: Please Specify",
+     "display": "Other: Please Specify",
+     "applicable_protocol_types": []
+    }
+   ]
+  },
+  {
+   "key": "reconstruction_algorithm",
+   "label": "Reconstruction Algorithm Generic",
+   "options": [
+    {
+     "value": "Filtered back projection",
+     "display": "Filtered back projection",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Hybrid iterative reconstruction",
+     "display": "Hybrid iterative reconstruction",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Model-based iterative reconstruction",
+     "display": "Model-based iterative reconstruction",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Deep-learning reconstruction",
+     "display": "Deep-learning reconstruction",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Spectral / monoenergetic reconstruction",
+     "display": "Spectral / monoenergetic reconstruction",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Metal artefact reduction",
+     "display": "Metal artefact reduction",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Other: Please Specify",
+     "display": "Other: Please Specify",
+     "applicable_protocol_types": []
+    }
+   ]
+  },
+  {
+   "key": "protocol_intent",
+   "label": "Protocol Intent / Optimization Goal",
+   "options": [
+    {
+     "value": "Routine diagnostic",
+     "display": "Routine diagnostic",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Low-dose",
+     "display": "Low-dose",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Ultra-low-dose",
+     "display": "Ultra-low-dose",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "High-resolution",
+     "display": "High-resolution",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Vascular CTA",
+     "display": "Vascular CTA",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Oncology staging",
+     "display": "Oncology staging",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Follow-up surveillance",
+     "display": "Follow-up surveillance",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Trauma",
+     "display": "Trauma",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Pediatric optimized",
+     "display": "Pediatric optimized",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Metal artefact reduction",
+     "display": "Metal artefact reduction",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Other: Please Specify",
+     "display": "Other: Please Specify",
+     "applicable_protocol_types": []
+    }
+   ]
+  },
+  {
+   "key": "dose_metadata",
+   "label": "Dose-Relevant Metadata Availability",
+   "options": [
+    {
+     "value": "CTDIvol recorded",
+     "display": "CTDIvol recorded",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "DLP recorded",
+     "display": "DLP recorded",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "SSDE possible",
+     "display": "SSDE possible",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Patient weight recorded",
+     "display": "Patient weight recorded",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Patient height recorded",
+     "display": "Patient height recorded",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Water-equivalent diameter available",
+     "display": "Water-equivalent diameter available",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Localizer available",
+     "display": "Localizer available",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "RDSR available",
+     "display": "RDSR available",
+     "applicable_protocol_types": []
+    },
+    {
+     "value": "Other: Please Specify",
+     "display": "Other: Please Specify",
+     "applicable_protocol_types": []
+    }
+   ]
+  },
+  {
+   "key": "age_group_pediatric_head",
+   "label": "Age Group – Pediatric Head",
+   "options": [
+    {
+     "value": "lt_3m",
+     "display": "< 3 months",
+     "applicable_protocol_types": [
+      "PEDIATRIC_HEAD"
+     ]
+    },
+    {
+     "value": "3m_1y",
+     "display": "3 months – 1 year",
+     "applicable_protocol_types": [
+      "PEDIATRIC_HEAD"
+     ]
+    },
+    {
+     "value": "1y_6y",
+     "display": "1 year – 6 years",
+     "applicable_protocol_types": [
+      "PEDIATRIC_HEAD"
+     ]
+    },
+    {
+     "value": "gt_6y",
+     "display": "> 6 years",
+     "applicable_protocol_types": [
+      "PEDIATRIC_HEAD"
+     ]
+    }
+   ]
+  },
+  {
+   "key": "age_group_pediatric_body",
+   "label": "Weight Group – Pediatric Body",
+   "options": [
+    {
+     "value": "lt_5kg",
+     "display": "< 5 kg",
+     "applicable_protocol_types": [
+      "PEDIATRIC_BODY"
+     ]
+    },
+    {
+     "value": "5_15kg",
+     "display": "5 kg – 15 kg",
+     "applicable_protocol_types": [
+      "PEDIATRIC_BODY"
+     ]
+    },
+    {
+     "value": "15_30kg",
+     "display": "15 kg – 30 kg",
+     "applicable_protocol_types": [
+      "PEDIATRIC_BODY"
+     ]
+    },
+    {
+     "value": "30_50kg",
+     "display": "30 kg – 50 kg",
+     "applicable_protocol_types": [
+      "PEDIATRIC_BODY"
+     ]
+    },
+    {
+     "value": "50_80kg",
+     "display": "50 kg – 80 kg",
+     "applicable_protocol_types": [
+      "PEDIATRIC_BODY"
+     ]
+    }
+   ]
+  },
+  {
+   "key": "age_group_young_adult",
+   "label": "Age/Weight Group – Young Adult",
+   "options": [
+    {
+     "value": "gt_80kg",
+     "display": "> 80 kg",
+     "applicable_protocol_types": [
+      "YOUNG_ADULT"
+     ]
+    }
+   ]
+  },
+  {
+   "key": "examination_group_pediatric_head",
+   "label": "Examination Group – Pediatric Head",
+   "options": [
+    {
+     "value": "Group 1 – Neonate",
+     "display": "Group 1 – Neonate",
+     "applicable_protocol_types": [
+      "PEDIATRIC_HEAD"
+     ]
+    },
+    {
+     "value": "Group 2 – Infant",
+     "display": "Group 2 – Infant",
+     "applicable_protocol_types": [
+      "PEDIATRIC_HEAD"
+     ]
+    },
+    {
+     "value": "Group 3 – Early Childhood",
+     "display": "Group 3 – Early Childhood",
+     "applicable_protocol_types": [
+      "PEDIATRIC_HEAD"
+     ]
+    },
+    {
+     "value": "Group 4 – Childhood",
+     "display": "Group 4 – Childhood",
+     "applicable_protocol_types": [
+      "PEDIATRIC_HEAD"
+     ]
+    }
+   ]
+  },
+  {
+   "key": "examination_group_pediatric_body",
+   "label": "Examination Group – Pediatric Body",
+   "options": [
+    {
+     "value": "Group 1 – Neonate",
+     "display": "Group 1 – Neonate",
+     "applicable_protocol_types": [
+      "PEDIATRIC_BODY"
+     ]
+    },
+    {
+     "value": "Group 2 – Infant, Toddler and Early Childhood",
+     "display": "Group 2 – Infant, Toddler and Early Childhood",
+     "applicable_protocol_types": [
+      "PEDIATRIC_BODY"
+     ]
+    },
+    {
+     "value": "Group 3 – Childhood",
+     "display": "Group 3 – Childhood",
+     "applicable_protocol_types": [
+      "PEDIATRIC_BODY"
+     ]
+    },
+    {
+     "value": "Group 4 – Early Adolescence",
+     "display": "Group 4 – Early Adolescence",
+     "applicable_protocol_types": [
+      "PEDIATRIC_BODY"
+     ]
+    },
+    {
+     "value": "Group 5 – Adolescence",
+     "display": "Group 5 – Adolescence",
+     "applicable_protocol_types": [
+      "PEDIATRIC_BODY"
+     ]
+    }
+   ]
+  },
+  {
+   "key": "examination_group_young_adult",
+   "label": "Examination Group – Young Adult",
+   "options": [
+    {
+     "value": "Group 6 – Adolescence & Young Adulthood",
+     "display": "Group 6 – Adolescence & Young Adulthood",
+     "applicable_protocol_types": [
+      "YOUNG_ADULT"
+     ]
+    }
+   ]
+  }
+ ],
+ "manufacturer_field_options": {
+  "Canon Medical": {
+   "auto_kvp_selection": [
+    "Off",
+    "Sure kV",
+    "Other: Please Specify"
+   ],
+   "auto_ma_modulation": [
+    "Off",
+    "SureExposure",
+    "Other: Please Specify"
+   ]
+  },
+  "GE HealthCare": {
+   "auto_kvp_selection": [
+    "Off",
+    "kV Assist",
+    "Other: Please Specify"
+   ],
+   "auto_ma_modulation": [
+    "Off",
+    "AutomA",
+    "SmartmA",
+    "Other: Please Specify"
+   ]
+  },
+  "Philips": {
+   "auto_kvp_selection": [
+    "Off",
+    "Dose Right",
+    "Other: Please Specify"
+   ],
+   "auto_ma_modulation": [
+    "Off",
+    "Doseright",
+    "3D Modulation",
+    "Other: Please Specify"
+   ]
+  },
+  "Siemens Healthineers": {
+   "auto_kvp_selection": [
+    "Off",
+    "CarekV",
+    "CarekV Semi",
+    "Other: Please Specify"
+   ],
+   "auto_ma_modulation": [
+    "Off",
+    "CareDose",
+    "CareDose4D",
+    "Other: Please Specify"
+   ]
+  },
+  "Fujifilm / Hitachi": {
+   "auto_kvp_selection": [
+    "Off",
+    "Auto kV",
+    "Other: Please Specify"
+   ],
+   "auto_ma_modulation": [
+    "Off",
+    "3D Modulation On",
+    "3D Modulation Off",
+    "Intelli EC",
+    "Intelli EC Plus",
+    "Other: Please Specify"
+   ]
+  },
+  "MinFound Medical": {
+   "auto_kvp_selection": [
+    "Off",
+    "Other: Please Specify"
+   ],
+   "auto_ma_modulation": [
+    "Off",
+    "imA Intelligent mA Modulation",
+    "imA Intelligent Dose Control",
+    "Other: Please Specify"
+   ]
+  },
+  "Neusoft Medical": {
+   "auto_kvp_selection": [
+    "Off",
+    "AutoKV – Soft Tissue",
+    "AutoKV – Bone",
+    "AutoKV – Patient Size",
+    "Other: Please Specify"
+   ],
+   "auto_ma_modulation": [
+    "Off",
+    "DoseRight",
+    "DoseSave Level",
+    "Other: Please Specify"
+   ]
+  },
+  "Samsung NeuroLogica": {
+   "auto_kvp_selection": [
+    "Off",
+    "Auto kV",
+    "Other: Please Specify"
+   ],
+   "auto_ma_modulation": [
+    "Off",
+    "AEC",
+    "Other: Please Specify"
+   ]
+  },
+  "United Imaging": {
+   "auto_kvp_selection": [
+    "Off",
+    "Auto kV",
+    "Other: Please Specify"
+   ],
+   "auto_ma_modulation": [
+    "Off",
+    "uDose 3D Dose Modulation",
+    "Auto ALARA mA",
+    "Other: Please Specify"
+   ]
+  }
+ },
+ "ma_modulation_inputs": {
+  "Off": [
+   "mA"
+  ],
+  "SureExposure": [
+   "Min mA",
+   "Max mA",
+   "Standard Deviation"
+  ],
+  "AutomA": [
+   "Min mA",
+   "Max mA",
+   "Noise Index"
+  ],
+  "SmartmA": [
+   "Min mA",
+   "Max mA",
+   "Noise Index"
+  ],
+  "Doseright": [
+   "Reference mAs",
+   "Dose Right Index"
+  ],
+  "3D Modulation": [
+   "Reference mAs",
+   "Dose Right Index"
+  ],
+  "CareDose": [
+   "Effective mAs"
+  ],
+  "CareDose4D": [
+   "Quality Reference mAs (QR mAs)"
+  ],
+  "3D Modulation On": [
+   "Min mA",
+   "Max mA"
+  ],
+  "3D Modulation Off": [
+   "Min mA",
+   "Max mA"
+  ],
+  "Intelli EC": [
+   "Noise SD target",
+   "Min mA",
+   "Max mA"
+  ],
+  "Intelli EC Plus": [
+   "Noise SD target",
+   "Min mA",
+   "Max mA"
+  ],
+  "imA Intelligent mA Modulation": [
+   "Min mA",
+   "Max mA"
+  ],
+  "imA Intelligent Dose Control": [
+   "Min mA",
+   "Max mA"
+  ],
+  "DoseRight": [
+   "Reference mAs",
+   "Dose Right Index"
+  ],
+  "DoseSave Level": [
+   "DoseSave Level",
+   "Min mA",
+   "Max mA",
+   "Modulation type"
+  ],
+  "AEC": [
+   "Desired noise level",
+   "Min mA",
+   "Max mA"
+  ],
+  "uDose 3D": [
+   "Min mA",
+   "Max mA",
+   "Patient size / attenuation"
+  ],
+  "uDose 3D Dose Modulation": [
+   "Min mA",
+   "Max mA",
+   "Patient size / attenuation"
+  ],
+  "Auto ALARA mA": [
+   "Min mA",
+   "Max mA",
+   "Patient size / attenuation"
+  ],
+  "Other: Please Specify": [
+   "mA"
+  ]
+ }
+}

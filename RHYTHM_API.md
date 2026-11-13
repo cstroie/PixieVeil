@@ -154,6 +154,37 @@ Other upload endpoints, not used yet:
 | `GET protocols-api/by-type/?protocol_type=` | protocols of one type |
 | `GET protocol-choices/`, `protocol-choices/by-key/{key}/`, `protocol-choices/{id}/options/?protocol_type=` | the allowed values for protocol fields |
 
+**Creating a protocol** (used by PixieVeil's *Draft protocol from study*):
+`POST protocols-api/` with `scanner` (profile id), `protocol_type`
+(`PEDIATRIC_HEAD` / `PEDIATRIC_BODY` / `YOUNG_ADULT`), `age_group`, `protocol_name`,
+`anatomical_region`, `clinical_indication`, `scan_type`, `contrast`,
+`number_of_phases`, `auto_kvp_selection`, `kvp`, `auto_ma_modulation`, `mas_inputs`
+(`{label: value}`), `pitch`, `rotation_time`, `slice_thickness`, `scan_fov`,
+`kernel_class`, `reconstruction_algorithm`, `protocol_intent`, `notes` → `201` with
+the record (`id`). `site_code` and `created_by` come from the token's user. Caveats
+in the vendored code:
+- the API does **not** check values against the option lists, and does **not**
+  check for duplicates (RHYTHM's website does both), so PixieVeil checks both
+  before sending;
+- `examination_group` and `clinical_comments` are **not** part of the API
+  serializer. They are set only by RHYTHM's website save (`/protocols/api/save/`,
+  which needs a browser session), so set the examination group on RHYTHM's site
+  afterwards.
+
+**Protocol options:** `GET protocol-choices/` →
+`[{key, label, options: [{value, display, applicable_protocol_types}]}]`. Keys are
+`scan_type`, `contrast`, `number_of_phases`, `auto_kvp_selection`, `kvp`,
+`auto_ma_modulation`, `pitch` (ranges such as `0.5-0.8`), `rotation_time`,
+`slice_thickness`, `scan_fov`, `kernel_class`, `reconstruction_algorithm`,
+`protocol_intent`, `age_group_pediatric_head` (`lt_3m`, `3m_1y`, `1y_6y`, `gt_6y`),
+`age_group_pediatric_body` (`lt_5kg` … `50_80kg`), `age_group_young_adult`
+(`gt_80kg`), `examination_group_*`, and others. Vendor-specific auto kV / mA
+lists (for example Siemens `CareDose4D`) and the mA inputs each modulation needs
+(CareDose4D → "Quality Reference mAs (QR mAs)") are **not** served by the API.
+PixieVeil keeps them, with an offline copy of all the options, in
+`pixieveil/dashboard/rhythm_choices.json` (generated from RHYTHM's
+`populate_protocol_choices.py`).
+
 **Pagination:** lists come 20 per page as `{"count", "next", "previous", "results"}`.
 Follow `next`, or ask for up to `?page_size=100`.
 

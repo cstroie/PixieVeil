@@ -55,7 +55,7 @@ include = ["pixieveil*"]
 # The dashboard serves these from disk next to its module — ship them in
 # non-editable installs too.
 [tool.setuptools.package-data]
-"pixieveil.dashboard" = ["templates/*.html", "static/*"]
+"pixieveil.dashboard" = ["templates/*.html", "static/*", "rhythm_choices.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

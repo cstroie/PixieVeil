@@ -27,6 +27,7 @@ the result so a caller can persist it, but a re-run starts a fresh session.
 import asyncio
 import hashlib
 import logging
+import time
 from urllib.parse import urlparse
 from dataclasses import dataclass
 from pathlib import Path
@@ -413,7 +414,8 @@ async def fetch_all(base_url: str, auth_token: str, path: str, *,
     response can't steer the token elsewhere. Raises :class:`RhythmApiError`."""
     base = base_url.rstrip("/")
     host = urlparse(base).netloc
-    url: str | None = f"{base}{path}?page_size={PAGE_SIZE}"
+    sep = "&" if "?" in path else "?"
+    url: str | None = f"{base}{path}{sep}page_size={PAGE_SIZE}"
     out: list[dict] = []
     headers = {"Authorization": f"Bearer {auth_token}"}
     try:
@@ -549,3 +551,81 @@ async def rhythm_verify_2fa(base_url: str, jar: aiohttp.CookieJar, code: str,
                             timeout_s: float = 15.0) -> dict[str, Any]:
     """Step 2: send the TOTP *code* in the session started by rhythm_login."""
     return await _auth_post(base_url, VERIFY_2FA_PATH, {"code": code}, jar, timeout_s)
+
+
+# -- protocol choices + creating a CTProtocol --------------------------------
+
+CHOICES_PATH = "/api/v1/protocol-choices/"
+CHOICES_TTL_S = 600.0
+_choices_cache: dict[str, tuple[float, list[dict]]] = {}
+
+
+async def fetch_choices(base_url: str, auth_token: str) -> list[dict]:
+    """RHYTHM's protocol option categories (``{key, label, options[...]}``),
+    cached per base URL for CHOICES_TTL_S. Raises RhythmApiError."""
+    key = base_url.rstrip("/")
+    hit = _choices_cache.get(key)
+    if hit and hit[0] > time.time():
+        return hit[1]
+    cats = await fetch_all(base_url, auth_token, CHOICES_PATH)
+    _choices_cache[key] = (time.time() + CHOICES_TTL_S, cats)
+    return cats
+
+
+async def _send_json(method: str, base_url: str, auth_token: str, path: str,
+                     payload: dict | None = None, timeout_s: float = 20.0) -> tuple[int, Any]:
+    url = f"{base_url.rstrip('/')}{path}"
+    headers = {"Authorization": f"Bearer {auth_token}"}
+    try:
+        async with aiohttp.ClientSession(
+            headers=headers, timeout=aiohttp.ClientTimeout(total=timeout_s)
+        ) as session:
+            async with session.request(method, url, json=payload) as resp:
+                return resp.status, await _json(resp)
+    except Exception as e:  # noqa: BLE001 - reported to the operator
+        logger.warning("RHYTHM %s %s failed: %s", method, url, e)
+        raise RhythmApiError(None, f"Cannot reach {base_url}: "
+                                   f"{e.__class__.__name__}: {e}") from None
+
+
+def _field_errors(body: Any) -> dict[str, str]:
+    if not isinstance(body, dict):
+        return {}
+    out = {}
+    for k, v in body.items():
+        out[str(k)] = " ".join(str(x) for x in v) if isinstance(v, list) else str(v)
+    return out
+
+
+async def create_protocol(base_url: str, auth_token: str, payload: dict) -> dict:
+    """POST a CTProtocol; returns the created record (with its ``id``).
+
+    RHYTHM's 400 field errors are raised as RhythmApiError with ``.errors``.
+    """
+    status, body = await _send_json("POST", base_url, auth_token, PROTOCOLS_PATH, payload)
+    if status in (200, 201) and isinstance(body, dict) and body.get("id"):
+        return body
+    err = RhythmApiError(status, f"RHYTHM refused the protocol (HTTP {status})"
+                         if status not in (401, 403) else
+                         f"RHYTHM rejected the token (HTTP {status})")
+    err.errors = _field_errors(body) if status == 400 else {}  # type: ignore[attr-defined]
+    raise err
+
+
+async def get_protocol(base_url: str, auth_token: str, protocol_id: str) -> dict | None:
+    """Read one CTProtocol back (None if it can't be read)."""
+    try:
+        status, body = await _send_json("GET", base_url, auth_token,
+                                        f"{PROTOCOLS_PATH}{protocol_id}/")
+    except RhythmApiError:
+        return None
+    return body if status == 200 and isinstance(body, dict) else None
+
+
+async def find_protocols(base_url: str, auth_token: str, scanner_id: str,
+                         protocol_type: str | None = None) -> list[dict]:
+    """The site's protocols on one scanner profile (optionally one type)."""
+    q = f"?scanner={scanner_id}" + (f"&protocol_type={protocol_type}" if protocol_type else "")
+    items = await fetch_all(base_url, auth_token, PROTOCOLS_PATH + q)
+    return [p for p in items if str(p.get("scanner")) == str(scanner_id)
+            and (not protocol_type or p.get("protocol_type") == protocol_type)]

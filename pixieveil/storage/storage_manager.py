@@ -1530,6 +1530,52 @@ class StorageManager:
         result["required_fields"] = exam_merge.required_paths(exam_data)
         return result
 
+    # Header tags the protocol draft can use (none of them identify a patient).
+    _DRAFT_TAGS = ("KVP", "ExposureModulationType", "DataCollectionDiameter",
+                   "ReconstructionDiameter", "ContrastBolusAgent", "ConvolutionKernel",
+                   "SliceThickness", "SpiralPitchFactor", "XRayTubeCurrent")
+
+    def protocol_draft_inputs_sync(self, study_number: int) -> Optional[tuple[dict, dict]]:
+        """(effective exam, headers) for drafting a protocol from a study.
+
+        *headers* holds :attr:`_DRAFT_TAGS` from the first non-localizer CT
+        image (while the study is still on disk) plus the pre-anonymization
+        scanner/protocol hints (Manufacturer, ManufacturerModelName,
+        ProtocolName, StudyDescription). None if the study has no exam record.
+        """
+        exam_path = ExamSidecar.path_for(self.base_path, study_number)
+        if not exam_path.exists():
+            return None
+        exam = ExamSidecar.load(exam_path).data
+        headers: dict = {}
+        study_dir, _loc = self.resolve_study_dir(study_number)
+        if study_dir is not None:
+            hints = (self._load_exam_hints_sync(study_dir) or {}).get("study") or {}
+            for k in ("Manufacturer", "ManufacturerModelName", "ProtocolName",
+                      "StudyDescription"):
+                if hints.get(k):
+                    headers[k] = hints[k]
+            for series_dir in sorted(p for p in study_dir.iterdir()
+                                     if p.is_dir() and not p.name.endswith("_pre_deface")):
+                first = next(iter(sorted(series_dir.glob("*.dcm"))), None)
+                if first is None:
+                    continue
+                try:
+                    ds = pydicom.dcmread(first, stop_before_pixels=True)
+                except Exception:
+                    logger.debug("Draft: unreadable %s", first, exc_info=True)
+                    continue
+                if str(getattr(ds, "SOPClassUID", "")) not in self._RHYTHM_CT_SOP_CLASSES:
+                    continue
+                if "LOCALIZER" in [str(v).upper() for v in (ds.get("ImageType") or [])]:
+                    continue
+                for tag in self._DRAFT_TAGS:
+                    value = ds.get(tag)
+                    if value not in (None, ""):
+                        headers[tag] = str(value)
+                break
+        return exam, headers
+
     async def manual_send_dicom(self, study_number: int) -> dict:
         """Send a study to the configured DICOM node at the user's request."""
         if study_number in self._manual_actions_in_progress:

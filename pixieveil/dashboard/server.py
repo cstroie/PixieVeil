@@ -34,7 +34,7 @@ from pixieveil.config import Settings, settings_editor
 from pixieveil.dashboard import options
 from pixieveil.dashboard.setup import SetupRoutes, SetupState
 from pixieveil.dicom_server.server import SUPPORTED_STORAGE_SOP_CLASSES
-from pixieveil.processing import exam_merge, protocol_catalog, rhythm_import
+from pixieveil.processing import exam_merge, protocol_catalog, protocol_draft, rhythm_import
 from pixieveil.storage import rhythm_storage as rhythm_storage_mod
 from pixieveil.storage.storage_manager import StorageManager
 
@@ -56,6 +56,7 @@ _VALID_ACTIONS = {
 
 _DASHBOARD_DIR = Path(__file__).parent
 _TEMPLATES_DIR = _DASHBOARD_DIR / "templates"
+_RHYTHM_CHOICES_FILE = _DASHBOARD_DIR / "rhythm_choices.json"
 _STATIC_DIR = _DASHBOARD_DIR / "static"
 
 # Distributions whose installed version /api/about reports. The second group
@@ -191,6 +192,8 @@ class Dashboard:
             web.get("/api/studies/{n}", self.handle_get_study),
             web.get("/api/studies/{n}/rhythm-manifest", self.handle_rhythm_manifest_one),
             web.put("/api/studies/{n}/exam", self.handle_save_exam),
+            web.get("/api/studies/{n}/protocol-draft", self.handle_protocol_draft_get),
+            web.post("/api/studies/{n}/protocol-draft", self.handle_protocol_draft_post),
             web.post("/api/studies/rhythm-batch", self.handle_rhythm_batch),
             web.post("/api/studies/{n}/actions/{action}", self.handle_study_action),
             web.static("/static", _STATIC_DIR),
@@ -677,6 +680,250 @@ class Dashboard:
                     f"rhythm_user={result.get('username')!r} paths={saved.changed}")
         return web.json_response({"ok": True, "username": result.get("username"),
                                   "restart_required": saved.restart_required})
+
+    # ------------------------------------------------------------ protocol draft
+    @staticmethod
+    def _bundled_choices() -> dict:
+        try:
+            return json.loads(_RHYTHM_CHOICES_FILE.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            logger.error(f"Cannot read {_RHYTHM_CHOICES_FILE}", exc_info=True)
+            return {"categories": []}
+
+    async def _draft_choices(self, base: str, token: str
+                             ) -> tuple[protocol_draft.Choices, str, Optional[str]]:
+        """RHYTHM's live protocol choices when reachable, else the bundled
+        snapshot. Vendor auto-kV/mA lists and mA input labels always come
+        from the snapshot (RHYTHM's API doesn't serve them)."""
+        bundled = await asyncio.to_thread(self._bundled_choices)
+        cats, source, err = bundled.get("categories") or [], "offline", None
+        if base and token:
+            try:
+                cats = await rhythm_storage_mod.fetch_choices(base, token)
+                source = "live"
+            except rhythm_storage_mod.RhythmApiError as e:
+                err = e.message
+        return (protocol_draft.Choices(cats, bundled.get("manufacturer_field_options"),
+                                       bundled.get("ma_modulation_inputs")), source, err)
+
+    @staticmethod
+    def _study_number(request: web.Request) -> int:
+        try:
+            return int(request.match_info["n"])
+        except ValueError:
+            raise web.HTTPBadRequest(text=json.dumps({"error": "invalid study number"}),
+                                     content_type="application/json")
+
+    async def handle_protocol_draft_get(self, request: web.Request) -> web.Response:
+        """A pre-filled local + RHYTHM protocol drafted from study {n}."""
+        self._require_admin(request)
+        n = self._study_number(request)
+        sm: StorageManager = request.app['storage_manager']
+        try:
+            inputs = await asyncio.to_thread(sm.protocol_draft_inputs_sync, n)
+        except Exception as e:  # noqa: BLE001 - corrupt sidecar: report, don't 500
+            logger.warning(f"Protocol draft for study {n}: {e}", exc_info=True)
+            return web.json_response({"error": "this study's exam record is unreadable — "
+                                               "re-extract it first"}, status=422)
+        if inputs is None:
+            return web.json_response({"error": "this study has no exam record yet"},
+                                     status=404)
+        exam, headers = inputs
+        base, token, _site = await self._rhythm_credentials(sm)
+        choices, source, choices_err = await self._draft_choices(base, token)
+        doc = await asyncio.to_thread(sm.protocol_catalog.document)
+        draft = protocol_draft.draft_from_exam(exam, headers, choices, doc, n)
+
+        profiles: list[dict] = []
+        profile_match = None
+        existing: list[dict] = []
+        rhythm_error = choices_err
+        if base and token:
+            try:
+                profiles = await rhythm_storage_mod.fetch_all(
+                    base, token, rhythm_storage_mod.PROFILES_PATH)
+                probe = {"manufacturer": headers.get("Manufacturer")
+                         or (exam.get("scanner") or {}).get("manufacturer"),
+                         "model": headers.get("ManufacturerModelName")
+                         or (exam.get("scanner") or {}).get("model")}
+                exact = [p["id"] for p in profiles
+                         if rhythm_import._scanner_score(probe, p) == 2]
+                profile_match = exact[0] if len(exact) == 1 else None
+                ptype = draft["rhythm"]["fields"]["protocol_type"]["value"]
+                if profile_match:
+                    found = await rhythm_storage_mod.find_protocols(
+                        base, token, profile_match, ptype)
+                    want = rhythm_import.protocol_key(draft["rhythm"]["protocol_name"])
+                    ag = draft["rhythm"]["fields"]["age_group"]["value"]
+                    existing = [{"id": p.get("id"), "protocol_name": p.get("protocol_name"),
+                                 "protocol_type": p.get("protocol_type"),
+                                 "age_group": p.get("age_group")}
+                                for p in found
+                                if rhythm_import.protocol_key(p.get("protocol_name")) == want
+                                or (ag and p.get("age_group") == ag)]
+            except rhythm_storage_mod.RhythmApiError as e:
+                rhythm_error = e.message
+        return web.json_response({
+            "study": n, "draft": draft, "choices": choices.to_dict(),
+            "choices_source": source, "rhythm_configured": bool(base and token),
+            "rhythm_base_url": base or None, "rhythm_error": rhythm_error,
+            "profiles": [{"id": p.get("id"), "manufacturer": p.get("manufacturer_name"),
+                          "model": p.get("scanner_model_name"),
+                          "detector_rows": p.get("detector_rows")} for p in profiles],
+            "profile_match": profile_match, "existing": existing,
+            "catalog_version": sm.protocol_catalog.version,
+            "region_indications": options.REGION_INDICATIONS,
+            "iv_contrast": options.IV_CONTRAST,
+            "local_scanners": [{"id": sc.get("id"), "name": sc.get("name")
+                                or f"{sc.get('manufacturer', '')} {sc.get('model', '')}".strip()
+                                or "Any scanner"} for sc in doc.get("scanners") or []],
+        })
+
+    @staticmethod
+    def _validate_local(local: Any, doc: dict) -> dict[str, str]:
+        errors: dict[str, str] = {}
+        if not isinstance(local, dict):
+            return {"local": "missing local protocol"}
+        names = [str(x).strip() for x in local.get("names") or [] if str(x).strip()]
+        if not names:
+            errors["local.names"] = "At least one matching name is needed"
+        sid = local.get("scanner_id")
+        new = local.get("new_scanner") or {}
+        if sid:
+            if not any(s.get("id") == sid for s in doc.get("scanners") or []):
+                errors["local.scanner_id"] = "Unknown local scanner"
+        elif not (str(new.get("manufacturer") or "").strip()
+                  and str(new.get("model") or "").strip()):
+            errors["local.scanner_id"] = "Choose a local scanner or give manufacturer + model"
+        region, ci = local.get("region"), local.get("clinical_indication")
+        if region or ci:
+            ok = any(c["region"] == region and c["indication"] == ci
+                     for c in options.REGION_INDICATIONS)
+            if not ok:
+                errors["local.region"] = "Not one of RHYTHM's region/indication combinations"
+        iv = local.get("iv_contrast")
+        if iv and iv not in options.IV_CONTRAST:
+            errors["local.iv_contrast"] = "Unknown contrast value"
+        return errors
+
+    @staticmethod
+    def _apply_local(doc: dict, local: dict, rhythm_id: str) -> tuple[dict, str]:
+        """Put the protocol (with *rhythm_id*) into catalog *doc*; returns
+        (doc, protocol key). An existing protocol with one of the names on
+        that scanner gets the UUID (and empty fields filled) instead."""
+        scanners = doc.setdefault("scanners", [])
+        sid = local.get("scanner_id")
+        scanner = next((s for s in scanners if s.get("id") == sid), None) if sid else None
+        if scanner is None:
+            new = local.get("new_scanner") or {}
+            taken = {s.get("id") for s in scanners}
+            base_id = protocol_catalog.slugify(
+                f"{new.get('manufacturer', '')} {new.get('model', '')}") or "scanner"
+            new_id, i = base_id, 2
+            while new_id in taken:
+                new_id, i = f"{base_id}-{i}", i + 1
+            scanner = {"id": new_id,
+                       "name": new.get("name") or f"{new.get('manufacturer')} {new.get('model')}",
+                       "manufacturer": new.get("manufacturer"), "model": new.get("model"),
+                       "rhythm_scanner_id": None, "protocols": []}
+            scanners.append(scanner)
+        protos = scanner.setdefault("protocols", [])
+        names = [str(x).strip() for x in local.get("names") or [] if str(x).strip()]
+        wanted = {protocol_catalog.normalize_name(x) for x in names}
+        hit = next((p for p in protos
+                    if wanted & {protocol_catalog.normalize_name(x)
+                                 for x in p.get("names") or []}), None)
+        fields = {"region": local.get("region") or None,
+                  "clinical_indication": local.get("clinical_indication") or None,
+                  "iv_contrast": local.get("iv_contrast") or None}
+        if hit is not None:
+            hit["rhythm_uuid"] = rhythm_id
+            for k, v in fields.items():
+                if v and not hit.get(k):
+                    hit[k] = v
+            return doc, hit["key"]
+        taken = {p.get("key") for s in scanners for p in s.get("protocols") or []}
+        key_base = protocol_catalog.slugify(local.get("key") or names[0]) or "protocol"
+        key, i = key_base, 2
+        while key in taken:
+            key, i = f"{key_base}-{i}", i + 1
+        protos.append({"key": key, "label": local.get("label") or names[0], "names": names,
+                       "rhythm_uuid": rhythm_id, **fields, "notes": ""})
+        return doc, key
+
+    async def handle_protocol_draft_post(self, request: web.Request) -> web.Response:
+        """Create the RHYTHM protocol (or link ``use_existing``) and add the
+        local protocol with its UUID. Everything is validated first; RHYTHM is
+        called only when the whole submission is valid."""
+        self._require_admin(request)
+        n = self._study_number(request)
+        sm: StorageManager = request.app['storage_manager']
+        body = await self._json_body(request)
+        base, token, _site = await self._rhythm_credentials(sm)
+        if not base or not token:
+            return web.json_response(
+                {"error": "Set the RHYTHM base URL and API token on Settings first"},
+                status=409)
+        catalog = sm.protocol_catalog
+        doc = await asyncio.to_thread(catalog.document)
+        local = body.get("local") or {}
+        errors = self._validate_local(local, doc)
+        use_existing = str(body.get("use_existing") or "").strip() or None
+        payload: dict = {}
+        if use_existing:
+            if protocol_catalog.is_pending_uuid(use_existing) or not re.fullmatch(
+                    r"[0-9a-fA-F-]{32,36}", use_existing):
+                errors["use_existing"] = "Not a protocol UUID"
+        else:
+            choices, _src, _err = await self._draft_choices(base, token)
+            payload, rerr = protocol_draft.validate_submission(body.get("rhythm") or {},
+                                                               choices)
+            errors.update({f"rhythm.{k}": v for k, v in rerr.items()})
+        if errors:
+            return web.json_response({"error": "invalid draft", "errors": errors}, status=400)
+
+        warnings: list[str] = []
+        if use_existing:
+            rhythm_id = use_existing
+        else:
+            try:
+                record = await rhythm_storage_mod.create_protocol(base, token, payload)
+            except rhythm_storage_mod.RhythmApiError as e:
+                errs = getattr(e, "errors", {}) or {}
+                return web.json_response(
+                    {"error": e.message, "errors": {f"rhythm.{k}": v for k, v in errs.items()}},
+                    status=400 if e.status == 400 else 502)
+            rhythm_id = str(record["id"])
+            logger.info(f"Audit: user={self._actor(request)} action=rhythm_protocol_created "
+                        f"study={n} rhythm_id={rhythm_id}")
+            back = await rhythm_storage_mod.get_protocol(base, token, rhythm_id) or record
+            for k in ("examination_group", "age_group", "protocol_type"):
+                if payload.get(k) and back.get(k) != payload[k] and k in back:
+                    warnings.append(f"RHYTHM stored {k} = {back.get(k)!r}")
+            if payload.get("examination_group") and "examination_group" not in back:
+                warnings.append("RHYTHM's API did not store the examination group — set it on "
+                                "RHYTHM's Protocol Records page for this protocol")
+
+        try:
+            new_doc, key = self._apply_local(doc, local, rhythm_id)
+            await asyncio.to_thread(catalog.replace, new_doc,
+                                    expected_version=catalog.version)
+        except (protocol_catalog.CatalogError, OSError) as e:
+            logger.error(f"RHYTHM protocol {rhythm_id} created but the local catalog was not "
+                         f"saved: {e}")
+            detail = getattr(e, "errors", None) or [str(e)]
+            return web.json_response({
+                "ok": False, "rhythm_id": rhythm_id,
+                "error": "Created on RHYTHM, but the local protocol could not be saved — add "
+                         f"UUID {rhythm_id} on the Protocols page",
+                "details": detail, "warnings": warnings}, status=200)
+        restudied = await asyncio.to_thread(sm.reapply_catalog_sync)
+        logger.info(f"Audit: user={self._actor(request)} action=protocol_drafted study={n} "
+                    f"local_key={key} rhythm_id={rhythm_id}")
+        return web.json_response({
+            "ok": True, "rhythm_id": rhythm_id, "local_key": key, "restudied": restudied,
+            "rhythm_url": f"{base}/protocols/records/", "warnings": warnings,
+            "linked_existing": bool(use_existing)})
 
     # ------------------------------------------------------------ admin: users
     @staticmethod

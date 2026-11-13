@@ -103,6 +103,7 @@
     </div>
 
     <script src="/static/common.js"></script>
+    <script src="/static/protocol_draft.js"></script>
     <script>
     'use strict';
     const { esc, api, toast, modal, pad4, icon } = PV;
@@ -188,6 +189,10 @@
                     actions = `<button class="btn btn-sm btn-primary" data-act="new-protocol" data-i="${i}">New protocol</button>
                         ${opts ? `<select class="select" data-act="alias" data-i="${i}" style="height:28px">
                             <option value="">Add as alias of…</option>${opts}</select>` : ''}`;
+                }
+                if (g.studies.length) {
+                    actions += `<button class="btn btn-sm" data-act="draft" data-n="${g.studies[0]}"
+                        title="Pre-fill a local + RHYTHM protocol from this study and create it on RHYTHM">Draft from study ${pad4(g.studies[0])}</button>`;
                 }
             }
             return `<tr>
@@ -418,6 +423,11 @@
         const row = e.target.closest('tr[data-j]');
         const p = sc && row ? sc.protocols[+row.dataset.j] : null;
         if (btn.dataset.rmName !== undefined && p) { p.names.splice(+btn.dataset.rmName, 1); render(); return; }
+        if (btn.dataset.act === 'draft') {
+            if (dirty()) { toast('Save or discard your changes first, then draft.', 'bad', 6000); return; }
+            PV.protocolDraft(+btn.dataset.n, { onDone: () => load() });
+            return;
+        }
         switch (btn.dataset.act) {
         case 'add-protocol': newProtocol(sc, ''); render(); break;
         case 'del-protocol': sc.protocols.splice(+row.dataset.j, 1); render(); break;

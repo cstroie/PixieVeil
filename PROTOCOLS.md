@@ -127,6 +127,50 @@ Paste it into the protocol's **RHYTHM protocol UUID** field and save. Until a
 protocol has a UUID it shows **UUID pending — export blocked**: studies still match
 it and pre-fill, but RHYTHM upload refuses them with a message pointing here.
 
+### Draft a protocol from a study (creates it on RHYTHM)
+
+For a study whose protocol isn't registered anywhere yet: **Draft from study NNNN**
+in the Unmatched inbox, or **Draft protocol** on the study in `/studies` (admins).
+PixieVeil pre-fills both halves from the study:
+
+- **Local protocol:** matching name(s) from ProtocolName / StudyDescription,
+  region / indication / contrast, and the scanner (an existing one, or a new one
+  with the study's DICOM manufacturer and model).
+- **RHYTHM protocol**, every field limited to RHYTHM's own options (read live from
+  RHYTHM's protocol-choices list, or a bundled copy when RHYTHM is unreachable).
+  Each field is badged:
+  - *from study* (green): read from the dose report (RDSR) or image headers.
+    That covers kVp, pitch, rotation time, scan type, number of phases, slice
+    thickness of the first reconstruction, contrast, and the age/weight group
+    from the patient's age and weight;
+  - *guess* (amber): heuristics to check. That covers the protocol type,
+    examination group, mA modulation (for example XYZ_EC → CARE Dose4D), kernel
+    class and reconstruction algorithm from the kernel (`H31s` → soft tissue,
+    FBP; `Br40f` + strength → ADMIRE), scan FOV, and the QR mAs (estimated as
+    the effective mAs: mean mA × rotation ÷ pitch — **replace it with the
+    console's reference value**);
+  - *please fill* (red): not in the images, for example automatic kVp selection
+    (CARE kV).
+
+  Values outside RHYTHM's list become *Other: Please Specify* with the measured
+  value.
+- **Similar protocols already on RHYTHM** (same scanner and type, same name or age
+  group) are listed with **Use this one**, which links that UUID instead of
+  creating a duplicate.
+
+**Create on RHYTHM & add locally** checks everything first, then creates the
+protocol through RHYTHM's API with your token, and adds or updates the local
+protocol with the new UUID. Matching studies are re-matched straight away. If
+the local save fails after RHYTHM accepted the protocol, the message gives the
+new UUID to paste here.
+
+> RHYTHM's API (as of our vendored copy) does not store the **examination
+> group** — only its own website does. If the result says so, open the protocol on
+> RHYTHM's Protocol Records page and set the examination group there.
+
+One draft makes one RHYTHM record (one protocol type and age/weight group). Draft
+again from a study in another age group for the next one.
+
 ### Import from RHYTHM
 
 Once the RHYTHM connection is set on **Settings** (base URL + API token, see
@@ -246,6 +290,8 @@ files and logs a warning. The old files are then no longer read; they carry a
 | `PUT /api/protocols` | admin | body `{"catalog": {...}, "version": "<from GET>"}`; `409` if changed since, `400` with `errors` if invalid; on success re-matches waiting studies and returns them as `restudied` |
 | `GET /api/protocols/unmatched` | any user | unmatched studies grouped by manufacturer, model and protocol name |
 | `POST /api/protocols/rhythm-import` | admin | reads RHYTHM's scanner profiles + protocols with the saved token and returns the import `plan`; writes nothing (`409` if RHYTHM isn't configured, `502` with RHYTHM's error) |
+| `GET /api/studies/{n}/protocol-draft` | admin | the pre-filled local + RHYTHM draft for study n, RHYTHM's options (`choices_source` live/offline), scanner profiles, similar RHYTHM protocols |
+| `POST /api/studies/{n}/protocol-draft` | admin | `{local, rhythm}` or `{local, use_existing}`: validates, creates the protocol on RHYTHM, adds the local one with its UUID |
 
 These need a login or an API token, like the rest of the dashboard (see
 [USERS.md](USERS.md)).

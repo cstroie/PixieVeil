@@ -208,6 +208,7 @@
     </div>
 
     <script src="/static/common.js"></script>
+    <script src="/static/protocol_draft.js"></script>
     <script>
         'use strict';
         const { esc, pad4, fmtNum, fmtDate, icon } = PV;
@@ -246,7 +247,10 @@
             busy: false,
             progress: {},     // study number → latest progress event (SSE)
             live: null,       // PV.live() handle
+            admin: false,     // from /api/me: shows admin-only actions
         };
+        PV.api('/api/me').then(m => { state.admin = !!(m && m.admin); if (state.detail) renderInspector(); })
+            .catch(() => {});
 
         const $ = sel => document.querySelector(sel);
         document.querySelectorAll('[data-icon]').forEach(el => { el.innerHTML = icon(el.dataset.icon); });
@@ -701,6 +705,13 @@
                 out.push(`<button type="button" class="btn" data-act="upload_rhythm" ${reason ? `disabled title="${esc(reason)}"` : ''}>
                     ${icon('upload')} ${label}</button>`);
             }
+            const ex = (state.detail && state.detail.exam) || null;
+            if (state.admin && ex) {
+                const mapped = ex.rhythm && ex.rhythm.protocol_key;
+                out.push(`<button type="button" class="btn btn-ghost" data-act="draft_protocol"
+                    title="Pre-fill a local + RHYTHM protocol from this study and create it on RHYTHM">
+                    ${icon('edit')} ${mapped ? 'Draft protocol' : 'Draft protocol (unmatched)'}</button>`);
+            }
             if (!state.caps.dicom && !state.caps.http && !state.caps.rhythm) {
                 out.push('<span class="faint" style="font-size:12px">No export target configured</span>');
             }
@@ -1057,6 +1068,10 @@
                 row.hidden = !row.hidden;
                 t.setAttribute('aria-expanded', String(!row.hidden));
                 if (!row.hidden) row.querySelector('input').focus();
+                return;
+            }
+            if (t.dataset.act === 'draft_protocol') {
+                PV.protocolDraft(state.sel, { onDone: () => loadDetail(state.sel, { keepTab: true }) });
                 return;
             }
             if (t.dataset.act) { runAction(t.dataset.act, t); return; }
