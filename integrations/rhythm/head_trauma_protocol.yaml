@@ -23,10 +23,12 @@ clinical_indication:
 
 scanner:
   # Must already exist in RHYTHM's scanner registry (admin-added).
+  # Our scanner. DICOM header: Manufacturer "SIEMENS",
+  # ManufacturerModelName "Emotion 16", software syngo CT 2013A.
   manufacturer: Siemens Healthineers
-  model: Siemens SOMATOM Perspective
+  model: SOMATOM Emotion 16
   detector_rows: 16 rows
-  year_of_installation: "2014"
+  year_of_installation: null          # fill in: the year our Emotion 16 was installed
 
 # RHYTHM shows two tabs for Head/Trauma: PEDIATRIC_HEAD and YOUNG_ADULT
 # (PEDIATRIC_BODY is hidden for head indications). One protocol entry is

@@ -320,6 +320,11 @@ class StorageManager:
                 logger.error("Unexpected error in RHYTHM job reconciliation: %s", exc)
 
             try:
+                await self.reapply_catalog_if_changed()
+            except Exception as exc:
+                logger.error("Unexpected error re-matching the protocol catalog: %s", exc)
+
+            try:
                 await self.prepare_ready_exports()
             except Exception as exc:
                 logger.error("Unexpected error preparing export artifacts: %s", exc)
@@ -1362,6 +1367,20 @@ class StorageManager:
                 yield sc, ExamSidecar.load(exam_path).data
             except Exception:
                 logger.warning("Corrupt exam sidecar %s — skipped", exam_path, exc_info=True)
+
+    async def reapply_catalog_if_changed(self) -> list[int]:
+        """Re-match studies when ``protocols.yaml`` changed since the last
+        match — e.g. edited by hand — not only after a save on /protocols.
+        Also once after start, since the file may have been edited while the
+        server was down. A no-op for studies whose match didn't change."""
+        version = await asyncio.to_thread(lambda: self.protocol_catalog.version)
+        last = getattr(self, "_catalog_matched_version", None)
+        if last == version:
+            return []
+        self._catalog_matched_version = version
+        changed = await asyncio.to_thread(self.reapply_catalog_sync)
+        logger.info("Protocol catalog changed on disk — re-matched %d study(ies)", len(changed))
+        return changed
 
     def reapply_catalog_sync(self) -> list[int]:
         """Re-match every not-yet-exported study against the current catalog.

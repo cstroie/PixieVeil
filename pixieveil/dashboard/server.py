@@ -467,6 +467,7 @@ class Dashboard:
             return web.json_response({"error": f"cannot write catalog: {e}"}, status=500)
         logger.info(f"Protocol catalog saved by user={self._actor(request)}")
         changed = await asyncio.to_thread(sm.reapply_catalog_sync)
+        sm._catalog_matched_version = sm.protocol_catalog.version
         return web.json_response({"ok": True, "version": version, "restudied": changed})
 
     async def _rhythm_credentials(self, sm: StorageManager) -> tuple[str, str, Optional[str]]:
@@ -918,6 +919,7 @@ class Dashboard:
                          f"UUID {rhythm_id} on the Protocols page",
                 "details": detail, "warnings": warnings}, status=200)
         restudied = await asyncio.to_thread(sm.reapply_catalog_sync)
+        sm._catalog_matched_version = catalog.version
         logger.info(f"Audit: user={self._actor(request)} action=protocol_drafted study={n} "
                     f"local_key={key} rhythm_id={rhythm_id}")
         return web.json_response({

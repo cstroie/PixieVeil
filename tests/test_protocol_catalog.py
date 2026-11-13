@@ -560,3 +560,37 @@ def test_legacy_ids_that_are_not_slugs_are_fixed_on_migration():
     doc = {"scanners": [{"id": "s", "manufacturer": "SIEMENS", "model": "Emotion 16",
                          "protocols": protos}]}
     assert validate_document(doc) == []
+
+
+def test_find_scanner_tolerates_vendor_naming(tmp_path):
+    from pixieveil.processing.protocol_catalog import ProtocolCatalog
+    path = tmp_path / "protocols.yaml"
+    path.write_text(
+        "scanners:\n"
+        "- id: emotion\n  manufacturer: Siemens Healthineers\n  model: SOMATOM Emotion 16\n"
+        "  protocols:\n  - key: cap\n    names: [CAP_N_PESTE_6A]\n"
+        "- id: definition\n  manufacturer: SIEMENS\n  model: SOMATOM Definition\n"
+        "  protocols: []\n")
+    cat = ProtocolCatalog.load(path)
+    assert cat.find_scanner("SIEMENS", "Emotion 16").id == "emotion"
+    assert cat.match("SIEMENS", "Emotion 16", "CAP_N_PESTE_6A", None).protocol.key == "cap"
+    assert cat.find_scanner("SIEMENS", "Emotion 6") is None
+    assert cat.find_scanner("Siemens Healthineers", "SOMATOM Definition Edge") is None
+    assert cat.find_scanner("GE MEDICAL SYSTEMS", "Emotion 16") is None
+
+
+def test_reapply_when_catalog_file_changes(tmp_path, monkeypatch):
+    import asyncio
+    from pixieveil.storage.storage_manager import StorageManager
+    from .conftest import make_settings
+    sm = StorageManager(make_settings(tmp_path))
+    calls = []
+    monkeypatch.setattr(sm, "reapply_catalog_sync", lambda: calls.append(1) or [7])
+    versions = iter(["v1", "v1", "v2"])
+    monkeypatch.setattr(type(sm.protocol_catalog), "version",
+                        property(lambda self: next(versions)))
+
+    async def go():
+        return [await sm.reapply_catalog_if_changed() for _ in range(3)]
+    assert asyncio.run(go()) == [[7], [], [7]]     # start, unchanged, edited on disk
+    assert len(calls) == 2

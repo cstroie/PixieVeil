@@ -584,8 +584,22 @@ class ProtocolCatalog:
         make, mdl = _str(manufacturer).casefold(), _str(model).casefold()
         if not make and not mdl:
             return None
-        return next((s for s in self._scanners_now() if not s.is_wildcard
-                     and s.manufacturer.casefold() == make and s.model.casefold() == mdl), None)
+        scanners = [s for s in self._scanners_now() if not s.is_wildcard]
+        exact = next((s for s in scanners
+                      if s.manufacturer.casefold() == make and s.model.casefold() == mdl), None)
+        if exact is not None:
+            return exact
+        # Tolerate vendor naming: "SIEMENS / Emotion 16" (DICOM) and "Siemens
+        # Healthineers / SOMATOM Emotion 16" (RHYTHM catalogue) are the same
+        # scanner — same manufacturer family and the same model words, brand
+        # words ignored. Only an unambiguous, identical-model hit counts.
+        from pixieveil.processing.rhythm_import import manufacturer_family, model_tokens
+        fam, toks = manufacturer_family(manufacturer), model_tokens(model)
+        if not toks:
+            return None
+        hits = [s for s in scanners if manufacturer_family(s.manufacturer) == fam
+                and model_tokens(s.model) == toks]
+        return hits[0] if len(hits) == 1 else None
 
     def match(self, manufacturer: str | None, model: str | None,
               protocol_name: str | None, study_description: str | None) -> CatalogMatch:
