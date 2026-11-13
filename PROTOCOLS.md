@@ -12,6 +12,20 @@ protocol** was run. It needs this to:
 All of this is set up on the dashboard's **Protocols** page (`/protocols`). Nobody
 needs to edit files on the server.
 
+**The key idea:** a local protocol links *what your scanner sends* to *what RHYTHM
+expects*:
+
+| | Example | Where it comes from |
+|---|---|---|
+| **Matches names** | `CAP_N_PESTE_6A`, `CAP_N_1-6_ANI` | the scanner's DICOM ProtocolName (your console's protocol names) |
+| **RHYTHM protocol UUID** | `3b18e897-d383-4e59-9d72-3e4bcd58d7fe` | the protocol registered on RHYTHM; RHYTHM's own name for it can be anything |
+| Region / indication / contrast | Head — Trauma, Non-contrast | filled into each matching study |
+| (its scanner) | SIEMENS / Emotion 16, RHYTHM scanner ID | the DICOM Manufacturer / Model, plus the RHYTHM scanner profile |
+
+A study whose scanner and ProtocolName match gets the UUID, so the upload names that
+RHYTHM protocol, and RHYTHM derives the scanner, region, indication, contrast, protocol
+type and group from it.
+
 ---
 
 ## The page at a glance
@@ -25,12 +39,15 @@ needs to edit files on the server.
 │  GE Optima CT520    1 │  Protocol │ Matches names │ Region/indication │ UUID │
 │                       │  CAP …    │ CAP_SPIRAL_…  │ Chest — …         │ …    │
 │ [Add scanner]         │  [Add protocol]                                     │
+│ [Import from RHYTHM]  │                                                     │
 └───────────────────────┴────────────────────────────────────────────────────┘
                                          Unsaved changes  [Discard] [Save changes]
 ```
 
 - **Left:** the **Unmatched** inbox (studies nothing matches yet), then the list of
-  scanners.
+  scanners, **Add scanner** and **Import from RHYTHM**.
+- **Inbox rows** offer **Add scanner + protocol** / **New protocol** / **Add as alias
+  of…** and **Draft from study NNNN**.
 - **Right:** the selected scanner's details and its protocol table, or the inbox.
 - **Bottom:** a save bar appears as soon as something is changed. Nothing takes
   effect until **Save changes** is clicked.
@@ -42,11 +59,17 @@ needs to edit files on the server.
 ## How a study is matched
 
 Matching happens automatically when a study finishes arriving, and again over all
-waiting studies whenever the catalog is saved.
+waiting studies when the catalog is saved on this page, when `config/protocols.yaml`
+changes on disk, and once after the server starts.
 
 1. **Scanner.** The study's DICOM *Manufacturer* and *Manufacturer Model Name* are
-   compared with each scanner's **Manufacturer** and **Model**. The comparison
-   ignores upper/lower case and must otherwise match exactly.
+   compared with each scanner's **Manufacturer** and **Model**, ignoring upper/lower
+   case. If nothing matches exactly, vendor spellings are tolerated: the same
+   manufacturer family and the same model words, ignoring brand words. So DICOM
+   `SIEMENS` / `Emotion 16` also matches a scanner entered as `Siemens Healthineers`
+   / `SOMATOM Emotion 16`. It must be the same model: `Emotion 6`, or `Definition`
+   vs `Definition Edge`, don't match. Entering the exact DICOM values is still the
+   clearest.
 2. **Protocol.** Within that scanner, the study's protocol name is compared with
    each protocol's **names**. The comparison ignores case and extra spaces. The
    protocol name is taken from:
@@ -86,9 +109,65 @@ Studies that are already **exported** are never changed.
 
 ---
 
+## The workflow: from a new study to an upload
+
+### Once, before the first upload
+
+1. **RHYTHM connection:** on **Settings**, save the RHYTHM base URL and API token
+   (*Copy RHYTHM token* from your signed-in RHYTHM tab, or *Sign in to RHYTHM…*),
+   restart, and click **Test connection**. See [RHYTHM_API.md](RHYTHM_API.md).
+2. **Your scanner model in RHYTHM's catalogue:** only RHYTHM's admins can add models.
+   If yours is missing, the draft dialog (below) gives you the request text to send
+   them.
+
+### For every study
+
+```
+ study arrives ──► matched? ──yes──► region/indication/UUID filled in ──► /studies: image
+      │                                                                    quality, weight,
+      no                                                                   age ──► Upload
+      ▼
+ Protocols → Unmatched  (grouped by scanner + protocol name)
+      │
+      ├─ another name for a protocol you already have ──► Add as alias of…  ──► Save changes
+      │
+      ├─ the protocol is already registered on RHYTHM ──► Import from RHYTHM:
+      │       tick it, type your scanner's name(s) in "Scanner names" ──► Apply ──► Save changes
+      │
+      └─ not on RHYTHM yet ──► Draft from study NNNN:
+              review the pre-filled local + RHYTHM protocol
+              (new scanner? "+ Create new scanner on RHYTHM" is pre-selected)
+              ──► Create on RHYTHM & add locally   (saved immediately)
+```
+
+Whichever way you go, the waiting studies are re-matched at once. The same studies
+leave the inbox, and the ones that match get the UUID and the region/indication.
+
+**Which way to choose:**
+
+| Situation | Use |
+|---|---|
+| The scanner sends a new name for a protocol you already have | **Add as alias of…** (inbox row) |
+| The protocol exists on RHYTHM (registered on the website, or by a colleague) | **Import from RHYTHM** and add your scanner's names in *Scanner names* |
+| The protocol isn't on RHYTHM yet | **Draft from study** → **Create on RHYTHM & add locally** |
+| The scanner isn't on RHYTHM yet | **Draft from study**. The dialog creates the scanner profile first |
+| You know the UUID already | type it into the protocol's **RHYTHM protocol UUID** and **Save changes** |
+
+**Drafting from a study** also works from `/studies` (**Draft protocol** on the
+study). A draft is one RHYTHM record: one protocol type and one age/weight group. For
+the same console protocol in another age group, draft again from a study of that
+group, or import the other RHYTHM records and give them the same scanner name.
+
+---
+
 ## Everyday tasks
 
 ### A new scanner starts sending studies
+
+The quickest route is **Draft from study NNNN** on its inbox row. It creates the
+local scanner (exact DICOM values), the RHYTHM scanner profile if needed, and the
+first protocol on RHYTHM, all in one go (see the workflow above). To set it up by
+hand instead:
 
 1. Open **Protocols → Unmatched**. The studies show up grouped as
    *unknown* `GE MEDICAL SYSTEMS | Optima CT520 Series` with their protocol names.
