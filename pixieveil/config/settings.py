@@ -12,7 +12,7 @@ Classes:
 import yaml
 from pathlib import Path
 from typing import Dict, Any, Optional, Union
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, PrivateAttr
 
 
 class AnonymizationProfile(BaseModel):
@@ -116,6 +116,13 @@ class Settings(BaseModel):
     series_filter: Dict[str, Any] = Field(default_factory=dict)
     logging: Dict[str, Any] = Field(default_factory=dict)
     defacing: Dict[str, Any] = Field(default_factory=dict)
+    # The file this instance was loaded from (None when built in code, e.g.
+    # tests); the /settings page edits it.
+    _source_path: Optional[Path] = PrivateAttr(default=None)
+
+    @property
+    def source_path(self) -> Optional[Path]:
+        return self._source_path
 
     @classmethod
     def load(cls, config_path: Optional[Path] = None) -> "Settings":
@@ -159,7 +166,9 @@ class Settings(BaseModel):
             # yaml.safe_load may return None for empty files; default to empty dict
             config_data = yaml.safe_load(f) or {}
 
-        return cls(**config_data)
+        instance = cls(**config_data)
+        instance._source_path = config_path
+        return instance
     
     def get_anonymization_profile(self, profile_name: Optional[str] = None) -> AnonymizationProfile:
         """

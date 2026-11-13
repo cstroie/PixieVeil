@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PixieVeil · Settings</title>
+    <script>
+        try { document.documentElement.dataset.theme = localStorage.getItem('pixieveil_theme') || 'dark'; }
+        catch (_e) { document.documentElement.dataset.theme = 'dark'; }
+    </script>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='1' y='1' width='30' height='30' rx='8' fill='%23151b22' stroke='%233cc8c0' stroke-width='2'/%3E%3Cg fill='%233cc8c0'%3E%3Crect x='8' y='8' width='4' height='4' rx='1'/%3E%3Crect x='14' y='8' width='4' height='4' rx='1' opacity='.6'/%3E%3Crect x='8' y='14' width='4' height='4' rx='1' opacity='.6'/%3E%3Crect x='20' y='8' width='4' height='4' rx='1' opacity='.3'/%3E%3Crect x='14' y='14' width='4' height='4' rx='1' opacity='.3'/%3E%3Crect x='8' y='20' width='4' height='4' rx='1' opacity='.3'/%3E%3C/g%3E%3C/svg%3E">
+    <link rel="stylesheet" href="/static/theme.css">
+    <style>
+        .page { max-width: 980px; margin: 0 auto; padding: 28px 16px 96px; display: flex; flex-direction: column; gap: 20px; }
+        .page h1 { font-size: 22px; }
+        .page .lead { color: var(--text-dim); margin: 6px 0 0; }
+        .grid { display: grid; gap: 16px 20px; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
+        .grid .wide { grid-column: 1 / -1; }
+        .field .label { display: flex; gap: 8px; align-items: center; justify-content: space-between; }
+        .field .err { color: var(--bad); font-size: 12px; }
+        .field.has-error .input, .field.has-error .textarea { border-color: var(--bad); }
+        .field.is-dirty .input, .field.is-dirty .select, .field.is-dirty .textarea { border-color: var(--accent); }
+        .apply { font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--text-faint); }
+        .apply.live { color: var(--ok); }
+        .check { display: flex; gap: 8px; align-items: center; min-height: 36px; color: var(--text); }
+        .secret-row { display: flex; gap: 6px; align-items: center; }
+        .secret-row .input { flex: 1; }
+        .card-head .sub { color: var(--text-dim); font-size: 13px; margin: 4px 0 0; font-weight: 400; }
+        .test-result { margin-top: 12px; }
+        .test-result[hidden] { display: none; }
+        .ro { display: grid; grid-template-columns: minmax(180px, 260px) 1fr; gap: 6px 16px; font-size: 13.5px; }
+        .ro dt { color: var(--text-dim); }
+        .ro dd { margin: 0; font-family: var(--mono); font-size: 12.5px; overflow-wrap: anywhere; }
+        @media (max-width: 600px) { .ro { grid-template-columns: 1fr; } .ro dd { margin-bottom: 8px; } }
+        .savebar {
+            position: fixed; left: 0; right: 0; bottom: 0; z-index: 40;
+            display: flex; gap: 12px; align-items: center; justify-content: flex-end;
+            padding: 12px 16px; background: var(--panel); border-top: 1px solid var(--border-strong);
+            box-shadow: var(--shadow);
+        }
+        .savebar[hidden] { display: none; }
+        .savebar .msg { margin-right: auto; color: var(--warn); font-size: 13px; }
+        #restart[hidden], #errors[hidden] { display: none; }
+    </style>
+</head>
+<body>
+    <header class="topbar">
+        <a class="brand" href="/">
+            <svg viewBox="0 0 32 32" aria-hidden="true"><rect x="1.5" y="1.5" width="29" height="29" rx="8" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.5"/><g fill="var(--accent)"><rect x="8" y="8" width="4" height="4" rx="1"/><rect x="14" y="8" width="4" height="4" rx="1" opacity=".6"/><rect x="8" y="14" width="4" height="4" rx="1" opacity=".6"/><rect x="20" y="8" width="4" height="4" rx="1" opacity=".3"/><rect x="14" y="14" width="4" height="4" rx="1" opacity=".3"/><rect x="8" y="20" width="4" height="4" rx="1" opacity=".3"/></g><path d="M8 25.5C14 24 21 18 25 8" stroke="var(--accent)" stroke-width="1.6" fill="none" stroke-linecap="round"/></svg>
+            <span>PixieVeil <small>DICOM anonymizer</small></span>
+        </a>
+        <nav class="nav">
+            <a href="/">Status</a>
+            <a href="/studies">Studies<span class="count" id="nav-needs" hidden></span></a>
+            <a href="/protocols">Protocols</a>
+            <a href="/users">Users</a>
+            <a href="/settings" aria-current="page">Settings</a>
+            <a href="/about">About</a>
+        </nav>
+        <div class="spacer"></div>
+        <button type="button" class="btn btn-ghost btn-icon" data-theme-toggle></button>
+    </header>
+
+    <main class="page">
+        <section>
+            <h1>Settings</h1>
+            <p class="lead">The parts of <span class="mono" id="path">config/settings.yaml</span> that can be
+                changed here. Changes marked <span class="apply live">Live</span> apply at once; the others
+                after a restart. Everything else stays a file edit on the server — see SETTINGS.md.</p>
+        </section>
+
+        <div class="callout warn" id="restart" hidden></div>
+        <div class="callout bad" id="errors" hidden></div>
+
+        <div id="sections"><p class="faint">Loading…</p></div>
+
+        <section class="card">
+            <div class="card-head"><div><h3>Read-only</h3>
+                <p class="sub">Changing these could lock you out or weaken anonymization — edit the file on the server and restart.</p></div></div>
+            <div class="card-body"><dl class="ro" id="readonly"></dl></div>
+        </section>
+    </main>
+
+    <div class="savebar" id="savebar" hidden>
+        <span class="msg">Unsaved changes</span>
+        <button type="button" class="btn btn-ghost" id="discard">Discard</button>
+        <button type="button" class="btn btn-primary" id="save">Save changes</button>
+    </div>
+
+    <script src="/static/common.js"></script>
+    <script>
+        const { esc, api, toast, icon } = PV;
+        let snap = null;              // last GET /api/settings
+        const fields = new Map();     // path -> field descriptor from the server
+        const secretTouched = new Map(); // path -> 'replace' | 'clear'
+
+        // ---- value <-> input text
+        function toText(f, v) {
+            if (v === null || v === undefined) return '';
+            if (f.kind === 'modalities') return (v || []).join(', ');
+            if (f.kind === 'regexmap') return Object.entries(v || {}).map(([k, p]) => `${k}: ${p}`).join('\n');
+            return String(v);
+        }
+        function readInput(f) {
+            const el = document.querySelector(`[data-path="${f.path}"]`);
+            if (!el) return undefined;
+            if (f.kind === 'bool') return el.checked;
+            const raw = el.value;
+            if (f.kind === 'modalities' || f.kind === 'regexmap') return raw;
+            if (raw.trim() === '') return null;
+            if (f.kind === 'int' || f.kind === 'float') return Number(raw);
+            return raw.trim();
+        }
+        function isDirty(f) {
+            if (f.kind === 'secret') return secretTouched.has(f.path)
+                && (secretTouched.get(f.path) === 'clear'
+                    || document.querySelector(`[data-path="${f.path}"]`).value.trim() !== '');
+            const el = document.querySelector(`[data-path="${f.path}"]`);
+            if (!el) return false;
+            if (f.kind === 'bool') return el.checked !== !!f.value;
+            return el.value !== toText(f, f.value);
+        }
+        function changes() {
+            const out = {};
+            for (const f of fields.values()) {
+                if (!isDirty(f)) continue;
+                if (f.kind === 'secret') {
+                    out[f.path] = secretTouched.get(f.path) === 'clear' ? null
+                        : document.querySelector(`[data-path="${f.path}"]`).value.trim();
+                } else out[f.path] = readInput(f);
+            }
+            return out;
+        }
+        function refreshDirty() {
+            let any = false;
+            for (const f of fields.values()) {
+                const d = isDirty(f);
+                any = any || d;
+                document.querySelector(`[data-field="${f.path}"]`)?.classList.toggle('is-dirty', d);
+            }
+            document.getElementById('savebar').hidden = !any;
+        }
+
+        // ---- rendering
+        function control(f) {
+            const id = 'f-' + f.path.replace(/\./g, '-');
+            const attrs = `id="${id}" data-path="${esc(f.path)}"`;
+            if (f.kind === 'bool') {
+                return `<label class="check"><input type="checkbox" ${attrs} ${f.value ? 'checked' : ''}> Enabled</label>`;
+            }
+            if (f.kind === 'enum') {
+                return `<select class="select" ${attrs}>${f.choices.map(c =>
+                    `<option ${c === f.value ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select>`;
+            }
+            if (f.kind === 'regexmap') {
+                return `<textarea class="textarea mono" rows="3" spellcheck="false" ${attrs}
+                    placeholder="SeriesDescription: (?i)topogram">${esc(toText(f, f.value))}</textarea>`;
+            }
+            if (f.kind === 'secret') {
+                return `<div class="secret-row">
+                    <input class="input" type="password" autocomplete="new-password" ${attrs}
+                        placeholder="${f.is_set ? '•••••••• set — type to replace' : 'not set'}">
+                    ${f.is_set ? `<button type="button" class="btn btn-ghost" data-clear="${esc(f.path)}">Clear</button>` : ''}
+                </div>`;
+            }
+            const num = f.kind === 'int' || f.kind === 'float';
+            const extra = num ? `type="number" ${f.min !== null ? `min="${f.min}"` : ''} ${f.max !== null ? `max="${f.max}"` : ''} step="${f.kind === 'int' ? 1 : 'any'}"`
+                : `type="text" spellcheck="false"`;
+            return `<input class="input" ${extra} ${attrs} value="${esc(toText(f, f.value))}"
+                ${f.nullable ? 'placeholder="(not set)"' : ''}>`;
+        }
+        function fieldHtml(f) {
+            const wide = f.kind === 'regexmap' ? ' wide' : '';
+            const when = f.apply === 'live' ? '<span class="apply live">Live</span>'
+                : `<span class="apply">${f.restart_pending ? 'Restart pending' : 'On restart'}</span>`;
+            return `<div class="field${wide}" data-field="${esc(f.path)}">
+                <span class="label"><label for="f-${esc(f.path.replace(/\./g, '-'))}">${esc(f.label)}</label>${when}</span>
+                ${control(f)}
+                ${f.help ? `<span class="hint">${esc(f.help)}</span>` : ''}
+                <span class="err" hidden></span>
+            </div>`;
+        }
+        function render() {
+            fields.clear();
+            secretTouched.clear();
+            document.getElementById('path').textContent = snap.path;
+            document.getElementById('sections').innerHTML = snap.sections.map(sec => {
+                sec.fields.forEach(f => fields.set(f.path, f));
+                const test = sec.id === 'rhythm' ? `<div style="margin-top:14px">
+                    <button type="button" class="btn" id="rhythm-test">Test connection</button>
+                    <div class="test-result" id="rhythm-result" hidden></div></div>` : '';
+                return `<section class="card" style="margin-bottom:20px">
+                    <div class="card-head"><div><h3>${esc(sec.title)}</h3>
+                        ${sec.help ? `<p class="sub">${esc(sec.help)}</p>` : ''}</div></div>
+                    <div class="card-body"><div class="grid">${sec.fields.map(fieldHtml).join('')}</div>${test}</div>
+                </section>`;
+            }).join('');
+            document.getElementById('readonly').innerHTML = snap.read_only.map(r =>
+                `<dt>${esc(r.label)}</dt><dd>${r.value === null || r.value === undefined
+                    ? '<span class="faint">(default)</span>' : esc(String(r.value))}</dd>`).join('');
+            showRestart(snap.restart_pending);
+            document.getElementById('errors').hidden = true;
+            refreshDirty();
+        }
+        function showRestart(paths) {
+            const box = document.getElementById('restart');
+            if (!paths || !paths.length) { box.hidden = true; return; }
+            const labels = paths.map(p => fields.get(p)?.label || p);
+            box.innerHTML = `${icon('alert')}<div><strong>Restart required</strong> for: ${esc(labels.join(', '))}.
+                Run <span class="mono">sudo systemctl restart pixieveil</span>
+                (or <span class="mono">./pixieveil.sh restart</span>) on the server.</div>`;
+            box.hidden = false;
+        }
+        function showErrors(errors) {
+            document.querySelectorAll('.field .err').forEach(e => { e.hidden = true; e.textContent = ''; });
+            document.querySelectorAll('.field.has-error').forEach(e => e.classList.remove('has-error'));
+            const box = document.getElementById('errors');
+            const loose = [];
+            for (const [path, msg] of Object.entries(errors || {})) {
+                const host = document.querySelector(`[data-field="${path}"]`);
+                if (host) {
+                    host.classList.add('has-error');
+                    const e = host.querySelector('.err');
+                    e.textContent = msg; e.hidden = false;
+                } else loose.push(`${path}: ${msg}`);
+            }
+            box.innerHTML = `${icon('alert')}<div><strong>Not saved.</strong> Fix the highlighted fields.
+                ${loose.map(esc).join('<br>')}</div>`;
+            box.hidden = false;
+        }
+
+        async function load() {
+            try {
+                snap = await api('/api/settings');
+                render();
+            } catch (e) {
+                document.getElementById('sections').innerHTML =
+                    `<div class="callout bad">${icon('alert')}<div>${esc(e.message)}</div></div>`;
+            }
+        }
+
+        // ---- events
+        document.addEventListener('input', e => {
+            const path = e.target.dataset && e.target.dataset.path;
+            if (!path) return;
+            if (fields.get(path)?.kind === 'secret') secretTouched.set(path, 'replace');
+            refreshDirty();
+        });
+        document.addEventListener('change', e => { if (e.target.dataset?.path) refreshDirty(); });
+        document.addEventListener('click', async e => {
+            const clear = e.target.closest('[data-clear]');
+            if (clear) {
+                const path = clear.dataset.clear;
+                const input = document.querySelector(`[data-path="${path}"]`);
+                input.value = '';
+                input.placeholder = 'will be cleared on save';
+                secretTouched.set(path, 'clear');
+                refreshDirty();
+                return;
+            }
+            if (e.target.closest('#rhythm-test')) {
+                const btn = e.target.closest('#rhythm-test');
+                const out = document.getElementById('rhythm-result');
+                const body = {};
+                const base = document.querySelector('[data-path="storage.remote_storage.rhythm.base_url"]');
+                const tok = document.querySelector('[data-path="storage.remote_storage.rhythm.auth_token"]');
+                if (base && base.value.trim()) body.base_url = base.value.trim();
+                if (tok && tok.value.trim()) body.auth_token = tok.value.trim();
+                btn.disabled = true;
+                out.hidden = false;
+                out.innerHTML = '<span class="pill busy">Testing…</span>';
+                try {
+                    const r = await api('/api/settings/rhythm-test', { method: 'POST', body });
+                    let extra = '';
+                    if (r.ok && r.protocols !== undefined) {
+                        extra = ` RHYTHM lists ${r.protocols} protocol(s); ${r.found.length} of the catalog's UUIDs found.`;
+                        if (r.missing.length) extra += ` Not found${r.partial ? ' on the first page' : ''}: ${r.missing.join(', ')}.`;
+                    }
+                    out.innerHTML = `<div class="callout ${r.ok ? 'info' : 'bad'}">${icon(r.ok ? 'check' : 'alert')}
+                        <div>${esc(r.message + '.' + extra)}</div></div>`;
+                } catch (err) {
+                    out.innerHTML = `<div class="callout bad">${icon('alert')}<div>${esc(err.message)}</div></div>`;
+                } finally { btn.disabled = false; }
+            }
+        });
+        document.getElementById('discard').addEventListener('click', render);
+        document.getElementById('save').addEventListener('click', async () => {
+            const btn = document.getElementById('save');
+            btn.disabled = true;
+            try {
+                const r = await api('/api/settings', { method: 'PUT',
+                    body: { changes: changes(), version: snap.version } });
+                const live = r.applied_live.length, later = r.changed.length - live;
+                toast(`Saved${live ? ` — ${live} applied now` : ''}${later ? `, ${later} on restart` : ''}`, 'ok');
+                await load();
+            } catch (e) {
+                if (e.status === 400 && e.data && e.data.errors) showErrors(e.data.errors);
+                else if (e.status === 409) toast('Someone changed the settings file meanwhile — reload the page.', 'bad', 8000);
+                else toast(e.message, 'bad');
+            } finally { btn.disabled = false; }
+        });
+        window.addEventListener('beforeunload', e => {
+            if (!document.getElementById('savebar').hidden) { e.preventDefault(); e.returnValue = ''; }
+        });
+        load();
+    </script>
+</body>
+</html>

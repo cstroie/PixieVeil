@@ -29,7 +29,7 @@ python install.py --download-model
 
 ## Minimum configuration
 
-Copy `config/settings.example.yaml` to `config/settings.yaml` and set at least:
+Copy `config/settings.example.yaml` to `config/settings.yaml` and set at least the values below. Once the server runs, admins can change the RHYTHM connection, retention, series filter and defacing on the dashboard's **Settings** page instead ([SETTINGS.md](SETTINGS.md)).
 
 ```yaml
 dicom_server:

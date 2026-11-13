@@ -29,7 +29,7 @@ import hashlib
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Iterable
 
 import aiohttp
 
@@ -388,3 +388,51 @@ async def _json(resp: aiohttp.ClientResponse) -> Any:
         return await resp.json(content_type=None)
     except Exception:
         return {}
+
+
+PROBE_PATH = "/api/v1/protocols-api/"
+
+
+async def probe_connection(base_url: str, auth_token: str,
+                           known_uuids: Iterable[str] = (),
+                           timeout_s: float = 10.0) -> dict[str, Any]:
+    """Check that *base_url* is reachable and *auth_token* is accepted.
+
+    Sends one authenticated ``GET {base_url}/api/v1/protocols-api/``. Returns
+    ``{"ok", "status", "message"}`` and, when the list is readable,
+    ``protocols`` (how many RHYTHM lists) and ``found``/``missing`` among
+    *known_uuids* (the catalog's UUIDs). Never raises; never logs the token.
+    """
+    url = f"{base_url.rstrip('/')}{PROBE_PATH}"
+    headers = {"Authorization": f"Bearer {auth_token}"}
+    try:
+        async with aiohttp.ClientSession(
+            headers=headers, timeout=aiohttp.ClientTimeout(total=timeout_s)
+        ) as session:
+            async with session.get(url) as resp:
+                body = await _json(resp)
+                status = resp.status
+    except Exception as e:  # noqa: BLE001 - reported to the operator
+        logger.warning("RHYTHM connection test to %s failed: %s", url, e)
+        return {"ok": False, "status": None,
+                "message": f"Cannot reach {base_url}: {e.__class__.__name__}: {e}"}
+    if status in (401, 403):
+        return {"ok": False, "status": status,
+                "message": f"Reached RHYTHM, but the token was rejected (HTTP {status})"}
+    if status != 200:
+        return {"ok": False, "status": status,
+                "message": f"Reached the server, but it answered HTTP {status}"}
+
+    items = body.get("results") if isinstance(body, dict) else body
+    out: dict[str, Any] = {"ok": True, "status": status,
+                           "message": "Connected; the token is accepted"}
+    if isinstance(items, list):
+        ids = {str(i.get(k)).lower() for i in items if isinstance(i, dict)
+               for k in ("id", "uuid") if i.get(k)}
+        known = sorted({u.lower() for u in known_uuids if u})
+        out["protocols"] = len(items)
+        out["found"] = [u for u in known if u in ids]
+        out["missing"] = [u for u in known if u not in ids]
+        # A paginated answer lists only its first page: "missing" may be wrong.
+        out["partial"] = bool(isinstance(body, dict) and body.get("next"))
+    return out

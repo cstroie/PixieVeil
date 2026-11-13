@@ -15,22 +15,25 @@ import importlib.metadata
 import json
 import logging
 import platform
+import re
 import time
 from pathlib import Path
 from typing import Any, Optional
 
 from urllib.parse import quote, urlparse
 
+import yaml
 from aiohttp import web
 
 import pixieveil
 from pixieveil.auth import user_store as user_store_mod
 from pixieveil.auth.sessions import COOKIE_NAME, SessionSigner, load_or_create_secret
 from pixieveil.auth.user_store import User, UserStore, UserStoreError
-from pixieveil.config import Settings
+from pixieveil.config import Settings, settings_editor
 from pixieveil.dashboard import options
 from pixieveil.dicom_server.server import SUPPORTED_STORAGE_SOP_CLASSES
 from pixieveil.processing import exam_merge, protocol_catalog
+from pixieveil.storage import rhythm_storage as rhythm_storage_mod
 from pixieveil.storage.storage_manager import StorageManager
 
 logger = logging.getLogger(__name__)
@@ -131,6 +134,15 @@ class Dashboard:
         self.site: Optional[web.TCPSite] = None
         self.app['storage_manager'] = storage_manager
         self._started_at = time.time()
+        # /settings edits the file this process was started from — never the
+        # shipped example it falls back to when settings.yaml is missing.
+        src = settings.source_path
+        self.settings_editor: Optional[settings_editor.SettingsEditor] = None
+        if src is not None and src.name != "settings.example.yaml":
+            self.settings_editor = settings_editor.SettingsEditor(
+                Path(src), settings,
+                catalog_site_code=lambda: storage_manager.protocol_catalog.site_code,
+            )
         # Routes are registered here rather than in start() so tests can
         # wrap self.app in an aiohttp TestServer without binding a port.
         self.app.add_routes([
@@ -146,6 +158,10 @@ class Dashboard:
             web.get("/api/protocols", self.handle_protocols_get),
             web.put("/api/protocols", self.handle_protocols_put),
             web.get("/api/protocols/unmatched", self.handle_protocols_unmatched),
+            web.get("/settings", self.handle_settings_page),
+            web.get("/api/settings", self.handle_settings_get),
+            web.put("/api/settings", self.handle_settings_put),
+            web.post("/api/settings/rhythm-test", self.handle_settings_rhythm_test),
             web.get("/users", self.handle_users_page),
             web.get("/api/users", self.handle_users_list),
             web.post("/api/users", self.handle_users_add),
@@ -430,6 +446,83 @@ class Dashboard:
         sm: StorageManager = request.app['storage_manager']
         return web.json_response({"unmatched": await asyncio.to_thread(
             sm.unmatched_protocols_sync)})
+
+    # ------------------------------------------------------------ admin: settings
+    def _editor(self) -> settings_editor.SettingsEditor:
+        if self.settings_editor is None:
+            raise web.HTTPConflict(
+                text=json.dumps({"error": "no editable settings file: the server was not "
+                                          "started from config/settings.yaml"}),
+                content_type="application/json")
+        return self.settings_editor
+
+    async def handle_settings_page(self, request: web.Request) -> web.Response:
+        user = request.get("user")
+        if user is None or not user.admin:
+            raise web.HTTPFound("/")
+        return await self._serve_template("settings.html")
+
+    async def handle_settings_get(self, request: web.Request) -> web.Response:
+        self._require_admin(request)
+        editor = self._editor()
+        try:
+            snap = await asyncio.to_thread(editor.snapshot)
+        except (OSError, yaml.YAMLError, settings_editor.SettingsError) as e:
+            logger.error(f"Cannot read settings file: {e}")
+            return web.json_response({"error": f"cannot read settings: {e}"}, status=500)
+        return web.json_response(snap)
+
+    async def handle_settings_put(self, request: web.Request) -> web.Response:
+        """``{"changes": {"<dotted.path>": value, ...}, "version": "<from GET>"}``.
+
+        Only whitelisted fields; 400 with ``errors`` (keyed by path) when
+        invalid, 409 if the file changed since it was read.
+        """
+        self._require_admin(request)
+        editor = self._editor()
+        body = await self._json_body(request)
+        try:
+            result = await asyncio.to_thread(
+                editor.apply_changes, body.get("changes"), body.get("version"))
+        except settings_editor.SettingsConflictError as e:
+            return web.json_response({"error": str(e)}, status=409)
+        except settings_editor.SettingsValidationError as e:
+            return web.json_response({"error": "invalid settings", "errors": e.errors},
+                                     status=400)
+        except (OSError, yaml.YAMLError, settings_editor.SettingsError) as e:
+            logger.error(f"Cannot save settings: {e}")
+            return web.json_response({"error": f"cannot save settings: {e}"}, status=500)
+        if result.changed:
+            # Paths only — values may be secrets.
+            logger.info(f"Audit: user={self._actor(request)} action=settings_change "
+                        f"paths={result.changed} backup={result.backup}")
+        return web.json_response({
+            "ok": True, "changed": result.changed, "applied_live": result.applied_live,
+            "restart_required": result.restart_required, "version": result.version,
+        })
+
+    async def handle_settings_rhythm_test(self, request: web.Request) -> web.Response:
+        """Probe RHYTHM with the given (or else the saved) base URL and token."""
+        self._require_admin(request)
+        editor = self._editor()
+        body = await self._json_body(request) if request.can_read_body else {}
+        try:
+            _raw, doc = await asyncio.to_thread(editor.read_document)
+        except (OSError, yaml.YAMLError, settings_editor.SettingsError) as e:
+            return web.json_response({"error": f"cannot read settings: {e}"}, status=500)
+        saved = ((doc.get("storage") or {}).get("remote_storage") or {}).get("rhythm") or {}
+        base_url = str(body.get("base_url") or saved.get("base_url") or "").strip()
+        token = str(body.get("auth_token") or saved.get("auth_token") or "").strip()
+        if not base_url or not token:
+            return web.json_response({"ok": False, "status": None,
+                                      "message": "Base URL and API token are both needed"})
+        if not re.match(r"^https?://[^\s/]+", base_url):
+            return web.json_response({"ok": False, "status": None,
+                                      "message": "Base URL must start with http:// or https://"})
+        sm: StorageManager = request.app['storage_manager']
+        uuids = [p.rhythm_uuid for p in sm.protocol_catalog.entries if not p.uuid_pending]
+        return web.json_response(
+            await rhythm_storage_mod.probe_connection(base_url, token, uuids))
 
     # ------------------------------------------------------------ admin: users
     @staticmethod

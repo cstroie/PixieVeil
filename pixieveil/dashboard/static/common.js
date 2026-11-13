@@ -323,6 +323,14 @@ const PV = (() => {
                 // Users sits before About.
                 nav.insertBefore(a, nav.querySelector('a[href="/about"]'));
             }
+            if (nav && !nav.querySelector('a[href="/settings"]')) {
+                const a = document.createElement('a');
+                a.href = '/settings';
+                a.textContent = 'Settings';
+                if (location.pathname === '/settings') a.setAttribute('aria-current', 'page');
+                // Settings sits between Users and About.
+                nav.insertBefore(a, nav.querySelector('a[href="/about"]'));
+            }
         }
         const wrap = document.createElement('div');
         wrap.className = 'account';
