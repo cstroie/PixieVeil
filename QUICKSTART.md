@@ -56,7 +56,7 @@ admin on the server (`./install` offers to do this for you):
 python -m pixieveil.auth add alice --admin     # or: ./pixieveil.sh users add alice --admin
 ```
 
-Admins can add more users on the dashboard's **Users** page.
+Admins can add more users on the dashboard's **Users** page. See [USERS.md](USERS.md) for every option.
 
 ## Start the server
 

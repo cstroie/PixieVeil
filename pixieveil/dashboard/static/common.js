@@ -296,6 +296,19 @@ const PV = (() => {
         location.href = '/login';
     }
 
+    // The Studies nav badge (studies needing input). / and /studies keep it
+    // current from their own data; every other page fills it once here.
+    async function refreshNavBadge() {
+        const badge = document.getElementById('nav-needs');
+        if (!badge || ['/', '/studies', '/login'].includes(location.pathname)) return;
+        try {
+            const { studies } = await api('/api/studies');
+            const needs = (studies || []).filter(PV.needsInput).length;
+            badge.hidden = !needs;
+            badge.textContent = needs;
+        } catch (_e) { /* badge is optional */ }
+    }
+
     async function initAccount() {
         const bar = document.querySelector('.topbar');
         if (!bar || location.pathname === '/login') return;
@@ -307,7 +320,8 @@ const PV = (() => {
                 a.href = '/users';
                 a.textContent = 'Users';
                 if (location.pathname === '/users') a.setAttribute('aria-current', 'page');
-                nav.appendChild(a);
+                // Users sits before About.
+                nav.insertBefore(a, nav.querySelector('a[href="/about"]'));
             }
         }
         const wrap = document.createElement('div');
@@ -430,6 +444,7 @@ const PV = (() => {
         document.querySelectorAll('[data-theme-toggle]').forEach(btn =>
             btn.addEventListener('click', toggleTheme));
         initAccount();
+        refreshNavBadge();
     });
 
     return {

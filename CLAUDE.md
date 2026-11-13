@@ -106,7 +106,10 @@ schema fails here rather than at upload time); dashboard authentication
 YAML user store, API tokens, the last-admin guard, cookie signing and expiry,
 the CLI; `tests/test_dashboard_auth.py`: redirect vs 401, public paths,
 login/lockout/open-redirect, CSRF, logout/disable revocation, admin-only
-`/api/users`, audit attribution); and the
+`/api/users`, audit attribution; `tests/test_user_registration.py`: each of the four
+USERS.md registration methods — installer prompt, CLI, `/users`, hand-edited
+`users.yaml` — driven through to an HTTP login, plus session expiry/refresh and
+API-token lifecycle); and the
 dashboard HTTP layer (`tests/test_dashboard.py`: every route's status
 codes/payload shape and `/api/options`, driven through
 aiohttp's in-process `TestServer`/`TestClient` on a real `StorageManager`).

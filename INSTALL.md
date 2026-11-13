@@ -64,6 +64,8 @@ http_server:
 
 ### Dashboard users
 
+Full guide: [USERS.md](USERS.md) (all four ways to add users, API tokens, sessions).
+
 The dashboard requires a login and has no sign-up page. `./install` (via
 `install.py`) offers to create the first admin when none exists. Otherwise,
 create one by hand, **as the account the service runs as** so the file is
