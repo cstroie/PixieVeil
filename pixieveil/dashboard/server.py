@@ -764,8 +764,24 @@ class Dashboard:
                                 or (ag and p.get("age_group") == ag)]
             except rhythm_storage_mod.RhythmApiError as e:
                 rhythm_error = e.message
+        catalogue: dict = {"manufacturers": [], "models": []}
+        profile_draft = None
+        if base and token and profile_match is None:
+            try:
+                catalogue = await rhythm_storage_mod.fetch_catalogue(base, token)
+            except rhythm_storage_mod.RhythmApiError as e:
+                rhythm_error = rhythm_error or e.message
+            profile_draft = protocol_draft.scanner_profile_draft(exam, headers, choices,
+                                                                 catalogue, n)
         return web.json_response({
             "study": n, "draft": draft, "choices": choices.to_dict(),
+            "catalogue": {
+                "manufacturers": [{"id": m.get("id"), "name": m.get("name")}
+                                  for m in catalogue.get("manufacturers") or []],
+                "models": [{"id": m.get("id"), "name": m.get("name"),
+                            "manufacturer": m.get("manufacturer")}
+                           for m in catalogue.get("models") or []]},
+            "profile_draft": profile_draft,
             "choices_source": source, "rhythm_configured": bool(base and token),
             "rhythm_base_url": base or None, "rhythm_error": rhythm_error,
             "profiles": [{"id": p.get("id"), "manufacturer": p.get("manufacturer_name"),
@@ -808,7 +824,8 @@ class Dashboard:
         return errors
 
     @staticmethod
-    def _apply_local(doc: dict, local: dict, rhythm_id: str) -> tuple[dict, str]:
+    def _apply_local(doc: dict, local: dict, rhythm_id: str,
+                     scanner_rhythm_id: Optional[str] = None) -> tuple[dict, str]:
         """Put the protocol (with *rhythm_id*) into catalog *doc*; returns
         (doc, protocol key). An existing protocol with one of the names on
         that scanner gets the UUID (and empty fields filled) instead."""
@@ -828,6 +845,10 @@ class Dashboard:
                        "manufacturer": new.get("manufacturer"), "model": new.get("model"),
                        "rhythm_scanner_id": None, "protocols": []}
             scanners.append(scanner)
+        if (scanner_rhythm_id and not scanner.get("rhythm_scanner_id")
+                and re.fullmatch(r"[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}",
+                                 scanner_rhythm_id)):
+            scanner["rhythm_scanner_id"] = scanner_rhythm_id
         protos = scanner.setdefault("protocols", [])
         names = [str(x).strip() for x in local.get("names") or [] if str(x).strip()]
         wanted = {protocol_catalog.normalize_name(x) for x in names}
@@ -875,13 +896,54 @@ class Dashboard:
             if protocol_catalog.is_pending_uuid(use_existing) or not re.fullmatch(
                     r"[0-9a-fA-F-]{32,36}", use_existing):
                 errors["use_existing"] = "Not a protocol UUID"
-        else:
+        new_profile = body.get("new_profile")
+        profile_payload: dict = {}
+        catalogue: dict = {}
+        if not use_existing:
             choices, _src, _err = await self._draft_choices(base, token)
-            payload, rerr = protocol_draft.validate_submission(body.get("rhythm") or {},
-                                                               choices)
+            rhythm_in = dict(body.get("rhythm") or {})
+            if new_profile and not rhythm_in.get("scanner"):
+                try:
+                    catalogue = await rhythm_storage_mod.fetch_catalogue(base, token)
+                except rhythm_storage_mod.RhythmApiError as e:
+                    return web.json_response({"error": e.message}, status=502)
+                profile_payload, perr = protocol_draft.validate_profile(new_profile, choices,
+                                                                        catalogue)
+                errors.update({f"new_profile.{k}": v for k, v in perr.items()})
+                rhythm_in["scanner"] = "(new)"      # validated separately above
+            payload, rerr = protocol_draft.validate_submission(rhythm_in, choices)
             errors.update({f"rhythm.{k}": v for k, v in rerr.items()})
         if errors:
             return web.json_response({"error": "invalid draft", "errors": errors}, status=400)
+
+        profile_id: Optional[str] = None
+        profile_created = False
+        if profile_payload:
+            # Don't create a second profile if one for this model exists now.
+            try:
+                site_profiles = await rhythm_storage_mod.fetch_all(
+                    base, token, rhythm_storage_mod.PROFILES_PATH)
+            except rhythm_storage_mod.RhythmApiError as e:
+                return web.json_response({"error": e.message}, status=502)
+            same = [p for p in site_profiles
+                    if str(p.get("scanner_model")) == profile_payload["scanner_model"]]
+            if same:
+                profile_id = str(same[0].get("id"))
+            else:
+                try:
+                    created = await rhythm_storage_mod.create_scanner_profile(
+                        base, token, profile_payload)
+                except rhythm_storage_mod.RhythmApiError as e:
+                    errs = getattr(e, "errors", {}) or {}
+                    return web.json_response(
+                        {"error": e.message,
+                         "errors": {f"new_profile.{k}": v for k, v in errs.items()}},
+                        status=400 if e.status == 400 else 502)
+                profile_id, profile_created = str(created["id"]), True
+                logger.info(f"Audit: user={self._actor(request)} "
+                            f"action=rhythm_scanner_profile_created study={n} "
+                            f"profile_id={profile_id}")
+            payload["scanner"] = profile_id
 
         warnings: list[str] = []
         if use_existing:
@@ -891,9 +953,13 @@ class Dashboard:
                 record = await rhythm_storage_mod.create_protocol(base, token, payload)
             except rhythm_storage_mod.RhythmApiError as e:
                 errs = getattr(e, "errors", {}) or {}
-                return web.json_response(
-                    {"error": e.message, "errors": {f"rhythm.{k}": v for k, v in errs.items()}},
-                    status=400 if e.status == 400 else 502)
+                out = {"error": e.message,
+                       "errors": {f"rhythm.{k}": v for k, v in errs.items()}}
+                if profile_id:
+                    # Keep it: the dialog switches to this profile so a retry
+                    # doesn't create a second one.
+                    out.update(profile_id=profile_id, profile_created=profile_created)
+                return web.json_response(out, status=400 if e.status == 400 else 502)
             rhythm_id = str(record["id"])
             logger.info(f"Audit: user={self._actor(request)} action=rhythm_protocol_created "
                         f"study={n} rhythm_id={rhythm_id}")
@@ -905,8 +971,10 @@ class Dashboard:
                 warnings.append("RHYTHM's API did not store the examination group — set it on "
                                 "RHYTHM's Protocol Records page for this protocol")
 
+        scanner_rhythm_id = profile_id or str((body.get("rhythm") or {}).get("scanner") or "") \
+            or None
         try:
-            new_doc, key = self._apply_local(doc, local, rhythm_id)
+            new_doc, key = self._apply_local(doc, local, rhythm_id, scanner_rhythm_id)
             await asyncio.to_thread(catalog.replace, new_doc,
                                     expected_version=catalog.version)
         except (protocol_catalog.CatalogError, OSError) as e:
@@ -917,6 +985,7 @@ class Dashboard:
                 "ok": False, "rhythm_id": rhythm_id,
                 "error": "Created on RHYTHM, but the local protocol could not be saved — add "
                          f"UUID {rhythm_id} on the Protocols page",
+                "profile_id": profile_id,
                 "details": detail, "warnings": warnings}, status=200)
         restudied = await asyncio.to_thread(sm.reapply_catalog_sync)
         sm._catalog_matched_version = catalog.version
@@ -924,6 +993,7 @@ class Dashboard:
                     f"local_key={key} rhythm_id={rhythm_id}")
         return web.json_response({
             "ok": True, "rhythm_id": rhythm_id, "local_key": key, "restudied": restudied,
+            "profile_id": profile_id, "profile_created": profile_created,
             "rhythm_url": f"{base}/protocols/records/", "warnings": warnings,
             "linked_existing": bool(use_existing)})
 

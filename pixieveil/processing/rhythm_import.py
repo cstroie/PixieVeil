@@ -31,7 +31,12 @@ MANUFACTURER_ALIASES: dict[str, tuple[str, ...]] = {
     "fujifilm": ("fujifilm", "hitachi"),
 }
 # Words that carry no model identity.
-_BRAND_WORDS = {"somatom", "naeotom", "series", "ct", "scanner"}
+_BRAND_WORDS = {"somatom", "naeotom", "series", "ct", "scanner",
+                # manufacturer words: RHYTHM's catalogue names models
+                # "Siemens SOMATOM Force", DICOM says just "SOMATOM Force"
+                "siemens", "healthineers", "ge", "healthcare", "medical", "systems",
+                "philips", "canon", "toshiba", "united", "imaging", "uih", "neusoft",
+                "fujifilm", "hitachi", "minfound", "samsung", "neurologica"}
 
 SET_UUID = "set_uuid"
 SAME = "same"

@@ -521,3 +521,112 @@ def validate_submission(rhythm: dict, choices: Choices) -> tuple[dict, dict[str,
             errors[f"mas_inputs.{label}"] = f"{label} is required"
         payload["mas_inputs"][label] = v
     return payload, errors
+
+
+# ------------------------------------------------------------------ scanner profile
+def detector_rows_from_exam(exam: dict) -> int | None:
+    """Detector rows used = total ÷ single collimation width of the first
+    diagnostic series (16 × 1.2 mm = 19.2 mm → 16)."""
+    s = _diagnostic_series(exam) or {}
+    total, single = _num(s.get("total_collimation_width_mm")), \
+        _num(s.get("single_collimation_width_mm"))
+    if not total or not single:
+        return None
+    rows = total / single
+    return int(round(rows)) if abs(rows - round(rows)) < 0.05 and rows >= 1 else None
+
+
+def scanner_profile_draft(exam: dict, headers: dict, choices: Choices, catalogue: dict,
+                          study_number: int | None = None) -> dict[str, Any]:
+    """Proposal for a new RHYTHM scanner profile for the study's scanner.
+
+    *catalogue* = ``{"manufacturers": [{id, name}], "models": [{id,
+    manufacturer, manufacturer_name, name}]}`` from RHYTHM.
+    """
+    from pixieveil.processing.rhythm_import import model_tokens
+
+    scanner = exam.get("scanner") or {}
+    manufacturer = scanner.get("manufacturer") or headers.get("Manufacturer") or ""
+    model = scanner.get("model") or headers.get("ManufacturerModelName") or ""
+    family = manufacturer_family(manufacturer)
+    makers = [m for m in catalogue.get("manufacturers") or [] if isinstance(m, dict)]
+    maker = next((m for m in makers if manufacturer_family(m.get("name")) == family), None)
+    models = [m for m in catalogue.get("models") or [] if isinstance(m, dict)
+              and maker is not None and str(m.get("manufacturer")) == str(maker.get("id"))]
+    toks = model_tokens(model)
+    exact = [m for m in models if toks and model_tokens(m.get("name")) == toks]
+    near = [m for m in models if toks and m not in exact
+            and (model_tokens(m.get("name")) <= toks or toks <= model_tokens(m.get("name")))
+            and model_tokens(m.get("name"))]
+
+    rows = detector_rows_from_exam(exam)
+    rows_field: dict[str, Any] = {"value": None, "other": "", "source": FILL, "note": ""}
+    if rows:
+        hit = choices.match("detector_rows", f"{rows} rows")
+        if hit:
+            rows_field.update(value=hit, source=STUDY)
+        elif OTHER in choices.values("detector_rows"):
+            rows_field.update(value=OTHER, other=f"{rows} rows", source=STUDY)
+        rows_field["note"] = "from the collimation of the first diagnostic series"
+
+    software = headers.get("SoftwareVersions") or ""
+    ident = f"DICOM {manufacturer} / {model}".strip() + (f", {software}" if software else "")
+    note = (f"Created by PixieVeil from study {study_number:04d}; " if study_number
+            else "Created by PixieVeil; ") + ident
+    rhythm_maker = (maker or {}).get("name") or RHYTHM_MANUFACTURER.get(family or "") \
+        or manufacturer
+    request_text = (
+        "Please add a CT scanner model to RHYTHM's catalogue:\n"
+        f"- Manufacturer: {rhythm_maker}\n"
+        f"- Model: {model}\n"
+        f"- {ident}" + (f"\n- Detector rows: {rows}" if rows else ""))
+    return {
+        "manufacturer_id": (maker or {}).get("id"),
+        "model_id": exact[0].get("id") if len(exact) == 1 else None,
+        "model_candidates": [m.get("id") for m in exact + near],
+        "missing_model": maker is None or not (exact or near),
+        "detector_rows": rows_field,
+        "year_of_installation": {"value": None, "other": "", "source": FILL,
+                                 "note": "Not in the images"},
+        "note": note,
+        "request_text": request_text,
+        "study_scanner": {"manufacturer": manufacturer, "model": model},
+    }
+
+
+def validate_profile(profile: Any, choices: Choices,
+                     catalogue: dict) -> tuple[dict, dict[str, str]]:
+    """Form → RHYTHM ``scanner-profiles/`` payload, with errors by field."""
+    errors: dict[str, str] = {}
+    if not isinstance(profile, dict):
+        return {}, {"new_profile": "missing scanner profile"}
+    makers = {str(m.get("id")): m for m in catalogue.get("manufacturers") or []}
+    models = {str(m.get("id")): m for m in catalogue.get("models") or []}
+    maker_id, model_id = str(profile.get("manufacturer") or ""), \
+        str(profile.get("scanner_model") or "")
+    if maker_id not in makers:
+        errors["manufacturer"] = "Choose the manufacturer"
+    if model_id not in models:
+        errors["scanner_model"] = "Choose the scanner model (from RHYTHM's catalogue)"
+    elif maker_id and str(models[model_id].get("manufacturer")) != maker_id:
+        errors["scanner_model"] = "This model belongs to another manufacturer"
+    payload: dict[str, Any] = {"manufacturer": maker_id, "scanner_model": model_id,
+                               "local_protocol_note": str(profile.get("note") or "").strip()}
+    for key in ("detector_rows", "year_of_installation"):
+        entry = profile.get(key) or {}
+        value = str(entry.get("value") or "").strip()
+        other = str(entry.get("other") or "").strip()
+        allowed = choices.values(key)
+        if not value:
+            errors[key] = "Required"
+            continue
+        if allowed and value not in allowed:
+            errors[key] = f"'{value}' is not a RHYTHM option"
+            continue
+        if value == OTHER:
+            if not other:
+                errors[key] = "Specify the value"
+                continue
+            value = other
+        payload[key] = value
+    return payload, errors

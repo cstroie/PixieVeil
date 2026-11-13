@@ -171,6 +171,16 @@ in the vendored code:
   which needs a browser session), so set the examination group on RHYTHM's site
   afterwards.
 
+**Creating a scanner profile** (used when a draft's scanner is new to RHYTHM):
+`POST scanner-profiles/` with `manufacturer` and `scanner_model` (catalogue ids from
+`manufacturers/` / `scanner-models/`), `detector_rows` and `year_of_installation`
+(protocol-choices options, or the free text after "Other: Please Specify"), and
+`local_protocol_note` → `201` with the profile (`id`). `site_code` / `created_by` come
+from the token's user. The **catalogue** (manufacturers, models) is read-only over the
+API; only RHYTHM admins extend it. Catalogue model names may carry the brand
+("Siemens SOMATOM Force"), so PixieVeil compares model words without manufacturer or
+brand words.
+
 **Protocol options:** `GET protocol-choices/` →
 `[{key, label, options: [{value, display, applicable_protocol_types}]}]`. Keys are
 `scan_type`, `contrast`, `number_of_phases`, `auto_kvp_selection`, `kvp`,

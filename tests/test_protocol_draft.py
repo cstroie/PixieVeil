@@ -24,6 +24,7 @@ BUNDLED = json.loads((Path(pd.__file__).parent.parent / "dashboard" / "rhythm_ch
 CH = pd.Choices(BUNDLED["categories"], BUNDLED["manufacturer_field_options"],
                 BUNDLED["ma_modulation_inputs"])
 RID = "33333333-3333-4333-8333-333333333333"
+PROFILE_ID = "44444444-4444-4444-8444-444444444444"
 
 
 def _exam(age=2, weight=30, region="Head", ci="Trauma", iv="Non-contrast", rdsr=True):
@@ -126,7 +127,7 @@ def _submission(**over):
     fields = {k: {"value": v.get("value"), "other": v.get("other", "")}
               for k, v in d["rhythm"]["fields"].items() if k != "mas_inputs"}
     fields["auto_kvp_selection"] = {"value": "Off"}
-    rhythm = {"scanner": "p-emotion", "protocol_type": "PEDIATRIC_HEAD", "fields": fields,
+    rhythm = {"scanner": PROFILE_ID, "protocol_type": "PEDIATRIC_HEAD", "fields": fields,
               "mas_inputs": d["rhythm"]["fields"]["mas_inputs"]["value"],
               "protocol_name": "CEREBRAL_SPIRAL_NATIV", "anatomical_region": "Head",
               "clinical_indication": "Trauma", "notes": "n",
@@ -143,7 +144,7 @@ class TestValidate:
         assert payload["kvp"] == "110" and payload["auto_ma_modulation"] == "CareDose4D"
         assert payload["examination_group"] == "Group 3 – Early Childhood"
         assert payload["mas_inputs"] == {"Quality Reference mAs (QR mAs)": "164"}
-        assert payload["scanner"] == "p-emotion"
+        assert payload["scanner"] == PROFILE_ID
 
     def test_errors(self):
         _d, rhythm = _submission(scanner="", protocol_type="X")
@@ -212,7 +213,7 @@ class FakeRhythm:
 
     def _get(self, url):
         if "/scanner-profiles/" in url:
-            return _Resp(200, {"results": [{"id": "p-emotion",
+            return _Resp(200, {"results": [{"id": PROFILE_ID,
                                             "manufacturer_name": "Siemens Healthineers",
                                             "scanner_model_name": "SOMATOM Emotion 16"}]})
         if "/protocol-choices/" in url:
@@ -221,7 +222,7 @@ class FakeRhythm:
             return _Resp(200, {"id": RID, "protocol_type": "PEDIATRIC_HEAD",
                                "age_group": "1y_6y"})
         if "/protocols-api/" in url:
-            return _Resp(200, {"results": [{"id": "old-1", "scanner": "p-emotion",
+            return _Resp(200, {"results": [{"id": "old-1", "scanner": PROFILE_ID,
                                             "protocol_type": "PEDIATRIC_HEAD",
                                             "protocol_name": "cerebral spiral nativ",
                                             "age_group": "gt_6y"}]})
@@ -290,7 +291,7 @@ class TestRoutes:
         status, text = _run(d, script)
         body = json.loads(text)
         assert status == 200
-        assert body["choices_source"] == "live" and body["profile_match"] == "p-emotion"
+        assert body["choices_source"] == "live" and body["profile_match"] == PROFILE_ID
         assert [e["id"] for e in body["existing"]] == ["old-1"]
         assert body["draft"]["rhythm"]["fields"]["kvp"]["value"] == "110"
         assert TOKEN not in text

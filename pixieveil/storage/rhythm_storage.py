@@ -629,3 +629,36 @@ async def find_protocols(base_url: str, auth_token: str, scanner_id: str,
     items = await fetch_all(base_url, auth_token, PROTOCOLS_PATH + q)
     return [p for p in items if str(p.get("scanner")) == str(scanner_id)
             and (not protocol_type or p.get("protocol_type") == protocol_type)]
+
+
+# -- scanner catalogue + creating a scanner profile ---------------------------
+
+MANUFACTURERS_PATH = "/api/v1/manufacturers/"
+SCANNER_MODELS_PATH = "/api/v1/scanner-models/"
+_catalogue_cache: dict[str, tuple[float, dict]] = {}
+
+
+async def fetch_catalogue(base_url: str, auth_token: str) -> dict[str, list[dict]]:
+    """RHYTHM's scanner catalogue ``{"manufacturers": [...], "models": [...]}``
+    (admin-maintained; read-only over the API), cached like the choices."""
+    key = base_url.rstrip("/")
+    hit = _catalogue_cache.get(key)
+    if hit and hit[0] > time.time():
+        return hit[1]
+    out = {"manufacturers": await fetch_all(base_url, auth_token, MANUFACTURERS_PATH),
+           "models": await fetch_all(base_url, auth_token, SCANNER_MODELS_PATH)}
+    _catalogue_cache[key] = (time.time() + CHOICES_TTL_S, out)
+    return out
+
+
+async def create_scanner_profile(base_url: str, auth_token: str, payload: dict) -> dict:
+    """POST a CTScannerProfile for the token user's site; returns it (with
+    ``id``). RHYTHM's 400 field errors are raised as RhythmApiError.errors."""
+    status, body = await _send_json("POST", base_url, auth_token, PROFILES_PATH, payload)
+    if status in (200, 201) and isinstance(body, dict) and body.get("id"):
+        return body
+    err = RhythmApiError(status, f"RHYTHM refused the scanner (HTTP {status})"
+                         if status not in (401, 403) else
+                         f"RHYTHM rejected the token (HTTP {status})")
+    err.errors = _field_errors(body) if status == 400 else {}  # type: ignore[attr-defined]
+    raise err

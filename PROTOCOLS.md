@@ -158,6 +158,25 @@ PixieVeil pre-fills both halves from the study:
   group) are listed with **Use this one**, which links that UUID instead of
   creating a duplicate.
 
+**A scanner RHYTHM doesn't know yet:** if none of your site's RHYTHM scanner
+profiles matches the study's scanner, the RHYTHM scanner list offers **+ Create new
+scanner on RHYTHM…** (pre-selected). The panel proposes:
+- the manufacturer (SIEMENS → Siemens Healthineers);
+- the model from RHYTHM's catalogue (DICOM `Emotion 16` ↔ RHYTHM `Siemens SOMATOM
+  Emotion 16`);
+- the detector rows from the study's collimation (16 × 1.2 mm → *16 rows*).
+
+You add the installation year. Create then makes the scanner profile first, then
+the protocol on it, and stores the new profile's ID as the local scanner's *RHYTHM
+scanner ID*. If RHYTHM already has a profile for that model (for example, created
+in the meantime), it is reused rather than duplicated. If the scanner was created
+but the protocol was refused, the dialog switches to the new scanner so a retry
+doesn't make a second one.
+
+Only RHYTHM's admins can add a **model** to the catalogue. When the model isn't
+there, the panel says so and offers **Copy request text** for the admin;
+Create stays blocked until it's added.
+
 **Create on RHYTHM & add locally** checks everything first, then creates the
 protocol through RHYTHM's API with your token, and adds or updates the local
 protocol with the new UUID. Matching studies are re-matched straight away. If

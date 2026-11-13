@@ -1561,7 +1561,7 @@ class StorageManager:
     # Header tags the protocol draft can use (none of them identify a patient).
     _DRAFT_TAGS = ("KVP", "ExposureModulationType", "DataCollectionDiameter",
                    "ReconstructionDiameter", "ContrastBolusAgent", "ConvolutionKernel",
-                   "SliceThickness", "SpiralPitchFactor", "XRayTubeCurrent")
+                   "SliceThickness", "SpiralPitchFactor", "XRayTubeCurrent", "SoftwareVersions")
 
     def protocol_draft_inputs_sync(self, study_number: int) -> Optional[tuple[dict, dict]]:
         """(effective exam, headers) for drafting a protocol from a study.
