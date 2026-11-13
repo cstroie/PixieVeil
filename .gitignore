@@ -16,3 +16,6 @@ UNINSTALL.md
 config/users.yaml
 config/.session_secret
 config/protocols.yaml
+
+# Backups of config files (may hold secrets)
+config/*.bak*
