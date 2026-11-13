@@ -34,7 +34,7 @@ from pixieveil.config import Settings, settings_editor
 from pixieveil.dashboard import options
 from pixieveil.dashboard.setup import SetupRoutes, SetupState
 from pixieveil.dicom_server.server import SUPPORTED_STORAGE_SOP_CLASSES
-from pixieveil.processing import exam_merge, protocol_catalog
+from pixieveil.processing import exam_merge, protocol_catalog, rhythm_import
 from pixieveil.storage import rhythm_storage as rhythm_storage_mod
 from pixieveil.storage.storage_manager import StorageManager
 
@@ -162,6 +162,7 @@ class Dashboard:
             web.get("/api/protocols", self.handle_protocols_get),
             web.put("/api/protocols", self.handle_protocols_put),
             web.get("/api/protocols/unmatched", self.handle_protocols_unmatched),
+            web.post("/api/protocols/rhythm-import", self.handle_protocols_rhythm_import),
             web.get("/settings", self.handle_settings_page),
             web.get("/api/settings", self.handle_settings_get),
             web.put("/api/settings", self.handle_settings_put),
@@ -464,6 +465,55 @@ class Dashboard:
         logger.info(f"Protocol catalog saved by user={self._actor(request)}")
         changed = await asyncio.to_thread(sm.reapply_catalog_sync)
         return web.json_response({"ok": True, "version": version, "restudied": changed})
+
+    async def _rhythm_credentials(self, sm: StorageManager) -> tuple[str, str, Optional[str]]:
+        """(base_url, token, site_code): the saved settings file first (a token
+        saved but not yet applied by a restart already works), else the
+        running RhythmStorage. Empty strings when not configured."""
+        saved: dict = {}
+        if self.settings_editor is not None:
+            try:
+                _raw, doc = await asyncio.to_thread(self.settings_editor.read_document)
+                saved = ((doc.get("storage") or {}).get("remote_storage") or {}) \
+                    .get("rhythm") or {}
+            except (OSError, yaml.YAMLError, settings_editor.SettingsError) as e:
+                logger.warning(f"Cannot read saved RHYTHM settings: {e}")
+        rs = sm.rhythm_storage
+        base = str(saved.get("base_url") or rs.base_url or "").strip()
+        token = str(saved.get("auth_token") or rs.auth_token or "").strip()
+        site = saved.get("site_code") or rs.site_code
+        return base, token, site
+
+    async def handle_protocols_rhythm_import(self, request: web.Request) -> web.Response:
+        """Read the site's scanner profiles + protocols from RHYTHM and return
+        a plan for mapping them onto the catalog. Writes nothing: the page
+        applies the ticked proposals as unsaved edits, saved via PUT."""
+        self._require_admin(request)
+        sm: StorageManager = request.app['storage_manager']
+        base, token, site = await self._rhythm_credentials(sm)
+        if not base or not token:
+            return web.json_response(
+                {"error": "Set the RHYTHM base URL and API token on Settings first"},
+                status=409)
+        try:
+            remote = await rhythm_storage_mod.fetch_site_catalog(base, token)
+        except rhythm_storage_mod.RhythmApiError as e:
+            return web.json_response({"error": e.message, "rhythm_status": e.status},
+                                     status=502)
+        catalog = sm.protocol_catalog
+        doc = await asyncio.to_thread(catalog.document)
+        vocab = {"region_indications": options.REGION_INDICATIONS,
+                 "iv_contrast": options.IV_CONTRAST}
+        plan = rhythm_import.plan_import(doc, remote["profiles"], remote["protocols"],
+                                         vocab, site_code=site)
+        logger.info(f"Audit: user={self._actor(request)} action=rhythm_import_preview "
+                    f"profiles={len(remote['profiles'])} protocols={len(remote['protocols'])}")
+        return web.json_response({
+            "rhythm": {"base_url": base, "profiles": len(remote["profiles"]),
+                       "protocols": len(remote["protocols"])},
+            "plan": plan,
+            "catalog_version": catalog.version,
+        })
 
     async def handle_protocols_unmatched(self, request: web.Request) -> web.Response:
         sm: StorageManager = request.app['storage_manager']

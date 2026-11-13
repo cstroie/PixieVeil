@@ -53,6 +53,15 @@
         .errors { color: var(--bad); background: var(--bad-soft); border-radius: var(--radius-sm); padding: 10px 14px; margin: 0; }
         .errors[hidden] { display: none; }
         .errors li { margin-left: 16px; }
+        dialog.modal:has(.import-plan) { width: min(1040px, 96vw); max-width: none; }
+        .import-plan { max-height: 65vh; overflow: auto; display: flex; flex-direction: column; gap: 16px; }
+        .import-plan section { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 10px 12px; }
+        .import-plan h3 { font-size: 14px; margin: 0 0 8px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+        .import-plan table { width: 100%; font-size: 12.5px; border-collapse: collapse; }
+        .import-plan td, .import-plan th { padding: 5px 6px; border-top: 1px solid var(--border); text-align: left; vertical-align: top; }
+        .import-plan .uuid-cell { font-family: var(--mono); font-size: 11px; }
+        .import-plan .note { color: var(--text-faint); font-size: 11.5px; }
+        .import-plan .old { text-decoration: line-through; color: var(--text-faint); }
     </style>
 </head>
 <body>
@@ -159,7 +168,8 @@
                 <span class="count pill ${nUnmatched ? 'warn' : 'done'} plain">${nUnmatched}</span></button>
             <div class="group-label">Scanners</div>
             ${items || '<p class="muted-note" style="padding:0 10px">No scanners yet.</p>'}
-            ${state.editable ? '<button type="button" class="btn btn-sm add" id="add-scanner">Add scanner</button>' : ''}`;
+            ${state.editable ? `<button type="button" class="btn btn-sm add" id="add-scanner">Add scanner</button>
+                <button type="button" class="btn btn-sm add" id="rhythm-import" title="Read your site's scanners and protocols from RHYTHM">${icon('refresh')} Import from RHYTHM</button>` : ''}`;
     }
 
     // ------------------------------------------------------------ inbox
@@ -277,9 +287,115 @@
         return s;
     }
 
+    // ------------------------------------------------------------ import from RHYTHM
+    const ACTION_PILL = {
+        set_uuid: ['ok', 'Set UUID'], same: ['done', 'Already set'], replace_uuid: ['warn', 'Replace UUID'],
+        add: ['busy', 'New protocol'], ambiguous: ['warn', 'Pick protocol'],
+    };
+    function findProtocol(key) {
+        for (const s of state.doc.scanners) for (const p of s.protocols) if (p.key === key) return p;
+        return null;
+    }
+    function fillText(f) {
+        const parts = [];
+        if (f.region) parts.push(`${f.region} / ${f.clinical_indication}`);
+        if (f.iv_contrast) parts.push(f.iv_contrast);
+        return parts.length ? 'fill: ' + parts.join(', ') : '';
+    }
+    function importBody(res) {
+        const plan = res.plan;
+        const scannerOpts = sel => `<option value="">— skip —</option>` + state.doc.scanners.map(s =>
+            `<option value="${esc(s.id)}" ${s.id === sel ? 'selected' : ''}>${esc(scannerLabel(s))}</option>`).join('');
+        const sections = plan.scanners.map((sc, si) => {
+            const rows = sc.protocols.map((r, ri) => {
+                const [tone, label] = ACTION_PILL[r.action] || ['done', r.action];
+                const local = r.action === 'ambiguous'
+                    ? `<select class="select" name="pick-${si}-${ri}" style="height:26px">${r.candidates.map(c =>
+                        `<option value="${esc(c.key)}">${esc(c.label || c.key)}</option>`).join('')}</select>`
+                    : (r.local ? esc(r.local.label || r.local.key) : '<span class="note">(new)</span>');
+                const uuid = r.action === 'replace_uuid'
+                    ? `<span class="old">${esc(r.local.rhythm_uuid)}</span><br>${esc(r.rhythm.id)}` : esc(r.rhythm.id);
+                const notes = [fillText(r.fill || {}), ...(r.notes || [])].filter(Boolean)
+                    .map(n => `<div class="note">${esc(n)}</div>`).join('');
+                const can = !(r.action === 'same' && !Object.keys(r.fill || {}).length);
+                return `<tr><td><input type="checkbox" name="take-${si}-${ri}" ${r.selected ? 'checked' : ''} ${can ? '' : 'disabled'}></td>
+                    <td><span class="pill ${tone} plain">${label}</span></td>
+                    <td class="mono">${esc(r.rhythm.name)}</td><td>${local}</td>
+                    <td class="uuid-cell">${uuid}</td><td>${notes}</td></tr>`;
+            }).join('');
+            const missing = sc.local_not_on_rhythm.length
+                ? `<p class="note">Local protocols not on RHYTHM yet: ${sc.local_not_on_rhythm.map(p => esc(p.label || p.key)).join(', ')}</p>` : '';
+            return `<section>
+                <h3>RHYTHM: ${esc(sc.profile.manufacturer || '')} ${esc(sc.profile.model || '')}
+                    <span class="note">→ local scanner</span>
+                    <select class="select" name="sc-${si}" style="height:28px; max-width:280px">${scannerOpts(sc.match)}</select>
+                    ${!sc.match && sc.candidates.length ? '<span class="note">(several possible — pick one)</span>' : ''}</h3>
+                ${rows ? `<table><thead><tr><th></th><th>Action</th><th>RHYTHM protocol</th><th>Local protocol</th><th>UUID</th><th>Notes</th></tr></thead>
+                    <tbody>${rows}</tbody></table>` : '<p class="note">No protocols registered for this scanner on RHYTHM.</p>'}
+                ${missing}</section>`;
+        }).join('');
+        const extra = [];
+        if (plan.unpaired_local.length) extra.push(`<p class="note"><b>Local scanners not on RHYTHM:</b>
+            ${plan.unpaired_local.map(s => esc(s.name || s.model)).join(', ')} — register them on RHYTHM first.</p>`);
+        if (plan.foreign_site.length) extra.push(`<p class="note"><b>Skipped (other site code):</b>
+            ${plan.foreign_site.map(p => esc(p.name)).join(', ')}</p>`);
+        if (plan.orphans.length) extra.push(`<p class="note"><b>Protocols on unknown RHYTHM scanners:</b>
+            ${plan.orphans.map(p => esc(p.name)).join(', ')}</p>`);
+        return `<p>RHYTHM at <span class="mono">${esc(res.rhythm.base_url)}</span>: ${res.rhythm.profiles} scanner(s),
+                ${res.rhythm.protocols} protocol(s). Tick what to take over; nothing is saved until you click <b>Save changes</b>.
+                The local scanner choice decides where <i>new</i> protocols go.</p>
+            <div class="import-plan">${sections || '<p class="note">No scanner profiles on RHYTHM for your site yet.</p>'}${extra.join('')}</div>`;
+    }
+    function applyImport(plan, fd) {
+        let n = 0, skipped = 0;
+        const fill = (p, f) => {
+            for (const k of ['region', 'clinical_indication', 'iv_contrast']) if (f && f[k] && !p[k]) p[k] = f[k];
+        };
+        plan.scanners.forEach((sc, si) => {
+            const target = scannerById(String(fd.get(`sc-${si}`) || ''));
+            if (target && !target.rhythm_scanner_id) { target.rhythm_scanner_id = sc.profile.id; n++; }
+            sc.protocols.forEach((r, ri) => {
+                if (!fd.get(`take-${si}-${ri}`)) return;
+                if (r.action === 'add') {
+                    if (!target) { skipped++; return; }
+                    const p = newProtocol(target, r.rhythm.name);
+                    p.rhythm_uuid = r.rhythm.id;
+                    fill(p, r.fill);
+                    n++;
+                    return;
+                }
+                const key = r.action === 'ambiguous' ? String(fd.get(`pick-${si}-${ri}`) || '') : r.local && r.local.key;
+                const p = key && findProtocol(key);
+                if (!p) { skipped++; return; }
+                p.rhythm_uuid = r.rhythm.id;
+                fill(p, r.fill);
+                n++;
+            });
+        });
+        return { n, skipped };
+    }
+    async function rhythmImport() {
+        if (dirty()) { toast('Save or discard your changes first, then import.', 'bad', 6000); return; }
+        let res;
+        toast('Reading scanners and protocols from RHYTHM…', 'info', 3000);
+        try {
+            res = await api('/api/protocols/rhythm-import', { method: 'POST', body: {} });
+        } catch (e) {
+            toast(e.message, 'bad', 8000);
+            return;
+        }
+        const fd = await modal({ title: 'Import from RHYTHM', confirm: 'Apply selected', body: importBody(res) });
+        if (!fd) return;
+        const { n, skipped } = applyImport(res.plan, fd);
+        render();
+        toast(n ? `${n} change(s) applied — review and click Save changes.${skipped ? ` ${skipped} skipped (no local scanner/protocol chosen).` : ''}`
+                : 'Nothing selected.', n ? 'ok' : 'info', 8000);
+    }
+
     document.getElementById('side').addEventListener('click', async e => {
         const item = e.target.closest('[data-sel]');
         if (item) { state.sel = item.dataset.sel; render(); return; }
+        if (e.target.closest('#rhythm-import')) { rhythmImport(); return; }
         if (e.target.id === 'add-scanner') {
             const fd = await modal({ title: 'Add scanner', confirm: 'Add',
                 body: `<p class="dim">Enter the values exactly as the scanner writes them in the DICOM header.

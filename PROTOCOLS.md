@@ -127,6 +127,36 @@ Paste it into the protocol's **RHYTHM protocol UUID** field and save. Until a
 protocol has a UUID it shows **UUID pending — export blocked**: studies still match
 it and pre-fill, but RHYTHM upload refuses them with a message pointing here.
 
+### Import from RHYTHM
+
+Once the RHYTHM connection is set on **Settings** (base URL + API token, see
+[RHYTHM_API.md](RHYTHM_API.md)), **Import from RHYTHM** (left column) reads your
+site's scanner profiles and protocols from RHYTHM and proposes how they map onto
+this page. Nothing changes until you tick proposals, click **Apply selected** and
+then **Save changes**. Start from a saved page: the button refuses while there are
+unsaved changes.
+
+- **Scanners** pair by manufacturer and model. RHYTHM's "Siemens Healthineers /
+  SOMATOM Emotion 16" pairs with the DICOM "SIEMENS / Emotion 16". Only an exact
+  model match pairs automatically; otherwise pick the local scanner in the dialog,
+  or *skip*. Pairing also fills the scanner's *RHYTHM scanner ID* if it's empty.
+- **Protocols** pair by name, ignoring case and treating `_`, `-` and spaces alike
+  (`CAP_SPIRAL_CONTRAST` = "cap spiral contrast"):
+
+  | Proposal | Meaning | Ticked by default |
+  |---|---|---|
+  | Set UUID | the local protocol has no UUID yet | yes |
+  | Already set | same UUID; shown for completeness | — |
+  | Replace UUID | the local protocol has a *different* UUID (flagged when that UUID is shared by several protocols, as after the upgrade) | no |
+  | New protocol | no local protocol has that name; adds one under the chosen scanner | no |
+  | Pick protocol | several local protocols have that name; choose which | no |
+
+- **Region / indication / contrast** are copied only into empty fields, and only
+  when RHYTHM's values are one of the known combinations. Differences are shown as
+  notes, never overwritten.
+- Also listed: local scanners and protocols that RHYTHM doesn't have yet (register
+  them there), and RHYTHM protocols with another site code (skipped).
+
 ### Deleting
 
 - **Delete** on a protocol row. The *Studies* column shows how many studies use it.
@@ -215,6 +245,7 @@ files and logs a warning. The old files are then no longer read; they carry a
 | `GET /api/protocols` | any user | the catalog, its `version`, per-protocol study counts, `editable` |
 | `PUT /api/protocols` | admin | body `{"catalog": {...}, "version": "<from GET>"}`; `409` if changed since, `400` with `errors` if invalid; on success re-matches waiting studies and returns them as `restudied` |
 | `GET /api/protocols/unmatched` | any user | unmatched studies grouped by manufacturer, model and protocol name |
+| `POST /api/protocols/rhythm-import` | admin | reads RHYTHM's scanner profiles + protocols with the saved token and returns the import `plan`; writes nothing (`409` if RHYTHM isn't configured, `502` with RHYTHM's error) |
 
 These need a login or an API token, like the rest of the dashboard (see
 [USERS.md](USERS.md)).

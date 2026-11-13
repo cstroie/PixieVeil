@@ -321,7 +321,7 @@ class TestProbe:
             "https://r.example/", "tok", ["aaaa", "cccc"]))
         assert r["ok"] and r["protocols"] == 2
         assert r["found"] == ["aaaa"] and r["missing"] == ["cccc"] and not r["partial"]
-        assert seen["url"] == "https://r.example/api/v1/protocols-api/"
+        assert seen["url"] == "https://r.example/api/v1/protocols-api/?page_size=100"
         assert seen["headers"]["Authorization"] == "Bearer tok"
 
     def test_rejected_token(self, monkeypatch):

@@ -188,12 +188,11 @@ RHYTHM protocol UUID.
 
 ## Follow-ups for PixieVeil
 
-- **Test connection** reads only the first page of `protocols-api/`. It should
-  follow `next`, because with more than 20 protocols the "not found" list is
-  incomplete.
-- **Import from RHYTHM** on `/protocols`: read `scanner-profiles/` and
-  `protocols-api/` with the token and fill in the UUIDs by scanner model and
-  protocol name, instead of copying them by hand.
+- ~~Test connection reads only the first page~~ — done: `rhythm_storage.fetch_all()`
+  follows `next` (only on RHYTHM's own host), 100 per page.
+- ~~Import from RHYTHM~~ — done: `/protocols` → **Import from RHYTHM** reads
+  `scanner-profiles/` + `protocols-api/` and proposes UUIDs per scanner/protocol
+  (see [PROTOCOLS.md](PROTOCOLS.md#import-from-rhythm)).
 - Optionally call `uploads/validate-manifest/` before an upload to surface
   RHYTHM's own manifest errors early.
 - Resume an interrupted upload via `uploads/chunked/{id}/status/` instead of

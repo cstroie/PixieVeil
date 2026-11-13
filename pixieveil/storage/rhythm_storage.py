@@ -27,6 +27,7 @@ the result so a caller can persist it, but a re-run starts a fresh session.
 import asyncio
 import hashlib
 import logging
+from urllib.parse import urlparse
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Iterable
@@ -391,51 +392,100 @@ async def _json(resp: aiohttp.ClientResponse) -> Any:
 
 
 PROBE_PATH = "/api/v1/protocols-api/"
+PROFILES_PATH = "/api/v1/scanner-profiles/"
+PROTOCOLS_PATH = "/api/v1/protocols-api/"
+PAGE_SIZE = 100          # RHYTHM's max_page_size
 
 
-async def probe_connection(base_url: str, auth_token: str,
-                           known_uuids: Iterable[str] = (),
-                           timeout_s: float = 10.0) -> dict[str, Any]:
-    """Check that *base_url* is reachable and *auth_token* is accepted.
+class RhythmApiError(Exception):
+    """A RHYTHM read failed: *status* is the HTTP status (None = unreachable)."""
 
-    Sends one authenticated ``GET {base_url}/api/v1/protocols-api/``. Returns
-    ``{"ok", "status", "message"}`` and, when the list is readable,
-    ``protocols`` (how many RHYTHM lists) and ``found``/``missing`` among
-    *known_uuids* (the catalog's UUIDs). Never raises; never logs the token.
-    """
-    url = f"{base_url.rstrip('/')}{PROBE_PATH}"
+    def __init__(self, status: int | None, message: str):
+        super().__init__(message)
+        self.status = status
+        self.message = message
+
+
+async def fetch_all(base_url: str, auth_token: str, path: str, *,
+                    max_pages: int = 50, timeout_s: float = 15.0) -> list[dict]:
+    """GET every page of a RHYTHM list endpoint (``count``/``next``/``results``,
+    or a plain list). ``next`` is followed only on *base_url*'s own host so a
+    response can't steer the token elsewhere. Raises :class:`RhythmApiError`."""
+    base = base_url.rstrip("/")
+    host = urlparse(base).netloc
+    url: str | None = f"{base}{path}?page_size={PAGE_SIZE}"
+    out: list[dict] = []
     headers = {"Authorization": f"Bearer {auth_token}"}
     try:
         async with aiohttp.ClientSession(
             headers=headers, timeout=aiohttp.ClientTimeout(total=timeout_s)
         ) as session:
-            async with session.get(url) as resp:
-                body = await _json(resp)
-                status = resp.status
+            for _page in range(max_pages):
+                if url is None:
+                    break
+                async with session.get(url) as resp:
+                    body = await _json(resp)
+                    status = resp.status
+                if status in (401, 403):
+                    raise RhythmApiError(status, f"Reached RHYTHM, but the token was "
+                                                 f"rejected (HTTP {status})")
+                if status != 200:
+                    raise RhythmApiError(status, f"RHYTHM answered HTTP {status} for {path}")
+                if isinstance(body, list):
+                    out.extend(i for i in body if isinstance(i, dict))
+                    break
+                items = body.get("results") if isinstance(body, dict) else None
+                if not isinstance(items, list):
+                    raise RhythmApiError(status, f"Unexpected answer from {path}")
+                out.extend(i for i in items if isinstance(i, dict))
+                nxt = body.get("next")
+                if nxt and urlparse(nxt).netloc not in ("", host):
+                    raise RhythmApiError(status, f"RHYTHM pointed to another host ({nxt})")
+                url = (f"{base}{nxt}" if nxt and nxt.startswith("/") else nxt) or None
+            else:
+                logger.warning("RHYTHM %s: stopped after %d pages", path, max_pages)
+    except RhythmApiError:
+        raise
     except Exception as e:  # noqa: BLE001 - reported to the operator
-        logger.warning("RHYTHM connection test to %s failed: %s", url, e)
-        return {"ok": False, "status": None,
-                "message": f"Cannot reach {base_url}: {e.__class__.__name__}: {e}"}
-    if status in (401, 403):
-        return {"ok": False, "status": status,
-                "message": f"Reached RHYTHM, but the token was rejected (HTTP {status})"}
-    if status != 200:
-        return {"ok": False, "status": status,
-                "message": f"Reached the server, but it answered HTTP {status}"}
-
-    items = body.get("results") if isinstance(body, dict) else body
-    out: dict[str, Any] = {"ok": True, "status": status,
-                           "message": "Connected; the token is accepted"}
-    if isinstance(items, list):
-        ids = {str(i.get(k)).lower() for i in items if isinstance(i, dict)
-               for k in ("id", "uuid") if i.get(k)}
-        known = sorted({u.lower() for u in known_uuids if u})
-        out["protocols"] = len(items)
-        out["found"] = [u for u in known if u in ids]
-        out["missing"] = [u for u in known if u not in ids]
-        # A paginated answer lists only its first page: "missing" may be wrong.
-        out["partial"] = bool(isinstance(body, dict) and body.get("next"))
+        logger.warning("RHYTHM read of %s%s failed: %s", base, path, e)
+        raise RhythmApiError(None, f"Cannot reach {base_url}: "
+                                   f"{e.__class__.__name__}: {e}") from None
     return out
+
+
+async def fetch_site_catalog(base_url: str, auth_token: str) -> dict[str, list[dict]]:
+    """The site's scanner profiles and protocols from RHYTHM (all pages)."""
+    profiles = await fetch_all(base_url, auth_token, PROFILES_PATH)
+    protocols = await fetch_all(base_url, auth_token, PROTOCOLS_PATH)
+    return {"profiles": profiles, "protocols": protocols}
+
+
+async def probe_connection(base_url: str, auth_token: str,
+                           known_uuids: Iterable[str] = (),
+                           timeout_s: float = 10.0) -> dict[str, Any]:
+    """Check that *base_url* is reachable and *auth_token* is accepted, by
+    reading every page of ``/api/v1/protocols-api/``.
+
+    Returns ``{"ok", "status", "message"}`` plus ``protocols`` (how many
+    RHYTHM lists) and ``found``/``missing`` among *known_uuids* (the
+    catalog's UUIDs). Never raises; never logs the token.
+    """
+    try:
+        items = await fetch_all(base_url, auth_token, PROBE_PATH, timeout_s=timeout_s)
+    except RhythmApiError as e:
+        if e.status in (401, 403):
+            return {"ok": False, "status": e.status, "message": e.message}
+        if e.status is None:
+            return {"ok": False, "status": None, "message": e.message}
+        return {"ok": False, "status": e.status,
+                "message": f"Reached the server, but it answered HTTP {e.status}"}
+    ids = {str(i.get(k)).lower() for i in items for k in ("id", "uuid") if i.get(k)}
+    known = sorted({u.lower() for u in known_uuids if u})
+    return {"ok": True, "status": 200, "message": "Connected; the token is accepted",
+            "protocols": len(items),
+            "found": [u for u in known if u in ids],
+            "missing": [u for u in known if u not in ids],
+            "partial": False}
 
 
 # -- obtaining a token: RHYTHM's own login (+ 2FA) ---------------------------
