@@ -300,7 +300,7 @@ const PV = (() => {
     // current from their own data; every other page fills it once here.
     async function refreshNavBadge() {
         const badge = document.getElementById('nav-needs');
-        if (!badge || ['/', '/studies', '/login'].includes(location.pathname)) return;
+        if (!badge || ['/', '/studies', '/login', '/setup'].includes(location.pathname)) return;
         try {
             const { studies } = await api('/api/studies');
             const needs = (studies || []).filter(PV.needsInput).length;
@@ -311,7 +311,7 @@ const PV = (() => {
 
     async function initAccount() {
         const bar = document.querySelector('.topbar');
-        if (!bar || location.pathname === '/login') return;
+        if (!bar || ['/login', '/setup'].includes(location.pathname)) return;
         try { me = await api('/api/me'); } catch (_e) { return; }
         if (me.admin) {
             const nav = bar.querySelector('.nav');

@@ -602,7 +602,9 @@ def ensure_dashboard_admin(settings, non_interactive: bool) -> bool:
     if store.count():
         _ok(f"{store.count()} dashboard user(s) in {users_file}")
         return True
-    hint = "python -m pixieveil.auth add <name> --admin   (or ./pixieveil.sh users add ...)"
+    hint = ("python -m pixieveil.auth add <name> --admin   (or ./pixieveil.sh users add ...), "
+            "or finish in the browser at http://<server>:<dashboard port>/setup with the "
+            "setup code the server prints at startup")
     if non_interactive or not sys.stdin.isatty():
         _info(f"No dashboard users yet — create one before first login: {hint}")
         return True

@@ -58,6 +58,36 @@ python -m pixieveil.auth add alice --admin     # or: ./pixieveil.sh users add al
 
 Admins can add more users on the dashboard's **Users** page. See [USERS.md](USERS.md) for every option.
 
+### Or: the first-run wizard
+
+Skip both steps above and just start the server. With no users yet, it prints a
+**setup code** to the console and log (also saved in `config/.setup_code`):
+
+```
+No dashboard users yet. Open http://<this server>:8070/setup and enter the setup code ABCD-EFGH
+```
+
+Open the dashboard; every page leads to `/setup`. Enter the code, then the wizard
+walks through:
+
+1. the first admin account;
+2. receiving: DICOM AE title, port, anonymization profile (`rhythm` recommended);
+3. RHYTHM connection (optional), with **Test connection**;
+4. defacing (it shows whether this server has a CUDA GPU and the model);
+5. retention after export and the storage quota;
+6. a review, then **Finish**.
+
+Finish creates `config/settings.yaml` from the example if it doesn't exist (the
+previous version is backed up otherwise), creates the admin and logs you in.
+**Restart the server** afterwards so the new settings take effect. The wizard then
+disappears for good (`config/.setup_complete`).
+
+The code is required because, until the first admin exists, anyone who can reach
+the dashboard could otherwise claim the server. If an admin already exists
+(e.g. created by `./install`) but `config/settings.yaml` doesn't, the wizard is
+offered to that admin after login instead, and can be skipped. An existing
+installation (users and `settings.yaml` both present) never sees it.
+
 ## Start the server
 
 ```bash

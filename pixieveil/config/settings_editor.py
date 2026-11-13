@@ -38,6 +38,9 @@ RESTART = "restart"
 
 _MODALITY_RE = re.compile(r"^[A-Z0-9]{1,16}$")
 _ATTR_RE = re.compile(r"^[A-Za-z][A-Za-z0-9]{0,63}$")
+# DICOM AE title: 1-16 chars of the default character repertoire, no
+# backslash or control characters (leading/trailing spaces are insignificant).
+_AE_RE = re.compile(r"^[ -\[\]-~]{1,16}$")
 
 
 class SettingsError(Exception):
@@ -124,6 +127,21 @@ FIELDS: list[Field] = [
 ]
 
 FIELDS_BY_PATH: dict[str, Field] = {f.path: f for f in FIELDS}
+
+# Only the first-run wizard (/setup) may change these; /settings shows them
+# read-only, since a wrong port or profile there can lock the operator out or
+# weaken anonymization on a running system.
+SETUP_FIELDS: list[Field] = [
+    Field("dicom_server.ae_title", "receiving", "DICOM AE title", "aetitle", RESTART,
+          "The AE title your scanner sends to.", default="PIXIEVEIL"),
+    Field("dicom_server.port", "receiving", "DICOM port", "int", RESTART,
+          minimum=1, maximum=65535, default=4070),
+    Field("anonymization.profile", "receiving", "Anonymization profile", "enum", RESTART,
+          "'rhythm' is required for RHYTHM upload.",
+          choices=("research", "gdpr", "rhythm"), default="research"),
+]
+SETUP_FIELDS_BY_PATH: dict[str, Field] = {
+    **FIELDS_BY_PATH, **{f.path: f for f in SETUP_FIELDS}}
 
 # Shown read-only. Secrets never appear here.
 READ_ONLY: list[tuple[str, str]] = [
@@ -227,6 +245,13 @@ def validate_value(f: Field, value: Any) -> Any:
             if not re.match(r"^https?://[^\s/]+", value):
                 raise ValueError("must start with http:// or https://")
             value = value.rstrip("/")
+        return value
+    if f.kind == "aetitle":
+        if not isinstance(value, str):
+            raise ValueError("must be text")
+        value = value.strip()
+        if not _AE_RE.match(value):
+            raise ValueError("must be 1-16 plain characters, no backslash")
         return value
     if f.kind == "enum":
         if value not in f.choices:
@@ -341,34 +366,52 @@ class SettingsEditor:
         }
 
     # ---- writing
-    def apply_changes(self, changes: dict[str, Any], version: str | None) -> SaveResult:
+    def validate_changes(self, changes: Any,
+                         allow: dict[str, Field] | None = None) -> dict[str, Any]:
+        """Normalized changes, or SettingsValidationError with errors by path.
+
+        *allow* is the whitelist (default: the /settings fields). Writes nothing.
+        """
+        allow = FIELDS_BY_PATH if allow is None else allow
         if not isinstance(changes, dict) or not changes:
             raise SettingsValidationError({"changes": "nothing to save"})
+        errors: dict[str, str] = {}
+        normalized: dict[str, Any] = {}
+        for path, value in changes.items():
+            f = allow.get(path)
+            if f is None:
+                errors[path] = "cannot be edited here"
+                continue
+            try:
+                normalized[path] = validate_value(f, value)
+            except ValueError as e:
+                errors[path] = f"{f.label} {e}"
+        site_path = "storage.remote_storage.rhythm.site_code"
+        if site_path in normalized and normalized[site_path] and self.catalog_site_code:
+            cat = self.catalog_site_code()
+            if cat and str(cat).strip().upper() != normalized[site_path].upper():
+                errors[site_path] = (
+                    f"Site code does not match the protocol catalog's site code '{cat}'")
+        if errors:
+            raise SettingsValidationError(errors)
+        return normalized
+
+    def apply_changes(self, changes: dict[str, Any], version: str | None,
+                      allow: dict[str, Field] | None = None) -> SaveResult:
+        allow = FIELDS_BY_PATH if allow is None else allow
+        normalized = self.validate_changes(changes, allow)
         with self._lock:
             raw, doc = self.read_document()
             if version != _version(raw):
                 raise SettingsConflictError(
                     "settings.yaml changed since the page was loaded — reload and retry")
-
-            errors: dict[str, str] = {}
-            normalized: dict[str, Any] = {}
-            for path, value in changes.items():
-                f = FIELDS_BY_PATH.get(path)
-                if f is None:
-                    errors[path] = "cannot be edited here"
-                    continue
-                try:
-                    normalized[path] = validate_value(f, value)
-                except ValueError as e:
-                    errors[path] = f"{f.label} {e}"
-            site_path = "storage.remote_storage.rhythm.site_code"
-            if site_path in normalized and normalized[site_path] and self.catalog_site_code:
-                cat = self.catalog_site_code()
-                if cat and str(cat).strip().upper() != normalized[site_path].upper():
-                    errors[site_path] = (
-                        f"Site code does not match the protocol catalog's site code '{cat}'")
-            if errors:
-                raise SettingsValidationError(errors)
+            profile = normalized.get("anonymization.profile")
+            if profile:
+                profiles = (doc.get("anonymization") or {}).get("profiles") or {}
+                if profiles and profile not in profiles:
+                    raise SettingsValidationError({
+                        "anonymization.profile":
+                            f"profile '{profile}' is not defined in {self.path.name}"})
 
             changed = []
             for path, value in normalized.items():
@@ -390,7 +433,7 @@ class SettingsEditor:
 
             live, restart = [], []
             for path in changed:
-                if FIELDS_BY_PATH[path].apply == LIVE:
+                if allow[path].apply == LIVE:
                     self._apply_live(path, normalized[path])
                     live.append(path)
                 else:
@@ -441,3 +484,19 @@ class SettingsEditor:
             except OSError:
                 pass
             raise
+
+
+def ensure_file(path: Path, example: Path) -> bool:
+    """Create *path* (mode 0600) as a copy of *example* if it doesn't exist.
+
+    Returns True when it was created.
+    """
+    if path.exists():
+        return False
+    data = example.read_bytes()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "wb") as fh:
+        fh.write(data)
+    logger.info(f"Created {path} from {example}")
+    return True

@@ -218,6 +218,11 @@ sudo rc-service pixieveil start         # start now
 sudo rc-service pixieveil status        # verify it's running
 ```
 
+On a fresh install with no dashboard users, the log shows a one-time **setup code**
+(`journalctl -u pixieveil | grep "setup code"`, or `sudo cat config/.setup_code`).
+Open `http://<server>:8070/setup` and enter it to run the first-run wizard
+(see [QUICKSTART.md](QUICKSTART.md#or-the-first-run-wizard)).
+
 Both service files run PixieVeil from `.python/bin/python3` (not system
 Python) — that's where `install.py` puts `torch`/`nnUNetv2` for defacing.
 `Type=simple` (systemd) / `supervise-daemon` (OpenRC) cover backgrounding,

@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PixieVeil · Setup</title>
+    <script>
+        try { document.documentElement.dataset.theme = localStorage.getItem('pixieveil_theme') || 'dark'; }
+        catch (_e) { document.documentElement.dataset.theme = 'dark'; }
+    </script>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='1' y='1' width='30' height='30' rx='8' fill='%23151b22' stroke='%233cc8c0' stroke-width='2'/%3E%3Cg fill='%233cc8c0'%3E%3Crect x='8' y='8' width='4' height='4' rx='1'/%3E%3Crect x='14' y='8' width='4' height='4' rx='1' opacity='.6'/%3E%3Crect x='8' y='14' width='4' height='4' rx='1' opacity='.6'/%3E%3Crect x='20' y='8' width='4' height='4' rx='1' opacity='.3'/%3E%3Crect x='14' y='14' width='4' height='4' rx='1' opacity='.3'/%3E%3Crect x='8' y='20' width='4' height='4' rx='1' opacity='.3'/%3E%3C/g%3E%3C/svg%3E">
+    <link rel="stylesheet" href="/static/theme.css">
+    <style>
+        .wrap { max-width: 760px; margin: 0 auto; padding: 28px 16px 64px; display: flex; flex-direction: column; gap: 18px; }
+        .wrap h1 { font-size: 22px; }
+        .lead { color: var(--text-dim); margin: 6px 0 0; }
+        .steps { display: flex; flex-wrap: wrap; gap: 6px; list-style: none; margin: 0; padding: 0; }
+        .steps li { font-size: 12.5px; padding: 4px 10px; border-radius: 999px; background: var(--raised); color: var(--text-dim); }
+        .steps li.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+        .steps li.done { color: var(--ok); }
+        .grid { display: grid; gap: 16px 20px; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); }
+        .grid .wide { grid-column: 1 / -1; }
+        .field .err { color: var(--bad); font-size: 12px; }
+        .field.has-error .input, .field.has-error .select { border-color: var(--bad); }
+        .check { display: flex; gap: 8px; align-items: center; min-height: 36px; }
+        .nav-row { display: flex; gap: 10px; justify-content: space-between; margin-top: 18px; flex-wrap: wrap; }
+        .nav-row .right { display: flex; gap: 10px; margin-left: auto; }
+        .code-input { font-family: var(--mono); font-size: 20px; letter-spacing: .15em; text-transform: uppercase; max-width: 240px; }
+        .summary { display: grid; grid-template-columns: minmax(160px, 240px) 1fr; gap: 6px 16px; font-size: 13.5px; }
+        .summary dt { color: var(--text-dim); }
+        .summary dd { margin: 0; font-family: var(--mono); font-size: 12.5px; overflow-wrap: anywhere; }
+        .facts { font-size: 13px; color: var(--text-dim); margin: 0 0 14px; }
+        [hidden] { display: none !important; }
+        @media (max-width: 560px) { .summary { grid-template-columns: 1fr; } .summary dd { margin-bottom: 8px; } }
+    </style>
+</head>
+<body>
+    <header class="topbar">
+        <a class="brand" href="/">
+            <svg viewBox="0 0 32 32" aria-hidden="true"><rect x="1.5" y="1.5" width="29" height="29" rx="8" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.5"/><g fill="var(--accent)"><rect x="8" y="8" width="4" height="4" rx="1"/><rect x="14" y="8" width="4" height="4" rx="1" opacity=".6"/><rect x="8" y="14" width="4" height="4" rx="1" opacity=".6"/><rect x="20" y="8" width="4" height="4" rx="1" opacity=".3"/><rect x="14" y="14" width="4" height="4" rx="1" opacity=".3"/><rect x="8" y="20" width="4" height="4" rx="1" opacity=".3"/></g><path d="M8 25.5C14 24 21 18 25 8" stroke="var(--accent)" stroke-width="1.6" fill="none" stroke-linecap="round"/></svg>
+            <span>PixieVeil <small>DICOM anonymizer</small></span>
+        </a>
+        <div class="spacer"></div>
+        <button type="button" class="btn btn-ghost btn-icon" data-theme-toggle></button>
+    </header>
+
+    <main class="wrap">
+        <section>
+            <h1>Set up PixieVeil</h1>
+            <p class="lead">A few essentials to get this server receiving and exporting studies.
+                Everything can be changed later on the Settings page.</p>
+        </section>
+        <ol class="steps" id="steps"></ol>
+        <div class="callout bad" id="top-error" hidden></div>
+        <section class="card"><div class="card-body" id="body"><p class="faint">Loading…</p></div></section>
+    </main>
+
+    <script src="/static/common.js"></script>
+    <script>
+        const { esc, icon, toast } = PV;
+        let st = null;            // GET /api/setup
+        let code = '';
+        let step = 0;
+        const values = {};        // path -> value entered
+        const fieldsBy = {};      // path -> descriptor
+        let admin = { username: '', password: '' };
+
+        async function call(path, opts) {
+            opts = opts || {};
+            const headers = { 'X-Requested-With': 'PixieVeil' };
+            if (code) headers['X-Setup-Code'] = code;
+            if (opts.body !== undefined) headers['Content-Type'] = 'application/json';
+            const resp = await fetch(path, { method: opts.method || 'GET', headers, credentials: 'same-origin',
+                body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined });
+            let data = null;
+            try { data = await resp.json(); } catch (_e) { data = null; }
+            if (resp.status === 404) { location.href = '/'; throw new Error('Setup is already complete'); }
+            if (!resp.ok) {
+                const err = new Error((data && data.error) || `HTTP ${resp.status}`);
+                err.status = resp.status; err.data = data; throw err;
+            }
+            return data;
+        }
+
+        // ---- step definitions
+        const STEPS = [
+            { id: 'code', title: 'Setup code', when: () => st.needs_code },
+            { id: 'admin', title: 'Admin account', when: () => st.needs_admin },
+            { id: 'receiving', title: 'Receiving', paths: ['dicom_server.ae_title', 'dicom_server.port', 'anonymization.profile'] },
+            { id: 'rhythm', title: 'RHYTHM', paths: ['storage.remote_storage.rhythm.base_url',
+                'storage.remote_storage.rhythm.auth_token', 'storage.remote_storage.rhythm.site_code'] },
+            { id: 'defacing', title: 'Defacing', paths: ['defacing.enabled', 'defacing.device', 'defacing.keep_backup'] },
+            { id: 'retention', title: 'Retention', paths: ['storage.retain_after_export_days', 'storage.max_storage_gb'] },
+            { id: 'review', title: 'Review' },
+            { id: 'done', title: 'Done', hiddenStep: true },
+        ];
+        const active = () => STEPS.filter(s => !s.when || s.when());
+
+        function renderSteps() {
+            const list = active().filter(s => !s.hiddenStep);
+            const cur = active()[step];
+            document.getElementById('steps').innerHTML = list.map((s, i) =>
+                `<li class="${s === cur ? 'on' : (i < step ? 'done' : '')}">${i + 1}. ${esc(s.title)}</li>`).join('');
+        }
+
+        function fieldControl(f) {
+            const v = f.path in values ? values[f.path] : f.value;
+            const a = `data-path="${esc(f.path)}" id="f-${esc(f.path)}"`;
+            if (f.kind === 'bool') return `<label class="check"><input type="checkbox" ${a} ${v ? 'checked' : ''}> Yes</label>`;
+            if (f.kind === 'enum') return `<select class="select" ${a}>${f.choices.map(c =>
+                `<option ${c === v ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select>`;
+            if (f.kind === 'secret') return `<input class="input" type="password" autocomplete="new-password" ${a}
+                value="${esc(values[f.path] || '')}" placeholder="${f.is_set ? '•••••••• set — leave empty to keep' : ''}">`;
+            const num = f.kind === 'int' || f.kind === 'float';
+            return `<input class="input" ${num ? `type="number" step="${f.kind === 'int' ? 1 : 'any'}"` : 'type="text" spellcheck="false"'}
+                ${a} value="${esc(v === null || v === undefined ? '' : String(v))}" ${f.nullable ? 'placeholder="(not set)"' : ''}>`;
+        }
+        function fieldHtml(path) {
+            const f = fieldsBy[path];
+            return `<div class="field" data-field="${esc(path)}">
+                <label class="label" for="f-${esc(path)}">${esc(f.label)}</label>
+                ${fieldControl(f)}
+                ${f.help ? `<span class="hint">${esc(f.help)}</span>` : ''}
+                <span class="err" hidden></span></div>`;
+        }
+        function collect() {
+            document.querySelectorAll('[data-path]').forEach(el => {
+                const f = fieldsBy[el.dataset.path];
+                if (!f) return;
+                if (f.kind === 'bool') values[f.path] = el.checked;
+                else if (f.kind === 'int' || f.kind === 'float') values[f.path] = el.value.trim() === '' ? null : Number(el.value);
+                else values[f.path] = el.value.trim() === '' ? (f.kind === 'secret' ? '' : null) : el.value.trim();
+            });
+            const u = document.getElementById('a-user');
+            if (u) {
+                admin.username = u.value.trim();
+                admin.password = document.getElementById('a-pass').value;
+                admin.confirm = document.getElementById('a-pass2').value;
+            }
+        }
+        const navRow = (opts) => `<div class="nav-row">
+            ${opts.back ? '<button type="button" class="btn btn-ghost" data-go="back">Back</button>' : ''}
+            ${opts.skip ? '<button type="button" class="btn btn-ghost" data-go="skip-setup">Skip setup</button>' : ''}
+            <div class="right">${opts.extra || ''}
+                <button type="button" class="btn btn-primary" data-go="${opts.nextAct || 'next'}">${esc(opts.next || 'Next')}</button></div></div>`;
+
+        function render() {
+            renderSteps();
+            const s = active()[step];
+            const body = document.getElementById('body');
+            const first = step === 0;
+            if (s.id === 'code') {
+                body.innerHTML = `<h3>Enter the setup code</h3>
+                    <p class="lead">To prove you run this server, enter the code it printed when it started.
+                    Find it in the server console or log (<span class="mono">journalctl -u pixieveil</span>),
+                    or in <span class="mono">config/.setup_code</span>.</p>
+                    <div class="field" style="margin-top:16px"><input class="input code-input" id="code" maxlength="9"
+                        autocomplete="off" spellcheck="false" placeholder="XXXX-XXXX" value="${esc(code)}">
+                        <span class="err" id="code-err" hidden></span></div>
+                    ${navRow({ next: 'Continue', nextAct: 'code' })}`;
+                document.getElementById('code').focus();
+            } else if (s.id === 'admin') {
+                body.innerHTML = `<h3>Create the first admin</h3>
+                    <p class="lead">Admins manage users, protocols and settings. Add more people later on the Users page.</p>
+                    <div class="grid" style="margin-top:16px">
+                        <div class="field" data-field="admin.username"><label class="label" for="a-user">Username</label>
+                            <input class="input" id="a-user" autocapitalize="none" spellcheck="false" value="${esc(admin.username)}"
+                                placeholder="lowercase, 2–32 chars"><span class="err" hidden></span></div>
+                        <div class="field" data-field="admin.password"><label class="label" for="a-pass">Password</label>
+                            <input class="input" type="password" id="a-pass" autocomplete="new-password" value="${esc(admin.password)}">
+                            <span class="hint">At least 8 characters.</span><span class="err" hidden></span></div>
+                        <div class="field"><label class="label" for="a-pass2">Repeat password</label>
+                            <input class="input" type="password" id="a-pass2" autocomplete="new-password" value="${esc(admin.confirm || '')}"></div>
+                    </div>${navRow({ back: !first })}`;
+            } else if (s.paths) {
+                const intro = {
+                    receiving: 'How scanners reach this server, and how images are anonymized.',
+                    rhythm: 'Optional — leave empty if you don\'t upload to RHYTHM yet.',
+                    defacing: '',
+                    retention: 'What happens to a study\'s images after it is exported.',
+                }[s.id];
+                let facts = '';
+                if (s.id === 'defacing' && st.defacing) {
+                    const d = st.defacing;
+                    facts = `<p class="facts">${icon('info')} This server: ${d.torch
+                        ? `PyTorch installed, CUDA GPU ${d.cuda ? '<b>available</b>' : '<b>not available</b> — use cpu'}`
+                        : 'PyTorch is <b>not installed</b> — run <span class="mono">python install.py</span> first'}${
+                        d.model_present === false ? '; defacing model <b>missing</b> (<span class="mono">python install.py --download-model</span>)' : ''}.</p>`;
+                }
+                const test = s.id === 'rhythm' ? `<button type="button" class="btn" data-go="rhythm-test">Test connection</button>` : '';
+                body.innerHTML = `<h3>${esc(s.title)}</h3>${intro ? `<p class="lead">${esc(intro)}</p>` : ''}
+                    <div style="margin-top:16px">${facts}<div class="grid">${s.paths.map(fieldHtml).join('')}</div></div>
+                    <div id="test-result" style="margin-top:12px" hidden></div>
+                    ${navRow({ back: !first, extra: test, skip: first && !st.needs_admin })}`;
+            } else if (s.id === 'review') {
+                const rows = [];
+                if (st.needs_admin) rows.push(['Admin account', admin.username]);
+                for (const st2 of STEPS) for (const p of (st2.paths || [])) {
+                    const f = fieldsBy[p];
+                    let v = p in values ? values[p] : f.value;
+                    if (f.kind === 'secret') v = values[p] ? '•••••••• (new)' : (f.is_set ? '•••••••• (kept)' : '');
+                    if (typeof v === 'boolean') v = v ? 'yes' : 'no';
+                    rows.push([f.label, v === null || v === undefined || v === '' ? '—' : String(v)]);
+                }
+                body.innerHTML = `<h3>Review</h3>
+                    <p class="lead">This writes <span class="mono">${esc(st.settings_path || 'config/settings.yaml')}</span>
+                    (the previous version is backed up)${st.needs_admin ? ' and creates the admin account' : ''}.</p>
+                    <dl class="summary" style="margin-top:16px">${rows.map(([k, v]) =>
+                        `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('')}</dl>
+                    ${navRow({ back: true, next: 'Finish setup', nextAct: 'finish' })}`;
+            } else if (s.id === 'done') {
+                body.innerHTML = `<h3>${icon('check')} Setup complete</h3>
+                    <p class="lead">You are logged in as <b>${esc(st.finishedAs || '')}</b>.</p>
+                    ${st.restart && st.restart.length ? `<div class="callout warn" style="margin-top:14px">${icon('alert')}<div>
+                        <strong>Restart the server</strong> to apply the new settings:
+                        <span class="mono">sudo systemctl restart pixieveil</span> or <span class="mono">./pixieveil.sh restart</span>.</div></div>` : ''}
+                    <p style="margin-top:14px">Next:</p>
+                    <ul class="lead"><li>Map your scanners and protocols on <a href="/protocols">Protocols</a>.</li>
+                        <li>Add the people who review studies on <a href="/users">Users</a>.</li>
+                        <li>Fine-tune everything else on <a href="/settings">Settings</a>.</li></ul>
+                    <div class="nav-row"><div class="right"><a class="btn btn-primary" href="/">Go to the dashboard</a></div></div>`;
+            }
+        }
+
+        function showErrors(errors) {
+            let firstStep = null;
+            for (const [path, msg] of Object.entries(errors || {})) {
+                const idx = active().findIndex(s => (s.paths || []).includes(path) || (s.id === 'admin' && path.startsWith('admin.')));
+                if (idx >= 0 && (firstStep === null || idx < firstStep)) firstStep = idx;
+            }
+            if (firstStep !== null) { step = firstStep; render(); }
+            const loose = [];
+            for (const [path, msg] of Object.entries(errors || {})) {
+                const host = document.querySelector(`[data-field="${path}"]`);
+                if (host) { host.classList.add('has-error'); const e = host.querySelector('.err'); e.textContent = msg; e.hidden = false; }
+                else loose.push(msg);
+            }
+            const top = document.getElementById('top-error');
+            top.innerHTML = `${icon('alert')}<div><strong>Not saved.</strong> ${esc(loose.join(' ') || 'Fix the highlighted fields.')}</div>`;
+            top.hidden = false;
+        }
+
+        async function loadFields() {
+            st = Object.assign(st || {}, await call('/api/setup'));
+            for (const f of (st.fields || [])) fieldsBy[f.path] = f;
+        }
+
+        document.addEventListener('click', async e => {
+            const btn = e.target.closest('[data-go]');
+            if (!btn) return;
+            const go = btn.dataset.go;
+            document.getElementById('top-error').hidden = true;
+            if (go === 'back') { collect(); step--; render(); return; }
+            if (go === 'code') {
+                code = document.getElementById('code').value.trim().toUpperCase();
+                const err = document.getElementById('code-err');
+                try {
+                    await call('/api/setup/verify-code', { method: 'POST', body: {} });
+                    await loadFields();
+                    step++; render();
+                } catch (ex) { err.textContent = ex.message; err.hidden = false; }
+                return;
+            }
+            if (go === 'skip-setup') {
+                if (!await PV.modal({ title: 'Skip setup?', body: 'The current settings are kept. You can change them later on the Settings page.', confirm: 'Skip' })) return;
+                try { await call('/api/setup/skip', { method: 'POST', body: {} }); location.href = '/'; }
+                catch (ex) { toast(ex.message, 'bad'); }
+                return;
+            }
+            if (go === 'rhythm-test') {
+                collect();
+                const out = document.getElementById('test-result');
+                out.hidden = false; out.innerHTML = '<span class="pill busy">Testing…</span>';
+                try {
+                    const r = await call('/api/setup/rhythm-test', { method: 'POST', body: {
+                        base_url: values['storage.remote_storage.rhythm.base_url'] || '',
+                        auth_token: values['storage.remote_storage.rhythm.auth_token'] || '' } });
+                    out.innerHTML = `<div class="callout ${r.ok ? 'info' : 'bad'}">${icon(r.ok ? 'check' : 'alert')}<div>${esc(r.message)}.</div></div>`;
+                } catch (ex) { out.innerHTML = `<div class="callout bad">${icon('alert')}<div>${esc(ex.message)}</div></div>`; }
+                return;
+            }
+            if (go === 'next') {
+                collect();
+                if (active()[step].id === 'admin') {
+                    if (admin.password !== admin.confirm) { showErrors({ 'admin.password': 'The passwords do not match' }); return; }
+                    if (admin.password.length < 8) { showErrors({ 'admin.password': 'At least 8 characters' }); return; }
+                }
+                step++; render(); return;
+            }
+            if (go === 'finish') {
+                btn.disabled = true;
+                const changes = {};
+                for (const s of STEPS) for (const p of (s.paths || [])) {
+                    const f = fieldsBy[p];
+                    if (f.kind === 'secret') { if (values[p]) changes[p] = values[p]; continue; }
+                    changes[p] = p in values ? values[p] : f.value;
+                }
+                const body = { changes };
+                if (st.needs_admin) body.admin = { username: admin.username, password: admin.password };
+                try {
+                    const r = await call('/api/setup/finish', { method: 'POST', body });
+                    code = '';
+                    st.finishedAs = r.username; st.restart = r.restart_required;
+                    step = active().findIndex(s => s.id === 'done');
+                    render();
+                } catch (ex) {
+                    btn.disabled = false;
+                    if (ex.status === 400 && ex.data && ex.data.errors) showErrors(ex.data.errors);
+                    else toast(ex.message, 'bad');
+                }
+            }
+        });
+        document.addEventListener('keydown', e => {
+            if (e.key === 'Enter' && e.target.matches('input')) {
+                const b = document.querySelector('.nav-row .btn-primary');
+                if (b) { e.preventDefault(); b.click(); }
+            }
+        });
+
+        (async () => {
+            try {
+                st = await call('/api/setup');
+                if (!st.needs_code) await loadFields();
+                if (!st.editable) {
+                    document.getElementById('top-error').innerHTML = `${icon('alert')}<div>This server was not started
+                        from a settings file, so settings can't be saved here.</div>`;
+                    document.getElementById('top-error').hidden = false;
+                }
+                render();
+            } catch (ex) {
+                document.getElementById('body').innerHTML = `<div class="callout bad">${icon('alert')}<div>${esc(ex.message)}</div></div>`;
+            }
+        })();
+    </script>
+</body>
+</html>

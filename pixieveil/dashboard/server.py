@@ -31,6 +31,7 @@ from pixieveil.auth.sessions import COOKIE_NAME, SessionSigner, load_or_create_s
 from pixieveil.auth.user_store import User, UserStore, UserStoreError
 from pixieveil.config import Settings, settings_editor
 from pixieveil.dashboard import options
+from pixieveil.dashboard.setup import SetupRoutes, SetupState
 from pixieveil.dicom_server.server import SUPPORTED_STORAGE_SOP_CLASSES
 from pixieveil.processing import exam_merge, protocol_catalog
 from pixieveil.storage import rhythm_storage as rhythm_storage_mod
@@ -121,11 +122,6 @@ class Dashboard:
                 "http_server.auth_token is no longer used — issue per-user API "
                 "tokens with `python -m pixieveil.auth token-add <user> <name>`"
             )
-        if self.user_store.count() == 0:
-            logger.error(
-                f"No dashboard users in {users_file} — nobody can log in. Create one "
-                "with `python -m pixieveil.auth add <name> --admin`"
-            )
         # Registered here (not in start()) because aiohttp freezes the
         # application's middleware list once runner.setup() runs — adding it
         # later would silently leave every route unauthenticated.
@@ -145,6 +141,9 @@ class Dashboard:
             )
         # Routes are registered here rather than in start() so tests can
         # wrap self.app in an aiohttp TestServer without binding a port.
+        # First-run wizard: its state lives next to the users file (config/).
+        self.setup = SetupState(self, users_file.parent)
+        self.app.add_routes(SetupRoutes(self, self.setup).routes())
         self.app.add_routes([
             web.get("/login", self.handle_login_page),
             web.post("/login", self.handle_login),
@@ -247,8 +246,23 @@ class Dashboard:
         """
         if request.path in _PUBLIC_PATHS:
             return await handler(request)
+        if request.path == "/setup" or request.path.startswith("/api/setup"):
+            # The wizard routes gate themselves (setup code / admin) and 404
+            # once setup is complete.
+            return await handler(request)
+
+        setup_required = self.setup.required
+        if setup_required and self.setup.needs_admin:
+            # Nobody can log in yet: everything leads to the wizard.
+            if self._wants_html(request):
+                raise web.HTTPFound("/setup")
+            return web.json_response({"error": "setup required", "setup_required": True},
+                                     status=401)
 
         user, via = self._resolve_user(request)
+        if (setup_required and user is not None and user.admin and via == "session"
+                and self._wants_html(request) and request.path in ("/", "/studies")):
+            raise web.HTTPFound("/setup")
         if user is None:
             if self._wants_html(request):
                 raise web.HTTPFound(f"/login?next={quote(request.path_qs, safe='')}")
@@ -308,6 +322,8 @@ class Dashboard:
                                     if v[1] > now or v[0] > 0}
 
     async def handle_login_page(self, request: web.Request) -> web.Response:
+        if self.setup.required and self.setup.needs_admin:
+            raise web.HTTPFound("/setup")
         if self._resolve_user(request)[0] is not None:
             raise web.HTTPFound(self._safe_next(request.query.get("next")))
         return await self._serve_template("login.html")
@@ -326,8 +342,8 @@ class Dashboard:
         password = str(body.get("password") or "")
         if self.user_store.count() == 0:
             return web.json_response({
-                "error": "No users are configured. On the server run: "
-                         "python -m pixieveil.auth add <name> --admin",
+                "error": "No users yet: finish first-run setup at /setup, or on the "
+                         "server run: python -m pixieveil.auth add <name> --admin",
             }, status=503)
         key = (request.remote or "?", username)
         left = self._login_locked(key)
@@ -622,6 +638,7 @@ class Dashboard:
             Exception: If the web server fails to start
         """
         logger.info("Starting dashboard")
+        self.setup.startup()
 
         # Create runner and site
         self.runner = web.AppRunner(self.app)

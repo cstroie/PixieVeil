@@ -15,6 +15,8 @@ config/rhythm_protocols.yaml
 UNINSTALL.md
 config/users.yaml
 config/.session_secret
+config/.setup_complete
+config/.setup_code
 config/protocols.yaml
 
 # Backups of config files (may hold secrets)
