@@ -15,6 +15,7 @@ Classes:
 
 import asyncio
 import logging
+import os
 import shutil
 import time
 import threading
@@ -564,7 +565,10 @@ class StorageManager:
             
             # Append to JSONL file (JSON Lines format - one JSON object per line)
             with self.lock:
-                with open(self.anontrail_path, 'a') as f:
+                # Owner-only: the trail maps pseudonyms back to real identities.
+                fd = os.open(self.anontrail_path,
+                             os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+                with os.fdopen(fd, 'a') as f:
                     f.write(json.dumps(mapping_record) + '\n')
             
             logger.debug(f"Logged anonymization mapping for image {image_id}")

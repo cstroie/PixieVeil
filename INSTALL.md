@@ -228,6 +228,17 @@ Re-running `./install systemd`/`openrc` is safe — it reuses the account if
 it already exists and just refreshes the venv, permissions, unit/init file,
 and `UNINSTALL.md`.
 
+## Log rotation
+
+`pixieveil.log` rotates itself (5 MB × 3). The anonymization trail
+`data/log/anontrail.jsonl` does not. It maps pseudonyms back to real patient
+identities, so it is created mode 600. Install the shipped rule to rotate it
+monthly, compressed, keeping 5 years:
+
+```bash
+sudo cp pixieveil.logrotate /etc/logrotate.d/pixieveil   # fix path/user first
+```
+
 ## Verifying the install
 
 ```bash

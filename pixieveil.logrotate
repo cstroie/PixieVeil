@@ -1,0 +1,18 @@
+# Rotation for PixieVeil's anonymization trail. Install as
+# /etc/logrotate.d/pixieveil and adjust the path/user to your checkout.
+# (pixieveil.log rotates itself: RotatingFileHandler, 5 MB x 3.)
+#
+# anontrail.jsonl maps pseudonyms back to real patient identities. It is
+# rotated monthly and compressed, NOT deleted on a short cycle: keep it as
+# long as re-identification may be needed, and protect it like patient data.
+/opt/PixieVeil/data/log/anontrail.jsonl {
+    monthly
+    rotate 60
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+    create 0600 pixieveil pixieveil
+    su pixieveil pixieveil
+}
