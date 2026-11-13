@@ -25,6 +25,19 @@ All endpoints below are relative to `<base_url>/api/v1/`, where `base_url` is
 - Browser pages on RHYTHM itself also accept the logged-in session cookie. That
   only matters inside RHYTHM.
 
+### One token per user
+
+RHYTHM has **exactly one API token per user**. Two names suggest otherwise, but
+they don't refer to a separate token:
+- `UPLOAD_TOKEN_EXPIRY_DAYS` in RHYTHM's settings is unused;
+- `manage.py create_upload_token` creates or shows that same token (`--force`
+  replaces it).
+
+The login, the bookmarklet, the sign-in helper and the admin's command all give
+the same value. Don't confuse it with RHYTHM's browser session cookie (website
+only, 1-hour idle timeout) or with PixieVeil's own `pv_…` API tokens (for
+scripts calling PixieVeil).
+
 ### Lifetime: permanent, no refresh needed
 
 - RHYTHM uses DRF's stock `TokenAuthentication` (`uploads/auth.py`
