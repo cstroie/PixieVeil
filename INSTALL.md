@@ -62,6 +62,40 @@ http_server:
   port: 8070
 ```
 
+### Dashboard users
+
+The dashboard requires a login and has no sign-up page. `./install` (via
+`install.py`) offers to create the first admin when none exists. Otherwise,
+create one by hand, **as the account the service runs as** so the file is
+owned correctly:
+
+```bash
+python -m pixieveil.auth add alice --admin          # prompts for the password
+sudo -u pixieveil ./pixieveil.sh users add alice --admin   # system-wide install
+```
+
+Other subcommands: `passwd`, `list`, `disable`/`enable`, `delete`,
+`admin <user> on|off`, `logout` (end all browser sessions), `token-add`,
+`token-list`, `token-revoke`. Admins can do the same on `/users`. A running
+server applies changes on the next request.
+
+Users live in `config/users.yaml` (scrypt-hashed passwords, mode 600). The
+session-signing key is in `config/.session_secret`, which is created on first
+start. Both files are gitignored. Deleting the secret logs everyone out.
+Sessions end after 12 h idle or 7 days in total
+(`http_server.session_idle_hours` / `session_max_days`). Five failed logins
+for one username from one IP lock that pair out for 5 minutes.
+
+Scripts and partner tooling (e.g. the `mark_exported` write-back) use a
+per-user API token, sent as `Authorization: Bearer pv_<id>_<secret>`. The old
+shared `http_server.auth_token` is no longer used; startup warns if it is
+still set. Every export, mark-exported and exam edit is attributed to its user
+in the study's `.state.json` (`exported_by`, `audit`) and in the log.
+
+**HTTPS.** Passwords and session cookies travel in clear text over plain
+HTTP. Off a trusted LAN, put the dashboard behind a TLS reverse proxy (nginx,
+Caddy) and set `http_server.secure_cookies: true`.
+
 `config/settings.yaml` is gitignored — it can hold a remote-export bearer token (`storage.remote_storage.http.auth_token` or `storage.remote_storage.rhythm.auth_token`), which is why `./install`'s systemd/OpenRC modes `chmod 600` it automatically. Everything else in `settings.example.yaml` has sensible defaults; see [QUICKSTART.md](QUICKSTART.md) for the full option reference (series filtering, defacing, anonymization profiles, remote export).
 
 ## Running directly
@@ -181,6 +215,8 @@ and `UNINSTALL.md`.
 ```bash
 curl http://localhost:8070/health
 # {"status": "ok"}
+curl -H "Authorization: Bearer pv_..." http://localhost:8070/api/me
+# {"username": "alice", "admin": true, "via": "token"}
 
 echoscu localhost 4070 -aec PIXIEVEIL        # requires dcmtk
 storescu localhost 4070 -aec PIXIEVEIL /path/to/image.dcm

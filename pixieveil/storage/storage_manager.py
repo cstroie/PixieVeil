@@ -1287,6 +1287,30 @@ class StorageManager:
     def find_sidecar_by_number(self, study_number: int) -> Optional[StudySidecar]:
         return self.study_manager.get_sidecar_by_number(study_number)
 
+    # Dashboard actions that, when they succeed, count as starting an export
+    # (so their actor is stamped as the study's ``exported_by``).
+    _EXPORT_ACTIONS = frozenset({"send_dicom", "upload_http", "upload_rhythm", "mark_exported"})
+
+    def record_audit(self, study_number: int, user: Optional[str], action: str,
+                     ok: bool, detail: Optional[str] = None) -> None:
+        """Attribute a dashboard action to the user who ran it: log it and
+        append it to the study sidecar's ``audit`` list (stamping
+        ``exported_by`` on the first successful export action)."""
+        actor = user or "unknown"
+        logger.info("Audit: user=%s action=%s study=%04d ok=%s%s", actor, action,
+                    study_number, ok, f" detail={detail}" if detail else "")
+        sc = self.find_sidecar_by_number(study_number)
+        if sc is None:
+            return
+        entry = {
+            "at": datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds"),
+            "user": actor, "action": action, "ok": bool(ok),
+        }
+        if detail:
+            entry["detail"] = str(detail)[:500]
+        exported_by = actor if ok and action in self._EXPORT_ACTIONS else None
+        self.study_manager.append_audit(sc.original_study_uid, entry, exported_by=exported_by)
+
     # Fields exposed to callers (e.g. the dashboard) for each study in
     # list/detail responses. StudySidecar also carries original_study_uid /
     # original_patient_id (PHI) — never expose to_dict() directly, always go
@@ -1295,6 +1319,7 @@ class StorageManager:
         "study_number", "status", "archived_via",
         "received_at", "last_received_at", "anonymized_study_uid",
         "rhythm_batch", "rhythm_job_id", "rhythm_job_status_url", "rhythm_status",
+        "exported_at", "exported_by",
     )
 
     @classmethod
@@ -1380,6 +1405,8 @@ class StorageManager:
             return None
         _dir, location = self.resolve_study_dir(study_number)
         study_info = self._whitelist_sidecar(sc, location)
+        # Who did what (usernames only — no PHI); newest last.
+        study_info["audit"] = list(sc.audit)
 
         exam_path = ExamSidecar.path_for(self.base_path, study_number)
         result: dict = {"study": study_info, "exam": None, "exam_corrupt": False,
@@ -2317,8 +2344,8 @@ class StorageManager:
         finally:
             self._manual_actions_in_progress.discard(study_number)
 
-    def _save_exam_sync(self, study_number: int,
-                        manual_fields: dict) -> Optional[Tuple[dict, List[Path]]]:
+    def _save_exam_sync(self, study_number: int, manual_fields: dict,
+                        actor: Optional[str] = None) -> Optional[Tuple[dict, List[Path]]]:
         """Returns (exam_data, failed_dicom_paths) — the second element is
         non-empty when the sidecar itself saved fine but the weight/age
         DICOM write-back failed for one or more files, so save_exam() can
@@ -2336,6 +2363,10 @@ class StorageManager:
             "edited_at": datetime.now(timezone.utc).astimezone().isoformat(timespec="microseconds"),
             "fields": merged_fields,
         }
+        if actor:
+            manual["edited_by"] = actor
+        elif existing_manual.get("edited_by"):
+            manual["edited_by"] = existing_manual["edited_by"]
         exam_merge.apply_manual(data, manual)
         exam_merge.recompute_buckets(data)
         ExamSidecar(study_number, data).save(self.base_path)
@@ -2414,13 +2445,16 @@ class StorageManager:
                 failed.append(dcm_path)
         return failed
 
-    async def save_exam(self, study_number: int, manual_fields: dict) -> dict:
+    async def save_exam(self, study_number: int, manual_fields: dict,
+                        actor: Optional[str] = None) -> dict:
         """Apply manually-entered fields to a study's exam sidecar and save it."""
         if study_number in self._manual_actions_in_progress:
             return {"ok": False, "message": "action already in progress for this study"}
         self._manual_actions_in_progress.add(study_number)
         try:
-            result = await asyncio.to_thread(self._save_exam_sync, study_number, manual_fields)
+            result = await asyncio.to_thread(
+                self._save_exam_sync, study_number, manual_fields, actor
+            )
             if result is None:
                 return {"ok": False, "message": "exam sidecar not found"}
             data, failed_paths = result

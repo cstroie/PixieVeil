@@ -71,10 +71,18 @@ storage:
 http_server:
   port: 8070
   ip: "0.0.0.0"
-  # Optional: require this token (as "Authorization: Bearer <token>" or
-  # "X-Auth-Token: <token>") on non-GET requests to the dashboard's mutating
-  # endpoints (PUT/POST under /api/studies). Unset = no auth (default).
-  #auth_token: "change-me"
+  # Dashboard login. Every page and API route except /login and /health
+  # needs a signed-in user (browser session cookie) or a per-user API token
+  # ("Authorization: Bearer pv_..."). There is no self-registration — manage
+  # users with `python -m pixieveil.auth` (or `./pixieveil.sh users ...`);
+  # admins can also do it on the dashboard's /users page.
+  #users_file: "config/users.yaml"            # hashed passwords, chmod 600
+  #session_secret_file: "config/.session_secret"  # created on first start
+  #session_idle_hours: 12      # log out after this long without activity
+  #session_max_days: 7         # ...and after this long regardless
+  # Set true when the dashboard is served over HTTPS (e.g. behind a reverse
+  # proxy) so the session cookie is never sent over plain HTTP.
+  #secure_cookies: false
 
 # Study Management
 study:

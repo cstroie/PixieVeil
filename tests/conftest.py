@@ -31,6 +31,15 @@ def make_settings(tmp_path: Path, **overrides) -> Settings:
 
 
 @pytest.fixture(autouse=True)
+def _isolate_users_file(tmp_path, monkeypatch):
+    """Keep every Dashboard off the developer's real config/users.yaml and
+    config/.session_secret (the default users-file location is repo-relative)."""
+    from pixieveil.auth import user_store
+
+    monkeypatch.setattr(user_store, "DEFAULT_PATH", tmp_path / "auth" / "users.yaml")
+
+
+@pytest.fixture(autouse=True)
 def _isolate_rhythm_protocol_map(tmp_path, monkeypatch):
     """Keep every test off the developer's real config/rhythm_protocols.yaml.
 

@@ -280,7 +280,7 @@
                     row('Up for', esc(PV.fmtDuration(inst.uptime_s))),
                     row('DICOM listener', inst.dicom.ae_title ? `${mono(inst.dicom.ae_title)} on port ${mono(inst.dicom.port)}` : dash),
                     row('Dashboard port', mono(inst.http_port)),
-                    row('Change protection', inst.auth_required ? '<span class="pill ok">token required</span>' : '<span class="pill warn">open</span>'),
+                    row('Dashboard login', inst.auth ? `<span class="pill ok">required</span> <span class="dim">${PV.fmtInt(inst.auth.user_count)} user(s)</span>` : '—'),
                     row('Anonymization profile', mono(inst.anonymization_profile)),
                     row('Defacing', defText),
                     row('Export targets', targets.length ? targets.join('<br>') : '<span class="faint">none configured</span>'),

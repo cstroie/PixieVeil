@@ -32,6 +32,10 @@ class FakeSM:
         self.rhythm_storage = _Cap(rhythm)
         self.settings = Settings(anonymization={"profile": profile})
         self.calls: list = []
+        self.audit: list = []
+
+    def record_audit(self, n, user, action, ok, detail=None):
+        self.audit.append((n, user, action, ok))
 
     def list_studies_summary_sync(self):
         return [{"study_number": 1, "status": "ready"}]
@@ -78,6 +82,12 @@ class FakeSM:
         return {"ok": False}
 
 
+class _User:
+    def __init__(self, username):
+        self.username = username
+        self.admin = False
+
+
 class FakeRequest:
     def __init__(self, sm, *, body=None, body_raises=False, match_info=None, query=None):
         self.app = {"storage_manager": sm}
@@ -88,6 +98,14 @@ class FakeRequest:
         self.headers = {}
         self.method = "POST"
         self.can_read_body = body is not None or body_raises
+        # what the auth middleware would have attached
+        self._state = {"user": _User("alice"), "auth_via": "session"}
+
+    def get(self, key, default=None):
+        return self._state.get(key, default)
+
+    def __getitem__(self, key):
+        return self._state[key]
 
     async def json(self):
         if self._body_raises:
@@ -113,6 +131,8 @@ class TestRhythmBatchEndpoint:
         assert data["ok"] is True
         assert data["batch"] == "S001-x"
         assert sm.calls == [("batch", (1, 2, 3))]
+        # each study in the batch is attributed to the requesting user
+        assert sm.audit == [(n, "alice", "upload_rhythm", True) for n in (1, 2, 3)]
 
     def test_missing_key_is_400(self):
         sm = FakeSM()

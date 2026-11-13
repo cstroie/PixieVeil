@@ -32,6 +32,10 @@ pip install -e .
 # needs install.py afterwards for a CUDA-matched torch build
 pip install -e ".[deface]"
 
+# Dashboard users (no web sign-up): add/passwd/list/disable/enable/delete/
+# admin/logout/token-add/token-list/token-revoke
+python -m pixieveil.auth add alice --admin
+
 # Install test dependencies (pytest) and run the suite
 pip install -e ".[test]"
 pytest
@@ -97,9 +101,14 @@ coroutines called directly with a fake request/StorageManager; and — when the
 cross-check that `build_manifest_item` / `build_batch_manifest` output
 validates against RHYTHM's *own* `MANIFEST_SCHEMA_V2` loaded straight from
 the vendored submodule, so a `git submodule update --remote` that moves the
-schema fails here rather than at upload time); and the
+schema fails here rather than at upload time); dashboard authentication
+(`tests/test_auth_store.py` / `test_auth_sessions.py`: scrypt hashing, the
+YAML user store, API tokens, the last-admin guard, cookie signing and expiry,
+the CLI; `tests/test_dashboard_auth.py`: redirect vs 401, public paths,
+login/lockout/open-redirect, CSRF, logout/disable revocation, admin-only
+`/api/users`, audit attribution); and the
 dashboard HTTP layer (`tests/test_dashboard.py`: every route's status
-codes/payload shape, the auth middleware, and `/api/options`, driven through
+codes/payload shape and `/api/options`, driven through
 aiohttp's in-process `TestServer`/`TestClient` on a real `StorageManager`).
 
 Deliberately still out of scope: `dicom_to_nifti`, the pixel-array half of
@@ -175,8 +184,9 @@ Single asyncio event loop. All blocking I/O (nnUNet inference, ZIP, file I/O) us
 | `pixieveil/processing/rhythm_manifest.py` | Builds one RHYTHM v2 server-assigned-batch manifest item per study from the effective exam sidecar (`ref`/`filename`/`site_code`/`protocol_id`/`image_quality` + optional dose/patient numerics — RHYTHM derives region/indication/contrast/type/group/scanner from the registered protocol behind `protocol_id`) |
 | `pixieveil/processing/rhythm_protocols.py` | Loads `config/rhythm_protocols.yaml` — local protocol key → registered RHYTHM `CTProtocol` UUID; validates UUIDs, unique keys, and (if the file sets one) that its `site_code` matches settings |
 | `pixieveil/storage/zip_manager.py` | ZIP archive creation (optional `exclude` predicate — the RHYTHM path uses it to drop non-CT objects; always skips `_pre_deface` backups and the internal `.exam_hints.json`) |
-| `pixieveil/dashboard/server.py` | aiohttp web server: `/` status page + `/stats` (pipeline status counts, KPIs, grouped counters), `/health`, the `/studies` review page and its `/api/studies*` JSON API (list/detail/save/actions — `send_dicom`/`upload_http`/`upload_rhythm`/`reextract`/`mark_exported` — `/api/studies/rhythm-batch`, `/api/studies[/{n}]/rhythm-manifest` preview/download), `/api/options` (form vocabularies), `/api/events` (SSE live updates), `/about` + `/api/about` (version, instance config summary — never secrets, installed component versions, credits/citations, license), `/static/*` |
+| `pixieveil/dashboard/server.py` | aiohttp web server, login-gated (see Authentication): `/login` + `/logout`, `/api/me[/password|/tokens]`, admin-only `/users` + `/api/users*`, `/` status page + `/stats` (pipeline status counts, KPIs, grouped counters), `/health`, the `/studies` review page and its `/api/studies*` JSON API (list/detail/save/actions — `send_dicom`/`upload_http`/`upload_rhythm`/`reextract`/`mark_exported` — `/api/studies/rhythm-batch`, `/api/studies[/{n}]/rhythm-manifest` preview/download), `/api/options` (form vocabularies), `/api/events` (SSE live updates), `/about` + `/api/about` (version, instance config summary — never secrets, installed component versions, credits/citations, license), `/static/*` |
 | `pixieveil/events.py` | In-process `EventBus` behind the dashboard's SSE stream — thread-safe `publish()`, coalesced `progress()`, throttled `counters()`, ring buffer for `Last-Event-ID` replay; no-op until `StorageManager.start()` binds it to the loop |
+| `pixieveil/auth/` | Dashboard authentication: `user_store.UserStore` (YAML `config/users.yaml`, scrypt hashes via `passwords.py`, per-user API tokens, mtime-reload, last-admin guard), `sessions.SessionSigner` (stateless HMAC cookie, idle + absolute expiry, revoked by bumping the user's `session_version`), `cli.py` (`python -m pixieveil.auth …`, also `./pixieveil.sh users …`) |
 | `pixieveil/dashboard/options.py` | RHYTHM region/indication combos, image-quality and contrast vocabularies served by `/api/options` (single source for the review form's dropdowns) |
 | `pixieveil/dashboard/static/` | Self-hosted `theme.css` (dark/light design tokens) and `common.js` (API/auth, toasts, dialogs, polling) — no CDN, works on an offline LAN |
 | `pixieveil/processing/exam_merge.py` | Manual-edit/provenance-overlay semantics for the exam sidecar — shared by the `/api/studies/{n}/exam` save handler and the manual re-extract action |
@@ -211,13 +221,15 @@ Single asyncio event loop. All blocking I/O (nnUNet inference, ZIP, file I/O) us
 
 **Device fallback** — `Defacer._resolve_device()` validates `cuda`/`mps`/`cpu` at startup with a test tensor and falls back to CPU automatically.
 
-**Live updates (SSE)** — `GET /api/events` streams *thin notifications, never data*: `study {n,status}` (fired by `StudyManager._save()` via its `on_change` hook, so every sidecar write — status, series, RHYTHM job — is covered in one place), `exam {n}`, `progress {n,kind,done,total}` (kinds `receive`/`deface`/`dicom`/`rhythm`, from `process_image`, `_deface_study`, and optional `progress` callbacks on `DicomStorage.send_study` / `RhythmStorage.upload_study`), and throttled `counters`. Pages re-fetch through the normal whitelisted endpoints on each hint, so the stream never needs its own serialization or auth (it's a GET, like every read). `EventBus.publish()` is safe from `asyncio.to_thread` workers (`call_soon_threadsafe`); a subscriber whose queue fills is dropped and its browser reconnects with `Last-Event-ID` (replayed from the ring, else `hello.resync`). `PV.live()` in `common.js` wires it up; `PV.poll` stays as a fallback, slowed to 60 s while the stream is connected. `/studies` never overwrites a form with unsaved edits on a pushed update — it shows a "Reload" notice instead.
+**Live updates (SSE)** — `GET /api/events` streams *thin notifications, never data*: `study {n,status}` (fired by `StudyManager._save()` via its `on_change` hook, so every sidecar write — status, series, RHYTHM job — is covered in one place), `exam {n}`, `progress {n,kind,done,total}` (kinds `receive`/`deface`/`dicom`/`rhythm`, from `process_image`, `_deface_study`, and optional `progress` callbacks on `DicomStorage.send_study` / `RhythmStorage.upload_study`), and throttled `counters`. Pages re-fetch through the normal whitelisted endpoints on each hint, so the stream never needs its own serialization (it sits behind the same login as every other route; on a 401 reconnect `PV.live` sends the page to `/login`). `EventBus.publish()` is safe from `asyncio.to_thread` workers (`call_soon_threadsafe`); a subscriber whose queue fills is dropped and its browser reconnects with `Last-Event-ID` (replayed from the ring, else `hello.resync`). `PV.live()` in `common.js` wires it up; `PV.poll` stays as a fallback, slowed to 60 s while the stream is connected. `/studies` never overwrites a form with unsaved edits on a pushed update — it shows a "Reload" notice instead.
+
+**Authentication** — Every dashboard route except `/login`, `/health`, `/static/theme.css` and `/static/common.js` requires a user. `Dashboard._auth_middleware` resolves one from a per-user API token (`Authorization: Bearer pv_<id>_<secret>` or `X-Auth-Token`) or the `pv_session` cookie. Without one, HTML GETs redirect to `/login?next=…` and everything else gets a 401. Cookie-authenticated mutations also need `X-Requested-With: PixieVeil` (set by `PV.api`) and a same-origin `Origin` if one is sent (CSRF guard); token requests are exempt. Users are added by CLI or by an admin on `/users`; there is no self-registration. `admin` is the only permission, and it gates only user management. The old shared `http_server.auth_token` is gone (startup warns if it is set). **Attribution**: handlers call `StorageManager.record_audit()` after each study action/exam save. It appends `{at,user,action,ok,detail}` to `StudySidecar.audit` (capped at 200), stamps `exported_by` on the first successful export action, and logs `Audit: user=…`. `save_exam(actor=…)` records `manual.edited_by` in the exam sidecar. Tests get an admin + API token via `tests/test_dashboard.make_dashboard()`, and conftest points `user_store.DEFAULT_PATH` at tmp so no test touches `config/users.yaml`.
 
 **Thread safety** — Acquire `self.lock` before reading/writing `self.counters` in `StorageManager`.
 
 ## Configuration
 
-Copy `config/settings.example.yaml` → `config/settings.yaml`. Key sections: `dicom_server`, `storage` (with optional `remote_storage.dicom`, `remote_storage.http`, and/or `remote_storage.rhythm` — the last needs `base_url` + `auth_token` + `site_code`, only works with the `rhythm` anonymization profile, and also needs `config/rhythm_protocols.yaml` (copy from `config/rhythm_protocols.example.yaml`) mapping each local protocol key to the UUID of a `CTProtocol` registered in the RHYTHM app), `http_server`, `study`, `series_filter`, `defacing`, `anonymization` (profile: `research`, `gdpr`, or `rhythm`), `logging`.
+Copy `config/settings.example.yaml` → `config/settings.yaml`. Key sections: `dicom_server`, `storage` (with optional `remote_storage.dicom`, `remote_storage.http`, and/or `remote_storage.rhythm` — the last needs `base_url` + `auth_token` + `site_code`, only works with the `rhythm` anonymization profile, and also needs `config/rhythm_protocols.yaml` (copy from `config/rhythm_protocols.example.yaml`) mapping each local protocol key to the UUID of a `CTProtocol` registered in the RHYTHM app), `http_server` (`users_file`, `session_idle_hours`, `session_max_days`, `secure_cookies`), `study`, `series_filter`, `defacing`, `anonymization` (profile: `research`, `gdpr`, or `rhythm`), `logging`.
 
 ## Code style
 

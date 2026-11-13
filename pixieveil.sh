@@ -133,8 +133,12 @@ case "$cmd" in
     status)
         do_status
         ;;
+    users)
+        # Dashboard user management: ./pixieveil.sh users add alice --admin
+        exec "$PYTHON_BIN" -m pixieveil.auth "$@"
+        ;;
     *)
-        echo "Usage: $0 {start|stop|restart|status} [extra args for start/restart]" >&2
+        echo "Usage: $0 {start|stop|restart|status|users} [args]" >&2
         exit 2
         ;;
 esac

@@ -47,6 +47,17 @@ http_server:
 
 Everything else has sensible defaults.
 
+## Create a dashboard user
+
+The dashboard requires a login, and there is no sign-up page. Create the first
+admin on the server (`./install` offers to do this for you):
+
+```bash
+python -m pixieveil.auth add alice --admin     # or: ./pixieveil.sh users add alice --admin
+```
+
+Admins can add more users on the dashboard's **Users** page.
+
 ## Start the server
 
 ```bash

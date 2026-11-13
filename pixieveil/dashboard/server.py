@@ -19,11 +19,14 @@ import time
 from pathlib import Path
 from typing import Any, Optional
 
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 from aiohttp import web
 
 import pixieveil
+from pixieveil.auth import user_store as user_store_mod
+from pixieveil.auth.sessions import COOKIE_NAME, SessionSigner, load_or_create_secret
+from pixieveil.auth.user_store import User, UserStore, UserStoreError
 from pixieveil.config import Settings
 from pixieveil.dashboard import options
 from pixieveil.dicom_server.server import SUPPORTED_STORAGE_SOP_CLASSES
@@ -31,6 +34,15 @@ from pixieveil.processing import exam_merge
 from pixieveil.storage.storage_manager import StorageManager
 
 logger = logging.getLogger(__name__)
+
+# Reachable without logging in. Everything else needs a session or token.
+_PUBLIC_PATHS = frozenset({"/login", "/health", "/static/theme.css", "/static/common.js"})
+# Sent by common.js on every request; a cookie-authenticated mutation
+# without it is refused (a cross-site form post can't set custom headers).
+CSRF_HEADER = "X-Requested-With"
+CSRF_VALUE = "PixieVeil"
+LOGIN_MAX_FAILURES = 5
+LOGIN_LOCKOUT_S = 300.0
 
 _VALID_ACTIONS = {
     "send_dicom", "reextract", "upload_http", "upload_rhythm", "mark_exported",
@@ -88,6 +100,29 @@ class Dashboard:
             storage_manager: Storage manager instance for accessing system metrics
         """
         self.settings = settings
+        http_cfg = settings.http_server
+        users_file = Path(http_cfg.get("users_file") or user_store_mod.DEFAULT_PATH)
+        self.user_store = UserStore(users_file)
+        secret_file = Path(http_cfg.get("session_secret_file")
+                           or users_file.parent / ".session_secret")
+        self.sessions = SessionSigner(
+            load_or_create_secret(secret_file),
+            idle_s=float(http_cfg.get("session_idle_hours", 12)) * 3600,
+            max_s=float(http_cfg.get("session_max_days", 7)) * 86400,
+        )
+        self.secure_cookies = bool(http_cfg.get("secure_cookies", False))
+        # (ip, username) -> (consecutive failures, locked-until epoch)
+        self._login_failures: dict[tuple[str, str], tuple[int, float]] = {}
+        if http_cfg.get("auth_token"):
+            logger.warning(
+                "http_server.auth_token is no longer used — issue per-user API "
+                "tokens with `python -m pixieveil.auth token-add <user> <name>`"
+            )
+        if self.user_store.count() == 0:
+            logger.error(
+                f"No dashboard users in {users_file} — nobody can log in. Create one "
+                "with `python -m pixieveil.auth add <name> --admin`"
+            )
         # Registered here (not in start()) because aiohttp freezes the
         # application's middleware list once runner.setup() runs — adding it
         # later would silently leave every route unauthenticated.
@@ -99,6 +134,21 @@ class Dashboard:
         # Routes are registered here rather than in start() so tests can
         # wrap self.app in an aiohttp TestServer without binding a port.
         self.app.add_routes([
+            web.get("/login", self.handle_login_page),
+            web.post("/login", self.handle_login),
+            web.post("/logout", self.handle_logout),
+            web.get("/api/me", self.handle_me),
+            web.post("/api/me/password", self.handle_me_password),
+            web.get("/api/me/tokens", self.handle_my_tokens),
+            web.post("/api/me/tokens", self.handle_my_token_add),
+            web.delete("/api/me/tokens/{id}", self.handle_my_token_revoke),
+            web.get("/users", self.handle_users_page),
+            web.get("/api/users", self.handle_users_list),
+            web.post("/api/users", self.handle_users_add),
+            web.patch("/api/users/{u}", self.handle_users_update),
+            web.delete("/api/users/{u}", self.handle_users_delete),
+            web.post("/api/users/{u}/password", self.handle_users_password),
+            web.post("/api/users/{u}/logout", self.handle_users_logout),
             web.get("/", self.handle_index),
             web.get("/stats", self.handle_stats),
             web.get("/health", self.handle_health),
@@ -119,28 +169,293 @@ class Dashboard:
             web.static("/static", _STATIC_DIR),
         ])
 
+    # -----------------------------------------------------------------
+    # Authentication
+    # -----------------------------------------------------------------
+
+    @staticmethod
+    def _presented_token(request: web.Request) -> Optional[str]:
+        header_auth = request.headers.get("Authorization", "")
+        if header_auth.startswith("Bearer "):
+            return header_auth[len("Bearer "):].strip()
+        return request.headers.get("X-Auth-Token")
+
+    @staticmethod
+    def _wants_html(request: web.Request) -> bool:
+        return request.method == "GET" and "text/html" in request.headers.get("Accept", "")
+
+    def _resolve_user(self, request: web.Request) -> tuple[Optional[User], Optional[str]]:
+        """(user, via) from an API token or the session cookie, else (None, None)."""
+        token = self._presented_token(request)
+        if token:
+            user = self.user_store.verify_token(token)
+            return (user, "token") if user else (None, None)
+        sess = self.sessions.verify(request.cookies.get(COOKIE_NAME))
+        if sess is None:
+            return None, None
+        user = self.user_store.get_active(sess.username, sess.version)
+        if user is None:
+            return None, None
+        request["session"] = sess
+        return user, "session"
+
+    @staticmethod
+    def _same_origin(request: web.Request) -> bool:
+        origin = request.headers.get("Origin")
+        if not origin or origin == "null":
+            return origin is None
+        return urlparse(origin).netloc == request.host
+
+    def _set_session_cookie(self, resp: web.StreamResponse, user: User,
+                            issued_at: Optional[float] = None) -> None:
+        resp.set_cookie(
+            COOKIE_NAME, self.sessions.issue(user.username, user.session_version, issued_at),
+            max_age=self.sessions.cookie_max_age(issued_at), path="/",
+            httponly=True, samesite="Strict", secure=self.secure_cookies,
+        )
+
     @web.middleware
     async def _auth_middleware(self, request: web.Request, handler):
-        """
-        Guard non-GET requests with an optional shared token.
+        """Require a logged-in user (session cookie) or API token everywhere
+        except _PUBLIC_PATHS.
 
-        When ``http_server.auth_token`` is unset (default), this is a no-op
-        and behavior is unchanged from before this middleware existed. When
-        set, any non-GET request (the mutating /api/studies/* endpoints)
-        must present it as either ``Authorization: Bearer <token>`` or
-        ``X-Auth-Token: <token>``.
+        Unauthenticated: browser page loads redirect to /login?next=…; API,
+        SSE and mutating requests get a 401 JSON body. Cookie-authenticated
+        mutations must also carry the X-Requested-With header and, if the
+        browser sent an Origin, a same-origin one (CSRF guard); API-token
+        requests are exempt since a browser never attaches those by itself.
         """
-        token = self.settings.http_server.get("auth_token")
-        if token and request.method != "GET":
-            header_auth = request.headers.get("Authorization", "")
-            presented = None
-            if header_auth.startswith("Bearer "):
-                presented = header_auth[len("Bearer "):]
-            if presented is None:
-                presented = request.headers.get("X-Auth-Token")
-            if presented != token:
-                return web.json_response({"error": "unauthorized"}, status=401)
-        return await handler(request)
+        if request.path in _PUBLIC_PATHS:
+            return await handler(request)
+
+        user, via = self._resolve_user(request)
+        if user is None:
+            if self._wants_html(request):
+                raise web.HTTPFound(f"/login?next={quote(request.path_qs, safe='')}")
+            return web.json_response({"error": "unauthorized"}, status=401)
+
+        if via == "session" and request.method not in ("GET", "HEAD", "OPTIONS"):
+            if (request.headers.get(CSRF_HEADER) != CSRF_VALUE
+                    or not self._same_origin(request)):
+                return web.json_response({"error": "CSRF check failed"}, status=403)
+
+        request["user"] = user
+        request["auth_via"] = via
+        resp = await handler(request)
+        sess = request.get("session")
+        if (sess is not None and self.sessions.needs_refresh(sess)
+                and isinstance(resp, web.StreamResponse) and not resp.prepared
+                and COOKIE_NAME not in resp.cookies):
+            self._set_session_cookie(resp, user, sess.issued_at)
+        return resp
+
+    @staticmethod
+    def _actor(request: web.Request) -> Optional[str]:
+        user = request.get("user")
+        return user.username if user is not None else None
+
+    @staticmethod
+    def _require_admin(request: web.Request) -> None:
+        user = request.get("user")
+        if user is None or not user.admin:
+            raise web.HTTPForbidden(
+                text=json.dumps({"error": "admin only"}), content_type="application/json"
+            )
+
+    @staticmethod
+    def _safe_next(raw: Optional[str]) -> str:
+        """Only same-site relative redirects (no //host, no scheme)."""
+        if not raw or not raw.startswith("/") or raw.startswith("//") or "\\" in raw:
+            return "/"
+        return raw
+
+    def _login_locked(self, key: tuple[str, str]) -> float:
+        """Seconds left on a lockout for key (0 when not locked)."""
+        _fails, until = self._login_failures.get(key, (0, 0.0))
+        return max(0.0, until - time.time())
+
+    def _login_failed(self, key: tuple[str, str]) -> None:
+        fails, _until = self._login_failures.get(key, (0, 0.0))
+        fails += 1
+        until = time.time() + LOGIN_LOCKOUT_S if fails >= LOGIN_MAX_FAILURES else 0.0
+        self._login_failures[key] = (0 if until else fails, until)
+        if until:
+            logger.warning(f"Login locked for {LOGIN_LOCKOUT_S:.0f}s: user={key[1]!r} ip={key[0]}")
+        # Bound memory against a flood of random usernames.
+        if len(self._login_failures) > 10000:
+            now = time.time()
+            self._login_failures = {k: v for k, v in self._login_failures.items()
+                                    if v[1] > now or v[0] > 0}
+
+    async def handle_login_page(self, request: web.Request) -> web.Response:
+        if self._resolve_user(request)[0] is not None:
+            raise web.HTTPFound(self._safe_next(request.query.get("next")))
+        return await self._serve_template("login.html")
+
+    async def handle_login(self, request: web.Request) -> web.Response:
+        """POST {"username", "password", "next"?} → sets the session cookie."""
+        if request.headers.get(CSRF_HEADER) != CSRF_VALUE or not self._same_origin(request):
+            return web.json_response({"error": "CSRF check failed"}, status=403)
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response({"error": "invalid JSON body"}, status=400)
+        if not isinstance(body, dict):
+            return web.json_response({"error": "invalid JSON body"}, status=400)
+        username = str(body.get("username") or "").strip().lower()
+        password = str(body.get("password") or "")
+        if self.user_store.count() == 0:
+            return web.json_response({
+                "error": "No users are configured. On the server run: "
+                         "python -m pixieveil.auth add <name> --admin",
+            }, status=503)
+        key = (request.remote or "?", username)
+        left = self._login_locked(key)
+        if left:
+            return web.json_response(
+                {"error": f"Too many failed attempts — try again in {int(left // 60) + 1} min"},
+                status=429,
+            )
+        user = await asyncio.to_thread(self.user_store.authenticate, username, password)
+        if user is None:
+            self._login_failed(key)
+            logger.warning(f"Failed login: user={username!r} ip={request.remote}")
+            return web.json_response({"error": "Invalid username or password"}, status=401)
+        self._login_failures.pop(key, None)
+        logger.info(f"Login: user={user.username} ip={request.remote}")
+        resp = web.json_response({"ok": True, "next": self._safe_next(body.get("next"))})
+        self._set_session_cookie(resp, user)
+        return resp
+
+    async def handle_logout(self, request: web.Request) -> web.Response:
+        logger.info(f"Logout: user={self._actor(request)}")
+        resp = web.json_response({"ok": True})
+        resp.del_cookie(COOKIE_NAME, path="/")
+        return resp
+
+    async def handle_me(self, request: web.Request) -> web.Response:
+        user: User = request["user"]
+        return web.json_response({"username": user.username, "admin": user.admin,
+                                  "via": request.get("auth_via")})
+
+    async def handle_me_password(self, request: web.Request) -> web.Response:
+        body = await self._json_body(request)
+        user: User = request["user"]
+        try:
+            await asyncio.to_thread(self.user_store.change_own_password, user.username,
+                                    str(body.get("current") or ""), str(body.get("new") or ""))
+        except UserStoreError as e:
+            return web.json_response({"error": str(e)}, status=400)
+        # Other sessions die (session_version bumped); keep this one alive.
+        fresh = self.user_store.get(user.username)
+        resp = web.json_response({"ok": True})
+        if fresh is not None and request.get("auth_via") == "session":
+            self._set_session_cookie(resp, fresh)
+        return resp
+
+    async def handle_my_tokens(self, request: web.Request) -> web.Response:
+        user = self.user_store.get(request["user"].username)
+        return web.json_response({"tokens": user.public()["tokens"] if user else []})
+
+    async def handle_my_token_add(self, request: web.Request) -> web.Response:
+        body = await self._json_body(request)
+        try:
+            token, meta = await asyncio.to_thread(
+                self.user_store.issue_token, request["user"].username, str(body.get("name") or "")
+            )
+        except UserStoreError as e:
+            return web.json_response({"error": str(e)}, status=400)
+        return web.json_response({"ok": True, "token": token, "meta": meta})
+
+    async def handle_my_token_revoke(self, request: web.Request) -> web.Response:
+        try:
+            await asyncio.to_thread(self.user_store.revoke_token, request["user"].username,
+                                    request.match_info["id"])
+        except UserStoreError as e:
+            return web.json_response({"error": str(e)}, status=404)
+        return web.json_response({"ok": True})
+
+    # ------------------------------------------------------------ admin: users
+    @staticmethod
+    async def _json_body(request: web.Request) -> dict:
+        try:
+            body = await request.json()
+        except Exception:
+            raise web.HTTPBadRequest(text=json.dumps({"error": "invalid JSON body"}),
+                                     content_type="application/json")
+        if not isinstance(body, dict):
+            raise web.HTTPBadRequest(text=json.dumps({"error": "body must be an object"}),
+                                     content_type="application/json")
+        return body
+
+    async def handle_users_page(self, request: web.Request) -> web.Response:
+        user = request.get("user")
+        if user is None or not user.admin:
+            raise web.HTTPFound("/")
+        return await self._serve_template("users.html")
+
+    async def handle_users_list(self, request: web.Request) -> web.Response:
+        self._require_admin(request)
+        users = await asyncio.to_thread(self.user_store.list_users)
+        return web.json_response({"users": [u.public() for u in users]})
+
+    async def _admin_op(self, request: web.Request, what: str, fn, *args) -> web.Response:
+        self._require_admin(request)
+        try:
+            await asyncio.to_thread(fn, *args)
+        except UserStoreError as e:
+            status = 404 if str(e).startswith("no such user") else 400
+            return web.json_response({"error": str(e)}, status=status)
+        logger.info(f"Admin: user={self._actor(request)} {what}")
+        return web.json_response({"ok": True})
+
+    async def handle_users_add(self, request: web.Request) -> web.Response:
+        self._require_admin(request)
+        body = await self._json_body(request)
+        return await self._admin_op(
+            request, f"added user {body.get('username')!r}", self.user_store.add,
+            str(body.get("username") or ""), str(body.get("password") or ""),
+            bool(body.get("admin", False)),
+        )
+
+    async def handle_users_update(self, request: web.Request) -> web.Response:
+        """PATCH {"admin"?: bool, "disabled"?: bool}."""
+        self._require_admin(request)
+        body = await self._json_body(request)
+        name = request.match_info["u"]
+        if name.lower() == request["user"].username and (
+                body.get("disabled") is True or body.get("admin") is False):
+            return web.json_response(
+                {"error": "you cannot disable yourself or remove your own admin"}, status=400)
+        for key, fn in (("admin", self.user_store.set_admin),
+                        ("disabled", self.user_store.set_disabled)):
+            if key in body:
+                resp = await self._admin_op(request, f"set {key}={bool(body[key])} on {name!r}",
+                                            fn, name, bool(body[key]))
+                if resp.status != 200:
+                    return resp
+        return web.json_response({"ok": True})
+
+    async def handle_users_delete(self, request: web.Request) -> web.Response:
+        self._require_admin(request)
+        name = request.match_info["u"]
+        if name.lower() == request["user"].username:
+            return web.json_response({"error": "you cannot delete yourself"}, status=400)
+        return await self._admin_op(request, f"deleted user {name!r}",
+                                    self.user_store.delete, name)
+
+    async def handle_users_password(self, request: web.Request) -> web.Response:
+        self._require_admin(request)
+        body = await self._json_body(request)
+        name = request.match_info["u"]
+        return await self._admin_op(request, f"reset password of {name!r}",
+                                    self.user_store.set_password, name,
+                                    str(body.get("password") or ""))
+
+    async def handle_users_logout(self, request: web.Request) -> web.Response:
+        name = request.match_info["u"]
+        return await self._admin_op(request, f"ended sessions of {name!r}",
+                                    self.user_store.revoke_sessions, name)
 
     async def start(self) -> None:
         """
@@ -427,7 +742,7 @@ class Dashboard:
                 "dicom": {"ae_title": cfg.dicom_server.get("ae_title"),
                           "port": cfg.dicom_server.get("port")},
                 "http_port": cfg.http_server.get("port"),
-                "auth_required": bool(cfg.http_server.get("auth_token")),
+                "auth": {"mode": "users", "user_count": self.user_store.count()},
                 "anonymization_profile": cfg.anonymization.get("profile"),
                 "defacing": {"enabled": sm.defacer.enabled,
                              "device": sm.defacer.device if sm.defacer.enabled else None,
@@ -490,7 +805,6 @@ class Dashboard:
                     for e in storage_manager.rhythm_storage.protocol_map.entries
                 ],
             },
-            "auth_required": bool(self.settings.http_server.get("auth_token")),
         })
 
     async def handle_get_study(self, request: web.Request) -> web.Response:
@@ -519,7 +833,11 @@ class Dashboard:
                 {"error": "unknown/unwritable field(s)", "keys": bad_keys}, status=400
             )
 
-        result = await storage_manager.save_exam(n, fields)
+        result = await storage_manager.save_exam(n, fields, actor=self._actor(request))
+        await asyncio.to_thread(
+            storage_manager.record_audit, n, self._actor(request), "save_exam",
+            bool(result.get("ok")), ",".join(sorted(fields)) or None,
+        )
         if result.get("ok"):
             return web.json_response(result)
         message = result.get("message", "")
@@ -557,6 +875,10 @@ class Dashboard:
                 "upload_rhythm": storage_manager.manual_upload_rhythm,
             }[action]
             result = await method(n)
+        await asyncio.to_thread(
+            storage_manager.record_audit, n, self._actor(request), action,
+            bool(result.get("ok")), None if result.get("ok") else result.get("message"),
+        )
         if result.get("ok"):
             return web.json_response(result)
         message = result.get("message", "")
@@ -640,4 +962,16 @@ class Dashboard:
             )
 
         result = await storage_manager.manual_upload_rhythm_batch(numbers)
+        await asyncio.to_thread(self._audit_batch, storage_manager, numbers, result,
+                                self._actor(request))
         return web.json_response(result)
+
+    @staticmethod
+    def _audit_batch(sm: StorageManager, numbers: list, result: dict,
+                     actor: Optional[str]) -> None:
+        per_study = result.get("results") or {}
+        for n in numbers:
+            r = per_study.get(str(n)) or result
+            ok = bool(r.get("ok"))
+            sm.record_audit(n, actor, "upload_rhythm", ok,
+                            f"batch {result.get('batch')}" if ok else r.get("message"))

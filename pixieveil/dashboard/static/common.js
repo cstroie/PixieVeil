@@ -2,7 +2,6 @@
 'use strict';
 
 const PV = (() => {
-    const AUTH_KEY = 'pixieveil_auth_token';
     const THEME_KEY = 'pixieveil_theme';
 
     // ------------------------------------------------------------ storage
@@ -201,39 +200,30 @@ const PV = (() => {
     }
 
     // ------------------------------------------------------------ API
-    function authToken() { return store(AUTH_KEY) || ''; }
-
-    async function askToken() {
-        const fd = await modal({
-            title: 'Authorization required',
-            body: `<p>This server requires an access token for changes.
-                   It is stored in this browser only.</p>
-                   <input class="input" type="password" name="token" autocomplete="off"
-                          placeholder="Access token" value="${esc(authToken())}">`,
-            confirm: 'Save token',
-        });
-        if (!fd) return false;
-        store(AUTH_KEY, String(fd.get('token') || '') || null);
-        return true;
+    // Authentication is a session cookie set by /login; every request also
+    // carries X-Requested-With (the server's CSRF guard for mutations).
+    function toLogin() {
+        const next = location.pathname + location.search;
+        location.href = `/login?next=${encodeURIComponent(next)}`;
     }
 
     // api(path, {method, body}) → parsed JSON; throws Error(message) with
-    // .status/.data on non-2xx. A 401 prompts for a token and retries once.
-    async function api(path, opts, retried) {
+    // .status/.data on non-2xx. A 401 (session expired) goes to /login.
+    async function api(path, opts) {
         opts = opts || {};
-        const headers = {};
+        const headers = { 'X-Requested-With': 'PixieVeil' };
         if (opts.body !== undefined) headers['Content-Type'] = 'application/json';
-        const token = authToken();
-        if (token && opts.method && opts.method !== 'GET') headers['X-Auth-Token'] = token;
         const resp = await fetch(path, {
             method: opts.method || 'GET',
             headers,
+            credentials: 'same-origin',
             body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
         });
         let data = null;
         try { data = await resp.json(); } catch (_e) { data = null; }
-        if (resp.status === 401 && !retried) {
-            if (await askToken()) return api(path, opts, true);
+        if (resp.status === 401 && !opts.noRedirect) {
+            toLogin();
+            throw Object.assign(new Error('Session expired'), { status: 401, data });
         }
         if (!resp.ok) {
             const err = new Error((data && (data.message || data.error)) || `HTTP ${resp.status}`);
@@ -242,6 +232,109 @@ const PV = (() => {
             throw err;
         }
         return data;
+    }
+
+    // ------------------------------------------------------------ account menu
+    let me = null;
+    async function changePassword() {
+        const fd = await modal({
+            title: 'Change password',
+            body: `<label class="field"><span class="label">Current password</span>
+                     <input class="input" type="password" name="current" autocomplete="current-password" required></label>
+                   <label class="field"><span class="label">New password (min. 8 characters)</span>
+                     <input class="input" type="password" name="new" autocomplete="new-password" minlength="8" required></label>`,
+            confirm: 'Change password',
+        });
+        if (!fd) return;
+        try {
+            await api('/api/me/password', { method: 'POST',
+                body: { current: fd.get('current'), new: fd.get('new') } });
+            toast('Password changed. Other sessions were logged out.', 'ok');
+        } catch (e) { toast(e.message, 'bad'); }
+    }
+
+    async function manageTokens() {
+        let list;
+        try { list = (await api('/api/me/tokens')).tokens; } catch (e) { toast(e.message, 'bad'); return; }
+        const rows = list.length ? list.map(t => `
+            <tr><td class="mono">${esc(t.id)}</td><td>${esc(t.name)}</td>
+                <td class="dim">${fmtDate(t.last_used)}</td>
+                <td><label class="faint"><input type="checkbox" name="revoke" value="${esc(t.id)}"> revoke</label></td></tr>`).join('')
+            : '<tr><td colspan="4" class="dim">No API tokens yet.</td></tr>';
+        const fd = await modal({
+            title: 'API tokens',
+            body: `<p class="dim">For scripts and tooling: send as <span class="mono">Authorization: Bearer &lt;token&gt;</span>.
+                   A token acts as you.</p>
+                   <table class="data"><thead><tr><th>ID</th><th>Name</th><th>Last used</th><th></th></tr></thead>
+                   <tbody>${rows}</tbody></table>
+                   <label class="field"><span class="label">New token name (optional)</span>
+                     <input class="input" name="name" maxlength="64" placeholder="e.g. export watcher"></label>`,
+            confirm: 'Apply',
+        });
+        if (!fd) return;
+        try {
+            for (const id of fd.getAll('revoke')) {
+                await api(`/api/me/tokens/${encodeURIComponent(id)}`, { method: 'DELETE' });
+            }
+            const name = String(fd.get('name') || '').trim();
+            if (name) {
+                const r = await api('/api/me/tokens', { method: 'POST', body: { name } });
+                await modal({
+                    title: 'New API token',
+                    body: `<p>Copy it now — it will not be shown again.</p>
+                           <input class="input mono" readonly value="${esc(r.token)}" onfocus="this.select()">`,
+                    confirm: 'Done', cancel: 'Close',
+                });
+            } else if (fd.getAll('revoke').length) {
+                toast('Token(s) revoked', 'ok');
+            }
+        } catch (e) { toast(e.message, 'bad'); }
+    }
+
+    async function logout() {
+        try { await api('/logout', { method: 'POST' }); } catch (_e) { /* going anyway */ }
+        location.href = '/login';
+    }
+
+    async function initAccount() {
+        const bar = document.querySelector('.topbar');
+        if (!bar || location.pathname === '/login') return;
+        try { me = await api('/api/me'); } catch (_e) { return; }
+        if (me.admin) {
+            const nav = bar.querySelector('.nav');
+            if (nav && !nav.querySelector('a[href="/users"]')) {
+                const a = document.createElement('a');
+                a.href = '/users';
+                a.textContent = 'Users';
+                if (location.pathname === '/users') a.setAttribute('aria-current', 'page');
+                nav.appendChild(a);
+            }
+        }
+        const wrap = document.createElement('div');
+        wrap.className = 'account';
+        wrap.innerHTML = `
+            <button type="button" class="btn btn-ghost account-btn" aria-haspopup="true" aria-expanded="false">
+                ${icon('lock')}<span>${esc(me.username)}</span></button>
+            <div class="account-menu" hidden>
+                <button type="button" data-act="password">Change password</button>
+                <button type="button" data-act="tokens">API tokens</button>
+                <button type="button" data-act="logout">Log out</button>
+            </div>`;
+        const btn = wrap.querySelector('.account-btn');
+        const menu = wrap.querySelector('.account-menu');
+        const setOpen = open => { menu.hidden = !open; btn.setAttribute('aria-expanded', String(open)); };
+        btn.addEventListener('click', e => { e.stopPropagation(); setOpen(menu.hidden); });
+        document.addEventListener('click', () => setOpen(false));
+        document.addEventListener('keydown', e => { if (e.key === 'Escape') setOpen(false); });
+        menu.addEventListener('click', e => {
+            const act = e.target.closest('[data-act]')?.dataset.act;
+            setOpen(false);
+            if (act === 'password') changePassword();
+            if (act === 'tokens') manageTokens();
+            if (act === 'logout') logout();
+        });
+        const toggle = bar.querySelector('[data-theme-toggle]');
+        bar.insertBefore(wrap, toggle || null);
     }
 
     // ------------------------------------------------------------ polling
@@ -307,7 +400,16 @@ const PV = (() => {
                 });
             });
             // EventSource reconnects by itself (resending Last-Event-ID).
-            es.onerror = () => setState(false);
+            // If the session expired, the reconnect gets a 401 and the
+            // browser gives up (readyState CLOSED) — check and go to /login.
+            es.onerror = () => {
+                setState(false);
+                if (es.readyState === EventSource.CLOSED) {
+                    fetch('/api/me', { credentials: 'same-origin' })
+                        .then(r => { if (r.status === 401) toLogin(); })
+                        .catch(() => {});
+                }
+            };
         };
         open();
         return {
@@ -327,11 +429,13 @@ const PV = (() => {
         applyTheme(currentTheme());
         document.querySelectorAll('[data-theme-toggle]').forEach(btn =>
             btn.addEventListener('click', toggleTheme));
+        initAccount();
     });
 
     return {
         esc, pad4, fmtInt, fmtNum, fmtDate, fmtAgo, fmtDuration,
-        icon, toast, modal, api, poll, live, debounce, setConn, askToken,
+        icon, toast, modal, api, poll, live, debounce, setConn,
+        get me() { return me; },
         STATUS, statusPill, FIELD_LABELS, missingLabels,
     };
 })();

@@ -415,6 +415,28 @@ class StudyManager:
             sc.status = status
             self._save(sc)
 
+    # Entries kept per study; the oldest are dropped beyond this so a
+    # study that is re-sent many times can't grow its sidecar unbounded.
+    AUDIT_MAX_ENTRIES = 200
+
+    def append_audit(self, original_study_uid: str, entry: dict,
+                     exported_by: Optional[str] = None) -> None:
+        """Append one attribution entry to the sidecar's ``audit`` list and,
+        if given and not yet set, stamp ``exported_by``. No-op if the
+        sidecar is unknown or persistence is disabled."""
+        if self._base_path is None:
+            return
+        with self.lock:
+            sc = self._sidecars.get(original_study_uid)
+            if sc is None:
+                return
+            sc.audit.append(entry)
+            if len(sc.audit) > self.AUDIT_MAX_ENTRIES:
+                del sc.audit[:-self.AUDIT_MAX_ENTRIES]
+            if exported_by and not sc.exported_by:
+                sc.exported_by = exported_by
+            self._save(sc)
+
     _RHYTHM_JOB_FIELDS = frozenset(
         {"batch", "session_id", "job_id", "job_status_url", "status",
          "zip_sha256", "zip_size"}

@@ -586,6 +586,48 @@ def sanity_checks(settings, choice: str) -> bool:
 # Entry point
 # ---------------------------------------------------------------------------
 
+def ensure_dashboard_admin(settings, non_interactive: bool) -> bool:
+    """Offer to create the first dashboard admin when no users exist yet.
+
+    The dashboard refuses every request without a login, so a fresh install
+    with no users can't be used. Runs as the account install.py runs as
+    (the service account in systemd/OpenRC mode), so the users file ends up
+    owned by it.
+    """
+    _section("Step 8 — Dashboard admin account")
+    from pixieveil.auth.user_store import DEFAULT_PATH, UserStore, UserStoreError
+
+    users_file = Path(settings.http_server.get("users_file") or DEFAULT_PATH)
+    store = UserStore(users_file)
+    if store.count():
+        _ok(f"{store.count()} dashboard user(s) in {users_file}")
+        return True
+    hint = "python -m pixieveil.auth add <name> --admin   (or ./pixieveil.sh users add ...)"
+    if non_interactive or not sys.stdin.isatty():
+        _info(f"No dashboard users yet — create one before first login: {hint}")
+        return True
+    import getpass
+    name = input("  Create the first dashboard admin now? Username (blank to skip): ").strip()
+    if not name:
+        _info(f"Skipped. Create one later: {hint}")
+        return True
+    for _attempt in range(3):
+        pw = getpass.getpass("  Password (min. 8 chars): ")
+        if getpass.getpass("  Repeat password: ") != pw:
+            _fail("Passwords do not match")
+            continue
+        try:
+            store.add(name, pw, admin=True)
+        except UserStoreError as e:
+            _fail(str(e))
+            if "password" not in str(e):
+                return False
+            continue
+        _ok(f"Created admin '{name.lower()}' in {users_file}")
+        return True
+    return False
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="PixieVeil installation helper")
     parser.add_argument(
@@ -674,6 +716,7 @@ def main() -> int:
         prepare_model(settings, choice),
         update_settings(settings, choice, args.config),
         sanity_checks(settings, choice),
+        ensure_dashboard_admin(settings, args.non_interactive),
     ]
 
     _section("Summary")

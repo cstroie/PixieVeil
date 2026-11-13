@@ -420,11 +420,29 @@ kbd {
     font: 11px var(--mono); color: var(--text-dim);
 }
 
+/* ---------------------------------------------------------------- account menu */
+
+.account { position: relative; }
+.account-btn svg { width: 15px; height: 15px; }
+.account-menu {
+    position: absolute; right: 0; top: calc(100% + 6px); z-index: 50; min-width: 180px;
+    display: flex; flex-direction: column; padding: 4px;
+    background: var(--panel); border: 1px solid var(--border-strong);
+    border-radius: var(--radius); box-shadow: var(--shadow);
+}
+.account-menu[hidden] { display: none; }
+.account-menu button {
+    all: unset; cursor: pointer; padding: 8px 10px; border-radius: var(--radius-sm);
+    color: var(--text); font-size: 13px;
+}
+.account-menu button:hover, .account-menu button:focus-visible { background: var(--hover); }
+
 /* Phone width: keep the top bar to one row without horizontal scroll. */
 @media (max-width: 560px) {
     .topbar { gap: 8px; padding: 0 12px; }
     .topbar .brand > span, .conn .label { display: none; }
     .nav a { padding: 6px 8px; }
+    .account-btn span { display: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {

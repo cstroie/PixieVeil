@@ -144,6 +144,14 @@ class StudySidecar:
     exported_at: Optional[str] = None
     purged_at: Optional[str] = None
 
+    # Attribution. ``exported_by`` is the dashboard user who first
+    # successfully started an export (for RHYTHM: queued the upload; for
+    # mark_exported: the API-token owner). ``audit`` is an append-only list
+    # of ``{"at", "user", "action", "ok", "detail"}`` entries, one per
+    # dashboard action on this study (see StorageManager.record_audit).
+    exported_by: Optional[str] = None
+    audit: list = field(default_factory=list)
+
     # ------------------------------------------------------------------
     # Construction helpers
 

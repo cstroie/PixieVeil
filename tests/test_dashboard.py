@@ -1,8 +1,12 @@
-"""Dashboard HTTP layer: routes, payload shapes, auth middleware, validation.
+"""Dashboard HTTP layer: routes, payload shapes, validation.
 
 Runs the real aiohttp application through aiohttp.test_utils' in-process
 TestServer/TestClient (no port bound beyond localhost, no network), on top
 of a real StorageManager rooted in tmp_path. Export stays disabled.
+
+Every dashboard here has one admin user (``admin``) and requests carry that
+user's API token by default (pass ``auth=False`` to go anonymous); the
+login/session/CSRF behaviour itself is covered in test_dashboard_auth.py.
 """
 
 import asyncio
@@ -18,7 +22,7 @@ from .conftest import make_settings
 from .test_storage_manager import register_study
 
 
-def _calls(dashboard: Dashboard, *calls: tuple) -> list[tuple[int, object]]:
+def _calls(dashboard: Dashboard, *calls: tuple, auth: bool = True) -> list[tuple[int, object]]:
     """Run (method, path, kwargs) requests in order against the dashboard app,
     all on one event loop (an aiohttp Application binds to the first loop
     that serves it). Returns [(status, json-or-text body), ...]."""
@@ -26,6 +30,9 @@ def _calls(dashboard: Dashboard, *calls: tuple) -> list[tuple[int, object]]:
         out = []
         async with TestClient(TestServer(dashboard.app)) as client:
             for method, path, kwargs in calls:
+                kwargs = dict(kwargs)
+                if auth:
+                    kwargs["headers"] = {**auth_headers(dashboard), **kwargs.get("headers", {})}
                 resp = await client.request(method, path, **kwargs)
                 ctype = resp.headers.get("Content-Type", "")
                 body = await resp.json() if "json" in ctype else await resp.text()
@@ -34,14 +41,25 @@ def _calls(dashboard: Dashboard, *calls: tuple) -> list[tuple[int, object]]:
     return asyncio.run(go())
 
 
-def _request(dashboard: Dashboard, method: str, path: str, **kwargs):
+def _request(dashboard: Dashboard, method: str, path: str, auth: bool = True, **kwargs):
     """Run one request against the dashboard app; returns (status, body)."""
-    return _calls(dashboard, (method, path, kwargs))[0]
+    return _calls(dashboard, (method, path, kwargs), auth=auth)[0]
+
+
+def auth_headers(dashboard: Dashboard) -> dict:
+    return {"Authorization": f"Bearer {dashboard._test_token}"}
+
+
+def make_dashboard(settings) -> Dashboard:
+    """A Dashboard over a real StorageManager, with one admin user + API token."""
+    d = Dashboard(settings, StorageManager(settings))
+    d.user_store.add("admin", "admin-password", admin=True)
+    d._test_token, _ = d.user_store.issue_token("admin", "tests")
+    return d
 
 
 def _dashboard(tmp_path, **http_server) -> Dashboard:
-    settings = make_settings(tmp_path, http_server=http_server)
-    return Dashboard(settings, StorageManager(settings))
+    return make_dashboard(make_settings(tmp_path, http_server=http_server))
 
 
 def _complete_exam(n: int) -> dict:
@@ -191,32 +209,28 @@ class TestStudiesApi:
         assert detail["missing_fields"] == []
 
 
-class TestAuthMiddleware:
-    def test_mutation_requires_token_when_configured(self, tmp_path):
-        d = _dashboard(tmp_path, auth_token="s3cret")
-        status, body = _request(d, "PUT", "/api/studies/1/exam", json={"fields": {}})
+class TestAuthRequired:
+    def test_api_without_credentials_is_401(self, tmp_path):
+        status, body = _request(_dashboard(tmp_path), "GET", "/api/studies", auth=False)
         assert status == 401
         assert body == {"error": "unauthorized"}
 
-    def test_get_is_never_guarded(self, tmp_path):
-        d = _dashboard(tmp_path, auth_token="s3cret")
-        status, _ = _request(d, "GET", "/api/studies")
-        assert status == 200
+    def test_bad_token_is_401(self, tmp_path):
+        status, _ = _request(_dashboard(tmp_path), "GET", "/api/studies", auth=False,
+                             headers={"Authorization": "Bearer pv_dead_beef"})
+        assert status == 401
 
     def test_x_auth_token_header_accepted(self, tmp_path):
-        d = _dashboard(tmp_path, auth_token="s3cret")
+        d = _dashboard(tmp_path)
+        status, _ = _request(d, "GET", "/api/studies", auth=False,
+                             headers={"X-Auth-Token": d._test_token})
+        assert status == 200
+
+    def test_token_mutation_needs_no_csrf_header(self, tmp_path):
         # Passes auth, then fails validation on the bogus key — proving the
         # request got past the middleware.
-        status, _ = _request(d, "PUT", "/api/studies/1/exam",
-                             json={"fields": {"bogus": 1}},
-                             headers={"X-Auth-Token": "s3cret"})
-        assert status == 400
-
-    def test_bearer_token_accepted(self, tmp_path):
-        d = _dashboard(tmp_path, auth_token="s3cret")
-        status, _ = _request(d, "PUT", "/api/studies/1/exam",
-                             json={"fields": {"bogus": 1}},
-                             headers={"Authorization": "Bearer s3cret"})
+        status, _ = _request(_dashboard(tmp_path), "PUT", "/api/studies/1/exam",
+                             json={"fields": {"bogus": 1}})
         assert status == 400
 
 
@@ -241,7 +255,6 @@ class TestAbout:
     def test_never_leaks_secrets(self, tmp_path):
         settings = make_settings(
             tmp_path,
-            http_server={"auth_token": "dash-s3cret"},
             storage={
                 "base_path": str(tmp_path / "data"),
                 "temp_path": str(tmp_path / "tmp"),
@@ -249,15 +262,16 @@ class TestAbout:
                                             "auth_token": "upload-s3cret"}},
             },
         )
-        d = Dashboard(settings, StorageManager(settings))
+        d = make_dashboard(settings)
 
         status, body = _request(d, "GET", "/api/about")
 
         assert status == 200
-        assert body["instance"]["auth_required"] is True
+        assert body["instance"]["auth"] == {"mode": "users", "user_count": 1}
         assert body["instance"]["export"]["http"] == {"host": "up.example"}
         text = str(body)
         assert "s3cret" not in text and "key=q" not in text
+        assert d._test_token not in text and "scrypt$" not in text
 
 
 class TestEventsStream:
@@ -287,7 +301,7 @@ class TestEventsStream:
         async def go():
             async with TestClient(TestServer(d.app)) as client:
                 sm.events.bind(asyncio.get_running_loop())
-                resp = await client.get("/api/events")
+                resp = await client.get("/api/events", headers=auth_headers(d))
                 assert resp.status == 200
                 assert resp.headers["Content-Type"].startswith("text/event-stream")
                 assert resp.headers["Cache-Control"] == "no-cache"
@@ -313,7 +327,7 @@ class TestEventsStream:
                 sm.events.bind(asyncio.get_running_loop())
                 sm.events.publish("exam", n=4)
                 sm.events.publish("exam", n=5)
-                resp = await client.get("/api/events", headers={"Last-Event-ID": "1"})
+                resp = await client.get("/api/events", headers={**auth_headers(d), "Last-Event-ID": "1"})
                 await self._frame(resp)            # hello
                 replayed = await self._frame(resp)
                 resp.close()
@@ -327,7 +341,7 @@ class TestEventsStream:
         async def go():
             async with TestClient(TestServer(d.app)) as client:
                 sm.events.bind(asyncio.get_running_loop())
-                resp = await client.get("/api/events")
+                resp = await client.get("/api/events", headers=auth_headers(d))
                 await self._frame(resp)
                 assert sm.events.subscriber_count == 1
                 sm.events.close_all()
