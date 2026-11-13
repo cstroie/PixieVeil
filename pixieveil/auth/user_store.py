@@ -137,6 +137,50 @@ class UserStore:
         }
         self._mtime = mtime
         self._loaded = True
+        self._hash_plaintext_passwords()
+
+    def _hash_plaintext_passwords(self) -> None:
+        """Replace any hand-written ``password: <plaintext>`` with a hash.
+
+        Lets an admin add a user by editing users.yaml directly::
+
+            users:
+              bob:
+                password: "initial-secret"
+
+        On the next load the plaintext is hashed into ``password_hash``,
+        missing fields get defaults, and the file is rewritten so the
+        plaintext doesn't stay on disk.
+        """
+        changed = []
+        for name, rec in self._users.items():
+            if "password" not in rec:
+                continue
+            plain = rec.pop("password")
+            if plain is None or str(plain) == "":
+                logger.error(f"User store: empty 'password' for {name!r} ignored")
+                continue
+            if passwords.validate_new_password(str(plain)):
+                logger.warning(f"User store: password set by hand for {name!r} is shorter "
+                               f"than {passwords.MIN_PASSWORD_LENGTH} characters")
+            rec["password_hash"] = passwords.hash_password(str(plain))
+            rec["session_version"] = int(rec.get("session_version", 0) or 0) + 1
+            rec.setdefault("admin", False)
+            rec.setdefault("disabled", False)
+            rec.setdefault("created_at", _now())
+            rec.setdefault("last_login", None)
+            rec.setdefault("tokens", [])
+            changed.append(name)
+        if not changed:
+            return
+        try:
+            self._save()
+            logger.info(f"Hashed plaintext password(s) in {self.path} for: {', '.join(changed)}")
+        except OSError:
+            logger.error(
+                f"Hashed plaintext password(s) for {', '.join(changed)} in memory, but could "
+                f"not rewrite {self.path} — the plaintext is still on disk"
+            )
 
     def _save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)

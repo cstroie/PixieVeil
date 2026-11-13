@@ -75,7 +75,9 @@ http_server:
   # needs a signed-in user (browser session cookie) or a per-user API token
   # ("Authorization: Bearer pv_..."). There is no self-registration — manage
   # users with `python -m pixieveil.auth` (or `./pixieveil.sh users ...`);
-  # admins can also do it on the dashboard's /users page.
+  # admins can also do it on the dashboard's /users page, or add
+  # `password: "plaintext"` for a user in users.yaml by hand — it is hashed
+  # (and the plaintext removed from the file) on next access.
   #users_file: "config/users.yaml"            # hashed passwords, chmod 600
   #session_secret_file: "config/.session_secret"  # created on first start
   #session_idle_hours: 12      # log out after this long without activity

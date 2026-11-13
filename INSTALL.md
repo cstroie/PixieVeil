@@ -79,6 +79,22 @@ Other subcommands: `passwd`, `list`, `disable`/`enable`, `delete`,
 `token-list`, `token-revoke`. Admins can do the same on `/users`. A running
 server applies changes on the next request.
 
+An admin with shell access can also add a user (or reset a password) by
+editing `config/users.yaml` directly and writing a plaintext `password`:
+
+```yaml
+users:
+  bob:
+    password: "initial-secret"   # hashed and removed on next access
+    admin: false
+```
+
+The next time the file is read (the next login or request, no restart
+needed), the plaintext is replaced with a hash, missing fields are filled in
+and the file is rewritten. Setting `password` on an existing user resets it
+and logs them out. The file must be writable by the service account, or the
+plaintext stays on disk; this is logged as an error.
+
 Users live in `config/users.yaml` (scrypt-hashed passwords, mode 600). The
 session-signing key is in `config/.session_secret`, which is created on first
 start. Both files are gitignored. Deleting the secret logs everyone out.

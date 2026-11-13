@@ -108,6 +108,47 @@ class TestUserStore:
         assert store.authenticate("alice", "password2") is not None
 
 
+class TestHandWrittenPlaintext:
+    def test_plaintext_is_hashed_on_first_access(self, tmp_path):
+        path = tmp_path / "users.yaml"
+        path.write_text("users:\n  Bob:\n    password: hand-written-1\n    admin: true\n")
+        store = UserStore(path)
+        user = store.authenticate("bob", "hand-written-1")
+        assert user is not None and user.admin and not user.disabled
+        text = path.read_text()
+        assert "hand-written-1" not in text
+        rec = yaml.safe_load(text)["users"]["bob"]
+        assert "password" not in rec and rec["password_hash"].startswith("scrypt$")
+        assert rec["tokens"] == [] and rec["created_at"]
+        assert stat.S_IMODE(os.stat(path).st_mode) == 0o600
+
+    def test_plaintext_added_to_existing_file_while_running(self, store):
+        store.add("alice", "password1", admin=True)
+        data = yaml.safe_load(store.path.read_text())
+        data["users"]["carol"] = {"password": "carol-pass1"}
+        store.path.write_text(yaml.safe_dump(data))
+        os.utime(store.path, (time.time() + 5, time.time() + 5))
+        assert store.authenticate("carol", "carol-pass1") is not None
+        assert "carol-pass1" not in store.path.read_text()
+        assert store.authenticate("alice", "password1") is not None
+
+    def test_resetting_password_by_hand_ends_sessions(self, store):
+        store.add("alice", "password1")
+        v = store.get("alice").session_version
+        data = yaml.safe_load(store.path.read_text())
+        data["users"]["alice"]["password"] = "replaced-1"
+        store.path.write_text(yaml.safe_dump(data))
+        os.utime(store.path, (time.time() + 5, time.time() + 5))
+        assert store.get("alice").session_version == v + 1
+        assert store.authenticate("alice", "replaced-1") is not None
+        assert store.authenticate("alice", "password1") is None
+
+    def test_empty_plaintext_is_ignored(self, tmp_path):
+        path = tmp_path / "users.yaml"
+        path.write_text("users:\n  bob:\n    password: ''\n")
+        assert UserStore(path).authenticate("bob", "") is None
+
+
 class TestApiTokens:
     def test_issue_verify_revoke(self, store):
         store.add("alice", "password1")
