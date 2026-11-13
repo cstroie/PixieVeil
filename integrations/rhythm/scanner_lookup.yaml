@@ -1,3 +1,8 @@
+# RETIRED — no longer read by PixieVeil. Scanners, protocols and their RHYTHM
+# mapping now live in config/protocols.yaml, edited on the dashboard's
+# /protocols page. This file is only used once, to migrate into that catalog
+# on first start when config/protocols.yaml doesn't exist yet.
+#
 # Maps DICOM (Manufacturer, ManufacturerModelName) to the scanner_id RHYTHM
 # assigned when the scanner was registered. Loaded by
 # pixieveil.processing.exam_extractor.

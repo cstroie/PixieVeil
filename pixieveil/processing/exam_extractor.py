@@ -7,13 +7,12 @@ as many fields as possible for the RHYTHM "Manual Exam Entry" form
 which saved protocol was followed, DLP without an RDSR object, etc. — are
 left ``None`` with an explanatory entry in ``notes`` rather than guessed.
 
-Two small curated lookup tables live in ``integrations/rhythm/`` and are
-loaded if present:
-  - indication_lookup.yaml: free-text protocol/description -> RHYTHM
-    (region, clinical_indication, iv_contrast) triple.
-  - scanner_lookup.yaml: (manufacturer, model) -> RHYTHM scanner UUID.
-
-Both are optional; a missing file just means those fields stay unresolved.
+Scanner, protocol, RHYTHM protocol key and region/indication/contrast come
+from the scanners & protocols catalog (``config/protocols.yaml``, edited on
+the dashboard's ``/protocols`` page — see ``protocol_catalog``): the study's
+(Manufacturer, Model) picks the scanner, its ProtocolName (or the protocol
+part of StudyDescription) picks the protocol by exact name. An unmatched
+study keeps those fields null with a ``Protocol catalog:`` note.
 
 Classes:
     ExamExtractor: Reads a study directory and builds the exam-data dict
@@ -24,7 +23,9 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import pydicom
-import yaml
+
+from pixieveil.processing import exam_merge
+from pixieveil.processing.protocol_catalog import ProtocolCatalog
 
 logger = logging.getLogger(__name__)
 
@@ -379,32 +380,10 @@ def _is_topogram(ds: "pydicom.Dataset") -> bool:
 class ExamExtractor:
     """Derives RHYTHM exam-entry fields from a completed study's DICOM files."""
 
-    def __init__(self, lookup_dir: Optional[Path] = None):
-        self.lookup_dir = lookup_dir or Path("integrations/rhythm")
-        self.indication_rules = self._load_yaml_list("indication_lookup.yaml")
-        self.scanner_map = self._load_yaml_dict("scanner_lookup.yaml")
-
-    def _load_yaml_list(self, filename: str) -> List[Dict[str, Any]]:
-        path = self.lookup_dir / filename
-        if not path.exists():
-            return []
-        try:
-            data = yaml.safe_load(path.read_text()) or []
-            return data.get("rules", []) if isinstance(data, dict) else list(data)
-        except Exception:
-            logger.warning("Could not read %s — indication matching disabled", path, exc_info=True)
-            return []
-
-    def _load_yaml_dict(self, filename: str) -> Dict[str, str]:
-        path = self.lookup_dir / filename
-        if not path.exists():
-            return {}
-        try:
-            data = yaml.safe_load(path.read_text()) or {}
-            return data if isinstance(data, dict) else {}
-        except Exception:
-            logger.warning("Could not read %s — scanner matching disabled", path, exc_info=True)
-            return {}
+    def __init__(self, catalog: Optional[ProtocolCatalog] = None):
+        # No catalog → nothing matches (every study gets a "map it" note).
+        self.catalog = catalog if catalog is not None else ProtocolCatalog(
+            Path("/nonexistent/protocols.yaml"), scanners=[])
 
     # ------------------------------------------------------------------
 
@@ -623,7 +602,8 @@ class ExamExtractor:
         model = scanned["model"]
         protocol_name = scanned["protocol_name"]
         study_description = scanned["study_description"]
-        body_part = scanned["body_part"]
+        # BodyPartExamined (scanned["body_part"]) no longer drives matching;
+        # the catalog matches on scanner + protocol name.
         contrast_seen = scanned["contrast_seen"]
         age_years = scanned["age_years"]
         weight_kg = scanned["weight_kg"]
@@ -654,30 +634,15 @@ class ExamExtractor:
             rdsr_data["per_image_ctdivol"] = verdict
             notes.append(_CTDIVOL_NOTES[verdict])
 
-        region, indication, iv_contrast, indication_matched = self._match_indication(
-            protocol_name, study_description, body_part
-        )
-        if not indication_matched:
-            notes.append(
-                f"No indication_lookup.yaml match for "
-                f"protocol_name={protocol_name!r} study_description={study_description!r} "
-                f"body_part_examined={body_part!r} — needs manual selection or a new lookup rule"
-            )
-
-        contrast = None
-        if indication_matched:
-            contrast = iv_contrast
-        else:
-            contrast = "Contrast-enhanced" if contrast_seen else "Non-contrast"
-
-        scanner_id = None
-        if manufacturer and model:
-            scanner_id = self.scanner_map.get(f"{manufacturer}|{model}")
-            if scanner_id is None:
-                notes.append(
-                    f"No scanner_lookup.yaml entry for manufacturer={manufacturer!r} "
-                    f"model={model!r} — add one or select the scanner manually"
-                )
+        match = self.catalog.match(manufacturer, model, protocol_name, study_description)
+        proto = match.protocol
+        indication_matched = bool(proto is not None and proto.has_indication)
+        region = proto.region if indication_matched else None
+        indication = proto.clinical_indication if indication_matched else None
+        # Catalog contrast wins; otherwise infer from ContrastBolusAgent.
+        contrast = (proto.iv_contrast if indication_matched and proto.iv_contrast
+                    else ("Contrast-enhanced" if contrast_seen else "Non-contrast"))
+        notes.extend(exam_merge.catalog_notes(match, manufacturer, model))
 
         protocol_type, examination_group, bucket_notes = _determine_bucket(
             region, indication, age_years, weight_kg
@@ -702,6 +667,7 @@ class ExamExtractor:
                 "clinical_indication": indication,
                 "iv_contrast": contrast,
                 "matched": indication_matched,
+                **({"source": "catalog"} if indication_matched else {}),
             },
             "rdsr": rdsr_data,
             "protocol_type": protocol_type,
@@ -709,10 +675,19 @@ class ExamExtractor:
             "scanner": {
                 "manufacturer": manufacturer,
                 "model": model,
-                "rhythm_scanner_id": scanner_id,
+                "rhythm_scanner_id": match.scanner.rhythm_scanner_id if match.scanner else None,
+                "catalog_id": match.scanner.id if match.scanner else None,
+                "name": match.scanner.label if match.scanner else None,
+            },
+            "rhythm": {"protocol_key": proto.key if proto else None},
+            "catalog": {
+                "scanner_id": match.scanner.id if match.scanner else None,
+                "protocol_key": proto.key if proto else None,
+                "protocol_name": match.protocol_name or None,
             },
             "protocol_used_hint": {
                 "protocol_name": protocol_name or None,
+                "study_description": study_description or None,
                 "series_description_sample": next(
                     (r["series_description"] for r in series_records.values()
                      if r["series_description"]),
@@ -729,32 +704,3 @@ class ExamExtractor:
         }
 
     # ------------------------------------------------------------------
-
-    def _match_indication(
-        self, protocol_name: str, study_description: str, body_part: str
-    ) -> Tuple[Optional[str], Optional[str], Optional[str], bool]:
-        haystacks = {
-            "protocol_name": protocol_name.lower(),
-            "study_description": study_description.lower(),
-            "body_part_examined": body_part.lower(),
-        }
-        for rule in self.indication_rules:
-            matched_any = False
-            ok = True
-            for key in ("protocol_name_contains", "study_description_contains", "body_part_examined_contains"):
-                needle = rule.get(key)
-                if not needle:
-                    continue
-                field = key.replace("_contains", "")
-                if needle.lower() not in haystacks.get(field, ""):
-                    ok = False
-                    break
-                matched_any = True
-            if ok and matched_any:
-                return (
-                    rule.get("region"),
-                    rule.get("clinical_indication"),
-                    rule.get("iv_contrast"),
-                    True,
-                )
-        return None, None, None, False

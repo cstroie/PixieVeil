@@ -121,14 +121,21 @@ class TestStats:
 class TestOptions:
     def test_vocabularies_and_scanners(self, tmp_path):
         d = _dashboard(tmp_path)
-        d.app["storage_manager"].exam_extractor.scanner_map = {"SIEMENS|Emotion 16": "uuid-1"}
+        d.app["storage_manager"].protocol_catalog.replace({"scanners": [
+            {"id": "siemens-emotion-16", "name": "SIEMENS Emotion 16",
+             "manufacturer": "SIEMENS", "model": "Emotion 16",
+             "rhythm_scanner_id": "7076d1dc-100a-4bcd-a8d7-2ef3672b1e3f", "protocols": []},
+            {"id": "any-scanner", "manufacturer": "", "model": "", "protocols": []},
+        ]}, expected_version=None)
 
         status, body = _request(d, "GET", "/api/options")
 
         assert status == 200
         assert len(body["region_indications"]) == 8
         assert body["image_quality"] == ["Diagnostic", "Suboptimal", "Non-diagnostic"]
-        assert body["scanners"] == [{"label": "SIEMENS Emotion 16", "id": "uuid-1"}]
+        assert body["scanners"] == [{"label": "SIEMENS Emotion 16",
+                                     "id": "7076d1dc-100a-4bcd-a8d7-2ef3672b1e3f",
+                                     "catalog_id": "siemens-emotion-16"}]
         assert body["required_fields"] == list(exam_merge.REQUIRED_PATHS)
 
 

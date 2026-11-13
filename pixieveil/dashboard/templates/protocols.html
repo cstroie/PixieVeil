@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PixieVeil · Protocols</title>
+    <script>
+        try { document.documentElement.dataset.theme = localStorage.getItem('pixieveil_theme') || 'dark'; }
+        catch (_e) { document.documentElement.dataset.theme = 'dark'; }
+    </script>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='1' y='1' width='30' height='30' rx='8' fill='%23151b22' stroke='%233cc8c0' stroke-width='2'/%3E%3Cg fill='%233cc8c0'%3E%3Crect x='8' y='8' width='4' height='4' rx='1'/%3E%3Crect x='14' y='8' width='4' height='4' rx='1' opacity='.6'/%3E%3Crect x='8' y='14' width='4' height='4' rx='1' opacity='.6'/%3E%3Crect x='20' y='8' width='4' height='4' rx='1' opacity='.3'/%3E%3Crect x='14' y='14' width='4' height='4' rx='1' opacity='.3'/%3E%3Crect x='8' y='20' width='4' height='4' rx='1' opacity='.3'/%3E%3C/g%3E%3C/svg%3E">
+    <link rel="stylesheet" href="/static/theme.css">
+    <style>
+        .page { max-width: 1280px; margin: 0 auto; padding: 28px 16px 96px; display: flex; flex-direction: column; gap: 20px; }
+        .page h1 { font-size: 22px; }
+        .lead { color: var(--text-dim); margin: 6px 0 0; max-width: 820px; }
+        .layout { display: grid; grid-template-columns: 260px minmax(0, 1fr); gap: 20px; align-items: start; }
+        @media (max-width: 860px) { .layout { grid-template-columns: 1fr; } }
+
+        .side { display: flex; flex-direction: column; gap: 4px; padding: 8px; }
+        .side .group-label { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--text-faint); padding: 10px 10px 4px; }
+        .side button.item {
+            all: unset; cursor: pointer; display: flex; align-items: center; gap: 8px;
+            padding: 8px 10px; border-radius: var(--radius-sm); color: var(--text); font-size: 13.5px;
+        }
+        .side button.item:hover { background: var(--hover); }
+        .side button.item[aria-current="true"] { background: var(--raised); box-shadow: inset 2px 0 0 var(--accent); }
+        .side .item .sub { color: var(--text-faint); font-size: 12px; margin-left: auto; }
+        .side .item .count { margin-left: auto; }
+        .side .add { margin: 8px 4px 2px; }
+
+        .form-grid { display: grid; gap: 12px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        @media (max-width: 640px) { .form-grid { grid-template-columns: 1fr; } }
+        .table-wrap { overflow-x: auto; }
+        table.data td { vertical-align: top; white-space: normal; }
+        table.data td .input, table.data td .select { min-width: 140px; }
+        .names { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; min-width: 200px; }
+        .names .chip button { all: unset; cursor: pointer; margin-left: 4px; opacity: .7; }
+        .names .chip button:hover { opacity: 1; }
+        .names input { min-width: 120px; flex: 1; height: 28px; }
+        .uuid { font-family: var(--mono); font-size: 12px; min-width: 300px !important; }
+        .row-actions { display: flex; gap: 4px; justify-content: flex-end; }
+        .muted-note { color: var(--text-faint); font-size: 12.5px; }
+
+        .savebar {
+            position: fixed; left: 0; right: 0; bottom: 0; z-index: 40;
+            display: flex; gap: 12px; align-items: center; justify-content: flex-end;
+            padding: 12px 16px; background: var(--panel); border-top: 1px solid var(--border-strong);
+            box-shadow: var(--shadow);
+        }
+        .savebar[hidden] { display: none; }
+        .savebar .msg { margin-right: auto; color: var(--warn); font-size: 13px; }
+        .errors { color: var(--bad); background: var(--bad-soft); border-radius: var(--radius-sm); padding: 10px 14px; margin: 0; }
+        .errors[hidden] { display: none; }
+        .errors li { margin-left: 16px; }
+    </style>
+</head>
+<body>
+    <header class="topbar">
+        <a class="brand" href="/">
+            <svg viewBox="0 0 32 32" aria-hidden="true"><rect x="1.5" y="1.5" width="29" height="29" rx="8" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.5"/><g fill="var(--accent)"><rect x="8" y="8" width="4" height="4" rx="1"/><rect x="14" y="8" width="4" height="4" rx="1" opacity=".6"/><rect x="8" y="14" width="4" height="4" rx="1" opacity=".6"/><rect x="20" y="8" width="4" height="4" rx="1" opacity=".3"/><rect x="14" y="14" width="4" height="4" rx="1" opacity=".3"/><rect x="8" y="20" width="4" height="4" rx="1" opacity=".3"/></g><path d="M8 25.5C14 24 21 18 25 8" stroke="var(--accent)" stroke-width="1.6" fill="none" stroke-linecap="round"/></svg>
+            <span>PixieVeil <small>DICOM anonymizer</small></span>
+        </a>
+        <nav class="nav">
+            <a href="/">Status</a>
+            <a href="/studies">Studies<span class="count" id="nav-needs" hidden></span></a>
+            <a href="/protocols" aria-current="page">Protocols</a>
+            <a href="/about">About</a>
+        </nav>
+        <div class="spacer"></div>
+        <button type="button" class="btn btn-ghost btn-icon" data-theme-toggle></button>
+    </header>
+
+    <main class="page">
+        <section>
+            <h1>Scanners &amp; protocols</h1>
+            <p class="lead">Each scanner has its own protocols. A study is matched to its scanner by
+                manufacturer and model, and to a protocol by the exact protocol name the scanner sends
+                (or the protocol part of the study description, e.g.
+                <span class="mono">Head^CAP_SPIRAL_CONTRAST (Adult)</span> → <span class="mono">CAP_SPIRAL_CONTRAST</span>).
+                A match fills in the study's RHYTHM protocol and indication automatically.</p>
+        </section>
+        <ul class="errors" id="errors" hidden></ul>
+        <div class="layout">
+            <aside class="card side" id="side"></aside>
+            <section id="main"></section>
+        </div>
+    </main>
+
+    <div class="savebar" id="savebar" hidden>
+        <span class="msg">Unsaved changes</span>
+        <button type="button" class="btn btn-ghost" id="discard">Discard</button>
+        <button type="button" class="btn btn-primary" id="save">Save changes</button>
+    </div>
+
+    <script src="/static/common.js"></script>
+    <script>
+    'use strict';
+    const { esc, api, toast, modal, pad4, icon } = PV;
+    const NIL = '00000000-0000-0000-0000-000000000000';
+    const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    const state = {
+        doc: null, saved: '', version: null, usage: {}, editable: false,
+        unmatched: [], options: { region_indications: [], iv_contrast: [] },
+        sel: 'inbox',
+    };
+
+    const slugify = s => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64);
+    const normName = s => String(s || '').trim().split(/\s+/).join(' ').toLowerCase();
+    const dirty = () => JSON.stringify(state.doc) !== state.saved;
+    const allKeys = () => new Set(state.doc.scanners.flatMap(s => s.protocols.map(p => p.key)));
+    function uniqueSlug(base, taken) {
+        let slug = slugify(base) || 'item', n = 2, out = slug;
+        while (taken.has(out)) out = `${slug}-${n++}`;
+        return out;
+    }
+    const scannerById = id => state.doc.scanners.find(s => s.id === id);
+    const scannerLabel = s => s.name || `${s.manufacturer} ${s.model}`.trim() || 'Any scanner';
+    const isWildcard = s => !String(s.manufacturer || '').trim() && !String(s.model || '').trim();
+
+    async function load() {
+        const [cat, unmatched, opts] = await Promise.all([
+            api('/api/protocols'), api('/api/protocols/unmatched'), api('/api/options')]);
+        state.doc = cat.catalog;
+        state.doc.scanners = state.doc.scanners || [];
+        state.saved = JSON.stringify(state.doc);
+        state.version = cat.version;
+        state.usage = cat.usage || {};
+        state.editable = cat.editable;
+        state.unmatched = unmatched.unmatched || [];
+        state.options = opts;
+        if (state.sel !== 'inbox' && !scannerById(state.sel)) state.sel = 'inbox';
+        showErrors([]);
+        render();
+    }
+
+    function changed() {
+        document.getElementById('savebar').hidden = !dirty();
+    }
+
+    function showErrors(list) {
+        const el = document.getElementById('errors');
+        el.hidden = !list.length;
+        el.innerHTML = list.map(e => `<li>${esc(e)}</li>`).join('');
+    }
+
+    // ------------------------------------------------------------ sidebar
+    function renderSide() {
+        const side = document.getElementById('side');
+        const items = state.doc.scanners.map(s => {
+            const n = s.protocols.length;
+            return `<button type="button" class="item" data-sel="${esc(s.id)}" aria-current="${state.sel === s.id}">
+                ${esc(scannerLabel(s))}<span class="sub">${n} protocol${n === 1 ? '' : 's'}</span></button>`;
+        }).join('');
+        const nUnmatched = state.unmatched.reduce((a, g) => a + g.studies.length, 0);
+        side.innerHTML = `
+            <button type="button" class="item" data-sel="inbox" aria-current="${state.sel === 'inbox'}">
+                ${icon('inbox')} Unmatched
+                <span class="count pill ${nUnmatched ? 'warn' : 'done'} plain">${nUnmatched}</span></button>
+            <div class="group-label">Scanners</div>
+            ${items || '<p class="muted-note" style="padding:0 10px">No scanners yet.</p>'}
+            ${state.editable ? '<button type="button" class="btn btn-sm add" id="add-scanner">Add scanner</button>' : ''}`;
+    }
+
+    // ------------------------------------------------------------ inbox
+    function renderInbox() {
+        const ro = !state.editable;
+        const rows = state.unmatched.map((g, i) => {
+            const sc = g.scanner_id && scannerById(g.scanner_id);
+            const studies = g.studies.slice(0, 8).map(n => `<a href="/studies#${pad4(n)}">${pad4(n)}</a>`).join(', ')
+                + (g.studies.length > 8 ? ` +${g.studies.length - 8}` : '');
+            let actions = '';
+            if (!ro) {
+                if (!sc && (g.manufacturer || g.model)) {
+                    actions = `<button class="btn btn-sm btn-primary" data-act="new-scanner" data-i="${i}">Add scanner + protocol</button>`;
+                } else if (sc && g.protocol_name) {
+                    const opts = sc.protocols.map(p => `<option value="${esc(p.key)}">${esc(p.label || p.key)}</option>`).join('');
+                    actions = `<button class="btn btn-sm btn-primary" data-act="new-protocol" data-i="${i}">New protocol</button>
+                        ${opts ? `<select class="select" data-act="alias" data-i="${i}" style="height:28px">
+                            <option value="">Add as alias of…</option>${opts}</select>` : ''}`;
+                }
+            }
+            return `<tr>
+                <td>${sc ? esc(scannerLabel(sc)) : `<span class="pill warn plain">unknown</span> ${esc([g.manufacturer, g.model].filter(Boolean).join(' | ') || '—')}`}</td>
+                <td class="mono">${esc(g.protocol_name || '—')}${g.study_description ? `<div class="muted-note">${esc(g.study_description)}</div>` : ''}</td>
+                <td>${studies}</td>
+                <td><div class="row-actions">${actions}</div></td></tr>`;
+        }).join('');
+        return `<div class="card"><div class="card-head"><h3>Unmatched studies</h3></div>
+            <div class="card-body"><p class="muted-note" style="margin-top:0">Studies not yet exported whose scanner or
+            protocol isn't in the catalog. Add it here, give it a RHYTHM UUID, and save. Matching studies update automatically.</p></div>
+            <div class="table-wrap"><table class="data">
+                <thead><tr><th>Scanner</th><th>Protocol name</th><th>Studies</th><th></th></tr></thead>
+                <tbody>${rows || '<tr><td colspan="4" class="dim">Nothing unmatched. Every study maps to a protocol.</td></tr>'}</tbody>
+            </table></div></div>`;
+    }
+
+    // ------------------------------------------------------------ scanner panel
+    function comboOptions(p) {
+        const cur = p.region && p.clinical_indication ? `${p.region}|||${p.clinical_indication}` : '';
+        return '<option value="">— not set —</option>' + state.options.region_indications.map(c => {
+            const v = `${c.region}|||${c.indication}`;
+            const label = `${c.region} — ${c.indication.length > 60 ? c.indication.slice(0, 57) + '…' : c.indication}`;
+            return `<option value="${esc(v)}" ${v === cur ? 'selected' : ''}>${esc(label)}</option>`;
+        }).join('');
+    }
+
+    function renderScanner(s) {
+        const ro = state.editable ? '' : 'disabled';
+        const wild = isWildcard(s);
+        const protoRows = s.protocols.map((p, j) => {
+            const pending = !p.rhythm_uuid || p.rhythm_uuid === NIL;
+            const used = state.usage[p.key] || 0;
+            return `<tr data-j="${j}">
+                <td><input class="input" data-f="label" value="${esc(p.label)}" ${ro} placeholder="Display name">
+                    <div class="muted-note mono">${esc(p.key)}</div></td>
+                <td><div class="names">${p.names.map((n, k) => `<span class="chip">${esc(n)}${ro ? '' : `<button type="button" data-rm-name="${k}" aria-label="Remove">×</button>`}</span>`).join('')}
+                    ${ro ? '' : '<input class="input" data-add-name placeholder="Add name, Enter">'}</div></td>
+                <td><select class="select" data-f="combo" ${ro}>${comboOptions(p)}</select>
+                    <select class="select" data-f="iv_contrast" ${ro} style="margin-top:6px">
+                        <option value="">— contrast —</option>
+                        ${state.options.iv_contrast.map(c => `<option ${c === p.iv_contrast ? 'selected' : ''}>${esc(c)}</option>`).join('')}
+                    </select></td>
+                <td><input class="input uuid" data-f="rhythm_uuid" value="${esc(pending ? '' : p.rhythm_uuid)}" ${ro}
+                        placeholder="paste from RHYTHM Protocol Records">
+                    ${pending ? '<div><span class="pill warn">UUID pending — export blocked</span></div>' : ''}</td>
+                <td class="dim">${used}</td>
+                <td>${ro ? '' : `<button class="btn btn-ghost btn-sm btn-danger" data-act="del-protocol" title="${used ? 'In use by ' + used + ' study(ies)' : ''}">Delete</button>`}</td>
+            </tr>`;
+        }).join('');
+        return `<div class="card" data-scanner="${esc(s.id)}">
+            <div class="card-head"><h3>${esc(scannerLabel(s))}</h3><div class="spacer"></div>
+                ${ro ? '' : '<button class="btn btn-ghost btn-sm btn-danger" data-act="del-scanner">Delete scanner</button>'}</div>
+            <div class="card-body">
+                ${wild ? '<p class="muted-note" style="margin-top:0">Blank manufacturer and model: these protocols match studies from <strong>any</strong> scanner, after the scanner\'s own protocols.</p>' : ''}
+                <div class="form-grid">
+                    <label class="field"><span class="label">Display name</span>
+                        <input class="input" data-s="name" value="${esc(s.name)}" ${ro}></label>
+                    <label class="field"><span class="label">RHYTHM scanner ID (optional)</span>
+                        <input class="input uuid" data-s="rhythm_scanner_id" value="${esc(s.rhythm_scanner_id || '')}" ${ro}></label>
+                    <label class="field"><span class="label">Manufacturer (DICOM, exact)</span>
+                        <input class="input mono" data-s="manufacturer" value="${esc(s.manufacturer)}" ${ro} placeholder="e.g. GE MEDICAL SYSTEMS"></label>
+                    <label class="field"><span class="label">Model (DICOM, exact)</span>
+                        <input class="input mono" data-s="model" value="${esc(s.model)}" ${ro} placeholder="e.g. Optima CT520 Series"></label>
+                </div>
+            </div>
+            <div class="table-wrap"><table class="data">
+                <thead><tr><th>Protocol</th><th>Matches names</th><th>Region / indication · contrast</th><th>RHYTHM protocol UUID</th><th>Studies</th><th></th></tr></thead>
+                <tbody>${protoRows || '<tr><td colspan="6" class="dim">No protocols yet.</td></tr>'}</tbody>
+            </table></div>
+            ${ro ? '' : '<div class="card-body"><button class="btn btn-sm" data-act="add-protocol">Add protocol</button></div>'}
+        </div>`;
+    }
+
+    function render() {
+        renderSide();
+        const main = document.getElementById('main');
+        const sc = state.sel !== 'inbox' && scannerById(state.sel);
+        main.innerHTML = sc ? renderScanner(sc) : renderInbox();
+        changed();
+    }
+
+    // ------------------------------------------------------------ mutations
+    function newProtocol(scanner, name) {
+        const p = { key: uniqueSlug(name || 'protocol', allKeys()), label: name || '', names: name ? [name] : [],
+                    rhythm_uuid: null, region: null, clinical_indication: null, iv_contrast: null, notes: '' };
+        scanner.protocols.push(p);
+        return p;
+    }
+
+    function newScanner(manufacturer, model) {
+        const taken = new Set(state.doc.scanners.map(s => s.id));
+        const s = { id: uniqueSlug(`${manufacturer || ''} ${model || ''}`.trim() || 'scanner', taken),
+                    name: `${manufacturer || ''} ${model || ''}`.trim(), manufacturer: manufacturer || '',
+                    model: model || '', rhythm_scanner_id: null, protocols: [] };
+        state.doc.scanners.push(s);
+        return s;
+    }
+
+    document.getElementById('side').addEventListener('click', async e => {
+        const item = e.target.closest('[data-sel]');
+        if (item) { state.sel = item.dataset.sel; render(); return; }
+        if (e.target.id === 'add-scanner') {
+            const fd = await modal({ title: 'Add scanner', confirm: 'Add',
+                body: `<p class="dim">Enter the values exactly as the scanner writes them in the DICOM header.
+                       Leave both blank for an "any scanner" group.</p>
+                       <label class="field"><span class="label">Manufacturer</span><input class="input mono" name="m" placeholder="GE MEDICAL SYSTEMS"></label>
+                       <label class="field"><span class="label">Model</span><input class="input mono" name="d" placeholder="Optima CT520 Series"></label>` });
+            if (!fd) return;
+            const s = newScanner(String(fd.get('m') || '').trim(), String(fd.get('d') || '').trim());
+            state.sel = s.id;
+            render();
+        }
+    });
+
+    const main = document.getElementById('main');
+    main.addEventListener('click', e => {
+        const btn = e.target.closest('[data-act], [data-rm-name]');
+        if (!btn || !state.editable) return;
+        const card = e.target.closest('[data-scanner]');
+        const sc = card && scannerById(card.dataset.scanner);
+        const row = e.target.closest('tr[data-j]');
+        const p = sc && row ? sc.protocols[+row.dataset.j] : null;
+        if (btn.dataset.rmName !== undefined && p) { p.names.splice(+btn.dataset.rmName, 1); render(); return; }
+        switch (btn.dataset.act) {
+        case 'add-protocol': newProtocol(sc, ''); render(); break;
+        case 'del-protocol': sc.protocols.splice(+row.dataset.j, 1); render(); break;
+        case 'del-scanner':
+            state.doc.scanners = state.doc.scanners.filter(s => s !== sc);
+            state.sel = 'inbox'; render(); break;
+        case 'new-scanner': {
+            const g = state.unmatched[+btn.dataset.i];
+            const s = newScanner(g.manufacturer, g.model);
+            if (g.protocol_name) newProtocol(s, g.protocol_name);
+            state.sel = s.id; render(); break;
+        }
+        case 'new-protocol': {
+            const g = state.unmatched[+btn.dataset.i];
+            const s = scannerById(g.scanner_id);
+            newProtocol(s, g.protocol_name);
+            state.sel = s.id; render(); break;
+        }
+        }
+    });
+
+    main.addEventListener('change', e => {
+        const el = e.target;
+        if (el.dataset.act === 'alias') {
+            const g = state.unmatched[+el.dataset.i];
+            const s = scannerById(g.scanner_id);
+            const p = s && s.protocols.find(x => x.key === el.value);
+            if (p && !p.names.some(n => normName(n) === normName(g.protocol_name))) p.names.push(g.protocol_name);
+            state.sel = s.id; render(); return;
+        }
+        const card = el.closest('[data-scanner]');
+        const sc = card && scannerById(card.dataset.scanner);
+        if (!sc) return;
+        if (el.dataset.s) {
+            sc[el.dataset.s] = el.value.trim() || (el.dataset.s === 'rhythm_scanner_id' ? null : '');
+            renderSide(); changed(); return;
+        }
+        const row = el.closest('tr[data-j]');
+        const p = row && sc.protocols[+row.dataset.j];
+        if (!p) return;
+        if (el.dataset.f === 'combo') {
+            const [region, indication] = el.value ? el.value.split('|||') : [null, null];
+            p.region = region; p.clinical_indication = indication;
+            const combo = state.options.region_indications.find(c => c.region === region && c.indication === indication);
+            if (combo) p.iv_contrast = combo.contrast;
+            render(); return;
+        }
+        if (el.dataset.f === 'rhythm_uuid') {
+            const v = el.value.trim();
+            p.rhythm_uuid = v || null;
+            if (v && !UUID_RE.test(v)) toast('That does not look like a UUID', 'bad');
+            render(); return;
+        }
+        if (el.dataset.f === 'iv_contrast') { p.iv_contrast = el.value || null; changed(); return; }
+        if (el.dataset.f === 'label') {
+            p.label = el.value.trim();
+            // A brand-new protocol with no names yet takes its key and first name from the label.
+            if (!state.saved.includes(`"key":"${p.key}"`)) {
+                const others = allKeys(); others.delete(p.key);
+                p.key = uniqueSlug(p.label || 'protocol', others);
+                if (!p.names.length && p.label) p.names.push(p.label);
+                render(); return;
+            }
+            changed();
+        }
+    });
+
+    main.addEventListener('keydown', e => {
+        if (!e.target.matches('[data-add-name]') || e.key !== 'Enter') return;
+        e.preventDefault();
+        const card = e.target.closest('[data-scanner]');
+        const sc = scannerById(card.dataset.scanner);
+        const p = sc.protocols[+e.target.closest('tr[data-j]').dataset.j];
+        const v = e.target.value.trim();
+        if (v && !p.names.some(n => normName(n) === normName(v))) p.names.push(v);
+        render();
+        const again = main.querySelector(`tr[data-j="${sc.protocols.indexOf(p)}"] [data-add-name]`);
+        if (again) again.focus();
+    });
+
+    // ------------------------------------------------------------ save / discard
+    document.getElementById('discard').addEventListener('click', () => {
+        state.doc = JSON.parse(state.saved);
+        showErrors([]);
+        render();
+    });
+
+    document.getElementById('save').addEventListener('click', async () => {
+        const btn = document.getElementById('save');
+        btn.disabled = true;
+        try {
+            const r = await api('/api/protocols', { method: 'PUT', body: { catalog: state.doc, version: state.version } });
+            const n = (r.restudied || []).length;
+            toast(n ? `Saved — ${n} study(ies) re-matched` : 'Saved', 'ok');
+            await load();
+        } catch (e) {
+            if (e.status === 400 && e.data && e.data.errors) {
+                showErrors(e.data.errors);
+                toast('Not saved — fix the errors listed above', 'bad');
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+            } else if (e.status === 409) {
+                const ok = await modal({ title: 'Changed elsewhere', confirm: 'Reload', tone: 'danger',
+                    body: '<p>Someone else saved the catalog after you opened it. Reload to see their version (your unsaved edits are lost).</p>' });
+                if (ok) await load();
+            } else {
+                toast(e.message, 'bad');
+            }
+        } finally {
+            btn.disabled = false;
+        }
+    });
+
+    window.addEventListener('beforeunload', e => { if (state.doc && dirty()) { e.preventDefault(); e.returnValue = ''; } });
+
+    // Inbox refreshes when new studies arrive (only while nothing is being edited).
+    PV.live({ exam: PV.debounce(async () => {
+        if (dirty()) return;
+        try { state.unmatched = (await api('/api/protocols/unmatched')).unmatched || []; render(); } catch (_e) { /* ignore */ }
+    }, 1500) });
+
+    load().catch(e => toast(e.message, 'bad'));
+    </script>
+</body>
+</html>

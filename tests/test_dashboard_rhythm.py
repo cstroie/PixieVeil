@@ -33,6 +33,7 @@ class FakeSM:
         self.settings = Settings(anonymization={"profile": profile})
         self.calls: list = []
         self.audit: list = []
+        self.protocol_catalog = _ProtocolMap()
 
     def record_audit(self, n, user, action, ok, detail=None):
         self.audit.append((n, user, action, ok))

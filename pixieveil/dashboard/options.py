@@ -3,7 +3,7 @@ Fixed RHYTHM vocabularies served to the dashboard via ``/api/options``.
 
 Kept server-side (not hard-coded in the page's JavaScript) so there is one
 source of truth for the dropdowns, and so the scanner list can come from the
-same ``scanner_lookup.yaml`` that ExamExtractor matches against.
+same protocol catalog (``config/protocols.yaml``) ExamExtractor matches against.
 """
 
 # The 8 (region, clinical indication, IV contrast) combinations RHYTHM's
@@ -32,12 +32,10 @@ IMAGE_QUALITY: list[str] = ["Diagnostic", "Suboptimal", "Non-diagnostic"]
 IV_CONTRAST: list[str] = ["Non-contrast", "Contrast-enhanced"]
 
 
-def scanner_options(scanner_map: dict[str, str]) -> list[dict[str, str]]:
-    """Turn scanner_lookup.yaml's ``{"MAKE|Model": uuid}`` map into
-    ``[{"label": "MAKE Model", "id": uuid}]``, skipping malformed entries."""
-    out = []
-    for key, uuid in scanner_map.items():
-        if not isinstance(key, str) or not isinstance(uuid, str) or not uuid:
-            continue
-        out.append({"label": key.replace("|", " "), "id": uuid})
+def scanner_options(catalog) -> list[dict]:
+    """Scanners from the protocol catalog for the review form's dropdown:
+    ``[{"label", "id" (RHYTHM scanner UUID or None), "catalog_id"}]``.
+    Wildcard ("any scanner") groups are skipped."""
+    out = [{"label": s.label, "id": s.rhythm_scanner_id, "catalog_id": s.id}
+           for s in catalog.scanners if not s.is_wildcard]
     return sorted(out, key=lambda o: o["label"])

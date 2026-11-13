@@ -20,7 +20,9 @@ from pydicom.uid import (
 
 from pixieveil.storage.storage_manager import StorageManager
 from pixieveil.storage.rhythm_storage import RhythmUploadResult
-from pixieveil.processing.rhythm_protocols import ProtocolMap, ProtocolEntry
+from pixieveil.processing.protocol_catalog import (
+    CatalogProtocol, CatalogScanner, ProtocolCatalog,
+)
 
 from .conftest import make_settings, write_minimal_dicom
 from .test_storage_manager import register_study
@@ -49,8 +51,11 @@ EXAM_OK = {
 
 
 def _protocol_map(*, site_code="S001"):
-    return ProtocolMap(
-        [ProtocolEntry(id=PROTOCOL_KEY, uuid=PROTOCOL_UUID, name="Head trauma")],
+    proto = CatalogProtocol(key=PROTOCOL_KEY, scanner_id="any", label="Head trauma",
+                            names=("Head trauma",), rhythm_uuid=PROTOCOL_UUID)
+    return ProtocolCatalog(
+        "/nonexistent/protocols.yaml",
+        scanners=[CatalogScanner(id="any", protocols=(proto,))],
         site_code=site_code,
     )
 
@@ -84,10 +89,6 @@ class FakeRhythm:
     async def check_job(self, job_status_url):
         self.job_checks.append(job_status_url)
         return self._job_result
-
-    def register_pending_protocol(self, protocol_name, *, description=""):
-        self.registered_stub = (protocol_name, description)
-        return "stub-key"
 
 
 def _manager(tmp_path, *, profile="rhythm", rhythm_configured=True, retain_days=None):
@@ -644,57 +645,35 @@ class TestExportPairAndRetention:
         assert r == {"ok": False, "message": "study directory not found"}
 
 
-class TestProtocolStubAutoAppend:
-    """When a RHYTHM upload is blocked only because no protocol resolves,
-    manual_upload_rhythm appends a placeholder entry to the protocol map
-    derived from the study's ProtocolName."""
+class TestProtocolBlockerPointsToCatalog:
+    """No protocol resolves → the refusal sends the operator to /protocols
+    (the catalog's Unmatched inbox replaced auto-appended placeholder stubs)."""
 
-    def _empty_map_manager(self, tmp_path):
-        from pixieveil.storage.rhythm_storage import RhythmStorage
-
+    def test_unresolved_protocol_message(self, tmp_path):
         sm = _manager(tmp_path)
-        sm.rhythm_storage.protocol_map_path.write_text(
-            "site_code: S001\nprotocols: []\n"
-        )
-        sm.rhythm_storage = RhythmStorage(sm.settings)
-        assert sm.rhythm_storage.protocol_map.entries == []
-        return sm
-
-    def test_stub_appended_from_protocol_name(self, tmp_path):
-        sm = self._empty_map_manager(tmp_path)
         _ready_study(sm, with_exam=dict(EXAM_OK, rhythm={}))
 
         r = asyncio.run(sm.manual_upload_rhythm(1))
         assert r["ok"] is False
         assert "protocol_id is not set" in r["message"]
-        assert "headroutine" in r["message"]
+        assert "/protocols" in r["message"]
 
-        text = sm.rhythm_storage.protocol_map_path.read_text()
-        assert "id: headroutine" in text
-        assert "00000000-0000-0000-0000-000000000000" in text
-        entry = sm.rhythm_storage.protocol_map.get("headroutine")
-        assert entry is not None and entry.uuid_pending is True
-
-    def test_second_attempt_is_idempotent(self, tmp_path):
-        sm = self._empty_map_manager(tmp_path)
-        _ready_study(sm, with_exam=dict(EXAM_OK, rhythm={}))
-
-        asyncio.run(sm.manual_upload_rhythm(1))
-        after_first = sm.rhythm_storage.protocol_map_path.read_text()
-        r2 = asyncio.run(sm.manual_upload_rhythm(1))
-        assert r2["ok"] is False
-        assert "added placeholder protocol" not in r2["message"]
-        assert sm.rhythm_storage.protocol_map_path.read_text() == after_first
-
-    def test_no_protocol_name_no_stub(self, tmp_path):
-        sm = self._empty_map_manager(tmp_path)
-        exam = dict(EXAM_OK, rhythm={}, protocol_used_hint={"protocol_name": None})
-        _ready_study(sm, with_exam=exam)
+    def test_pending_uuid_message(self, tmp_path):
+        sm = _manager(tmp_path)
+        sm.rhythm_storage.protocol_map_path.write_text(
+            "site_code: S001\nprotocols:\n"
+            f"  - id: {PROTOCOL_KEY}\n    name: Head trauma\n"
+            "    uuid: 00000000-0000-0000-0000-000000000000\n"
+        )
+        _bump = sm.rhythm_storage.protocol_map_path
+        import os
+        import time
+        os.utime(_bump, (time.time() + 5, time.time() + 5))
+        _ready_study(sm)
 
         r = asyncio.run(sm.manual_upload_rhythm(1))
         assert r["ok"] is False
-        assert "added placeholder protocol" not in r["message"]
-        assert "protocols: []" in sm.rhythm_storage.protocol_map_path.read_text()
+        assert "no RHYTHM UUID yet" in r["message"] and "/protocols" in r["message"]
 
 
 class TestPrepareExportArtifacts:

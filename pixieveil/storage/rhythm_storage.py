@@ -34,7 +34,7 @@ from typing import Any, Callable
 import aiohttp
 
 from pixieveil.config import Settings
-from pixieveil.processing import rhythm_protocols
+from pixieveil.processing import protocol_catalog
 
 logger = logging.getLogger(__name__)
 
@@ -87,60 +87,35 @@ class RhythmStorage:
         # and the site code that every manifest item is stamped with.
         self.enabled: bool = bool(self.base_url and self.auth_token and self.site_code)
 
-        # Local CT-protocol -> RHYTHM CTProtocol UUID map. Loaded here (not in
-        # StorageManager) so all RHYTHM config resolution — including the
-        # protocol-map/settings site_code cross-check — lives in one place.
-        # A missing map is an empty map (every RHYTHM export then blocked
-        # until it exists). A *malformed* map (bad UUID, duplicate key,
-        # site_code disagreeing with settings) disables RHYTHM export
-        # entirely with a loud ERROR — it must not stop the DICOM SCP or
-        # dashboard from starting.
+        # Scanners & protocols catalog (local protocol key -> RHYTHM
+        # CTProtocol UUID, plus matching data the exam extractor uses).
+        # Loaded here so all RHYTHM config resolution — including the
+        # catalog/settings site_code cross-check — lives in one place;
+        # StorageManager shares this instance with ExamExtractor and the
+        # /protocols page. A missing catalog is empty (built from the legacy
+        # lookup files on first start if those exist). An *invalid* one
+        # disables RHYTHM export with a loud ERROR — it must not stop the
+        # DICOM SCP or dashboard from starting, and the /protocols page can
+        # then be used to write a valid one.
         self.protocol_map_path = Path(
-            cfg.get("protocol_map") or rhythm_protocols.DEFAULT_PATH
+            settings.storage.get("protocols_file")
+            or cfg.get("protocol_map")
+            or protocol_catalog.DEFAULT_PATH
         )
         try:
-            self.protocol_map = rhythm_protocols.ProtocolMap.load(
+            self.protocol_map = protocol_catalog.open_catalog(
                 self.protocol_map_path, expected_site_code=self.site_code
             )
-        except rhythm_protocols.ProtocolMapError:
+        except (protocol_catalog.CatalogError, OSError):
             logger.error(
-                "RHYTHM protocol map %s is invalid — RHYTHM export disabled",
+                "Protocol catalog %s is invalid — RHYTHM export disabled until it "
+                "is fixed (the /protocols page can write a valid one)",
                 self.protocol_map_path, exc_info=True,
             )
-            self.protocol_map = rhythm_protocols.ProtocolMap([])
+            self.protocol_map = protocol_catalog.ProtocolCatalog(
+                self.protocol_map_path, expected_site_code=self.site_code, scanners=[]
+            )
             self.enabled = False
-
-    def register_pending_protocol(
-        self, protocol_name: str, *, description: str = ""
-    ) -> str | None:
-        """Append a placeholder entry for *protocol_name* to the protocol map
-        file and reload the map so the new key appears in the dashboard's
-        RHYTHM-protocol dropdown.
-
-        Returns the new local key, or ``None`` when nothing was added
-        (unusable name, key already present, unparseable file). The operator
-        still has to paste the real ``CTProtocol`` UUID into the file — until
-        then the stub resolves to no ``protocol_id`` and the study stays
-        blocked. The reload never flips ``enabled``: on a reload error the
-        previously loaded map is kept.
-        """
-        slug = rhythm_protocols.append_stub(
-            self.protocol_map_path,
-            protocol_name=protocol_name,
-            description=description,
-        )
-        if slug is None:
-            return None
-        try:
-            self.protocol_map = rhythm_protocols.ProtocolMap.load(
-                self.protocol_map_path, expected_site_code=self.site_code
-            )
-        except rhythm_protocols.ProtocolMapError:
-            logger.error(
-                "Protocol map %s did not reload cleanly after appending '%s'",
-                self.protocol_map_path, slug, exc_info=True,
-            )
-        return slug
 
     # -- public API --------------------------------------------------------
 

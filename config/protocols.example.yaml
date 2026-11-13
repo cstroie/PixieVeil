@@ -1,0 +1,64 @@
+# PixieVeil scanners & protocols catalog — example.
+#
+# Normally you never edit this by hand: use the dashboard's Protocols page
+# (/protocols, admins only), which writes config/protocols.yaml for you. On
+# first start, PixieVeil builds that file from the legacy lookups if they
+# exist (config/rhythm_protocols.yaml, integrations/rhythm/scanner_lookup.yaml
+# and indication_lookup.yaml), which are no longer read afterwards.
+#
+# How a study is matched:
+#   1. scanner  — DICOM Manufacturer + ManufacturerModelName, compared
+#                 case-insensitively with `manufacturer` / `model`.
+#   2. protocol — DICOM ProtocolName, or, if that's empty, the protocol part of
+#                 StudyDescription ("Head^CAP_SPIRAL_CONTRAST (Adult)" ->
+#                 "CAP_SPIRAL_CONTRAST"), compared exactly (case-insensitive,
+#                 extra spaces ignored) with one of that scanner's `names`.
+#   A scanner with blank manufacturer AND model matches studies from any
+#   scanner, after the scanner's own protocols.
+#
+# A match fills in the study's RHYTHM protocol (`key`) and, if set here, its
+# region / clinical indication / IV contrast. Values an operator entered by
+# hand on /studies always win.
+#
+# rhythm_uuid: the UUID of the CTProtocol registered in RHYTHM (Protocol
+# Records page). Leave it null until you have it: the study can still be
+# matched, but RHYTHM export stays blocked.
+#
+# region + clinical_indication must be one of RHYTHM's 8 combinations (the
+# dropdown on /protocols lists them); iv_contrast is "Non-contrast" or
+# "Contrast-enhanced".
+
+# Optional guard: must equal storage.remote_storage.rhythm.site_code.
+site_code: S014
+
+scanners:
+  - id: siemens-emotion-16
+    name: "Siemens Emotion 16"
+    manufacturer: "SIEMENS"
+    model: "Emotion 16"
+    rhythm_scanner_id: null        # optional, display only
+    protocols:
+      - key: cap-spiral-nativ      # stable id; stored in each study's exam record
+        label: "CAP_SPIRAL_NATIV"
+        names: ["CAP_SPIRAL_NATIV"]
+        rhythm_uuid: null          # <- paste from RHYTHM Protocol Records
+        region: "Head"
+        clinical_indication: "Trauma"
+        iv_contrast: "Non-contrast"
+        notes: ""
+
+  - id: ge-optima-ct520
+    name: "GE Optima CT520"
+    manufacturer: "GE MEDICAL SYSTEMS"
+    model: "Optima CT520 Series"
+    protocols:
+      - key: ge-cap-spiral-contrast
+        label: "CAP spiral, contrast"
+        # matches ProtocolName "CAP_SPIRAL_CONTRAST" or a StudyDescription
+        # such as "Head^CAP_SPIRAL_CONTRAST (Adult)"
+        names: ["CAP_SPIRAL_CONTRAST"]
+        rhythm_uuid: null
+        region: null
+        clinical_indication: null
+        iv_contrast: "Contrast-enhanced"
+        notes: ""

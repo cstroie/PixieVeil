@@ -165,6 +165,7 @@
         <nav class="nav">
             <a href="/">Status</a>
             <a href="/studies" aria-current="page">Studies<span class="count" id="nav-needs" hidden></span></a>
+            <a href="/protocols">Protocols</a>
             <a href="/about">About</a>
         </nav>
         <div class="spacer"></div>
@@ -445,7 +446,12 @@
             return `<div class="field ${cls || ''} ${missing ? 'is-missing' : ''}">
                 <label for="${id}">${esc(label)}${manualTag(path)}</label>
                 <select class="select" id="${id}" data-path="${path}" ${bool ? 'data-type="bool"' : ''}>
-                    ${choices.map(([v, l]) => `<option value="${esc(v)}" ${v === (value || '') ? 'selected' : ''}>${esc(l)}</option>`).join('')}
+                    ${choices.map(c => {
+                        const opt = ([v, l]) => `<option value="${esc(v)}" ${v === (value || '') ? 'selected' : ''}>${esc(l)}</option>`;
+                        // {group, options} renders an <optgroup>
+                        return Array.isArray(c) ? opt(c)
+                            : `<optgroup label="${esc(c.group)}">${c.options.map(opt).join('')}</optgroup>`;
+                    }).join('')}
                 </select>
                 ${hint ? `<span class="hint">${hint}</span>` : ''}
             </div>`;
@@ -510,20 +516,32 @@
             const riCustom = riIdx < 0 && ind.region
                 ? `<option value="" selected>${esc(ind.region)} / ${esc(ind.clinical_indication || '—')} (not in RHYTHM list)</option>` : '';
             const riHint = isManual('indication.region') ? ''
-                : (ind.matched ? 'Auto-matched from the protocol name by indication_lookup.yaml.'
-                    : 'No lookup rule matched this protocol — choose the RHYTHM indication.');
+                : (ind.matched ? 'Filled in from the matched protocol (Protocols page).'
+                    : 'No catalog protocol matched this study — choose the RHYTHM indication, or <a href="/protocols">map it on the Protocols page</a>.');
 
             const detected = [sc.manufacturer, sc.model].filter(Boolean).join(' ');
-            const scannerHint = detected ? `Detected scanner: <span class="mono">${esc(detected)}</span>.`
+            const scannerHint = detected ? `Detected scanner: <span class="mono">${esc(sc.name || detected)}</span>.`
                 : 'Scanner not identified in headers.';
             const rh = exam.rhythm || {};
             const protoKey = rh.protocol_key || '';
             const retainVal = rh.retain_after_project;
-            const protoChoices = (state.caps.rhythm_protocols || []).map(p =>
-                [p.id, (p.name || p.id) + (p.uuid_pending ? ' (UUID pending)' : '')]);
-            if (protoKey && !protoChoices.some(c => c[0] === protoKey)) {
-                protoChoices.unshift([protoKey, `${protoKey} (not in rhythm_protocols.yaml)`]);
+            // This study's scanner's protocols first; the rest grouped below.
+            const allProtos = state.caps.rhythm_protocols || [];
+            const toChoice = p => [p.id, (p.name || p.id) + (p.uuid_pending ? ' (UUID pending)' : '')];
+            const mine = allProtos.filter(p => sc.catalog_id && p.scanner_id === sc.catalog_id);
+            const others = allProtos.filter(p => !mine.includes(p));
+            const protoChoices = mine.length
+                ? [...mine.map(toChoice), ...(others.length ? [{ group: 'Other scanners', options: others.map(toChoice) }] : [])]
+                : allProtos.map(toChoice);
+            if (protoKey && !allProtos.some(p => p.id === protoKey)) {
+                protoChoices.unshift([protoKey, `${protoKey} (not in the protocol catalog)`]);
             }
+            const cat = exam.catalog || {};
+            const protoHint = isManual('rhythm.protocol_key') ? ''
+                : (cat.protocol_key && cat.protocol_key === protoKey
+                    ? `Matched automatically from <span class="mono">${esc(cat.protocol_name || '')}</span>. `
+                    : (cat.protocol_name || detected
+                        ? `No catalog match for <span class="mono">${esc(cat.protocol_name || '—')}</span> — <a href="/protocols">map it on the Protocols page</a>. ` : ''));
 
             return `
             <div class="card">
@@ -555,7 +573,7 @@
                     ${selectField({ path: 'rhythm.protocol_key', label: 'RHYTHM protocol', cls: 'span-2',
                         value: protoKey, missing: missing.has('rhythm.protocol_key'),
                         choices: [['', '— Choose protocol —'], ...protoChoices],
-                        hint: `Its UUID becomes the manifest's protocol_id; RHYTHM derives scanner, region and contrast from it. ${scannerHint}` })}
+                        hint: `${protoHint}Its UUID becomes the manifest's protocol_id; RHYTHM derives scanner, region and contrast from it. ${scannerHint}` })}
                     ${selectField({ path: 'rhythm.retain_after_project', label: 'Keep after project end', cls: 'span-2',
                         value: retainVal === true ? 'true' : retainVal === false ? 'false' : '', bool: true,
                         choices: [['', 'Default (kept)'], ['true', 'Yes — consent given'], ['false', 'No — delete at project end']],

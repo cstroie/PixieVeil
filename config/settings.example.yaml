@@ -26,6 +26,12 @@ storage:
   # DICOM C-STORE exports produce no artifact. Defaults to an "export" dir
   # next to base_path. Retained studies still count toward max_storage_gb.
   #export_path: "./data/export"
+  # Scanners & protocols catalog: which scanner/protocol a study came from,
+  # the RHYTHM protocol UUID it maps to, and its region/indication/contrast.
+  # Edited on the dashboard's /protocols page (admins); created on first
+  # start from the legacy lookup files if they exist. See
+  # config/protocols.example.yaml.
+  #protocols_file: "config/protocols.yaml"
 
   # Optional remote storage — remove entire block to keep archives local.
   # Every export is manual (a Send/Upload click on the /studies dashboard);
@@ -57,13 +63,10 @@ storage:
   #    site_code: "S014"                   # assigned by RHYTHM per institution — read
   #                                        # it off your RHYTHM profile, from the admin,
   #                                        # or the S### segment of a Repository Study ID
-  #    #protocol_map: "config/rhythm_protocols.yaml"   # local protocol key -> registered
-  #                                        # CTProtocol UUID (this is the default path);
-  #                                        # see config/rhythm_protocols.example.yaml. Each
-  #                                        # study picks one on /studies; its UUID becomes
-  #                                        # the manifest item's protocol_id, from which
-  #                                        # RHYTHM derives region/indication/contrast/
-  #                                        # protocol type/exam group/scanner.
+  #    # The RHYTHM protocol UUID for each study comes from the protocols
+  #    # catalog (storage.protocols_file, edited on /protocols). The old
+  #    # `protocol_map:` key is still read as the catalog path if
+  #    # protocols_file is unset.
   #    #chunk_size: 10485760               # bytes per chunk (default 10 MiB)
   #    #max_chunk_retries: 3
 

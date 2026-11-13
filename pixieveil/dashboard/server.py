@@ -30,7 +30,7 @@ from pixieveil.auth.user_store import User, UserStore, UserStoreError
 from pixieveil.config import Settings
 from pixieveil.dashboard import options
 from pixieveil.dicom_server.server import SUPPORTED_STORAGE_SOP_CLASSES
-from pixieveil.processing import exam_merge
+from pixieveil.processing import exam_merge, protocol_catalog
 from pixieveil.storage.storage_manager import StorageManager
 
 logger = logging.getLogger(__name__)
@@ -142,6 +142,10 @@ class Dashboard:
             web.get("/api/me/tokens", self.handle_my_tokens),
             web.post("/api/me/tokens", self.handle_my_token_add),
             web.delete("/api/me/tokens/{id}", self.handle_my_token_revoke),
+            web.get("/protocols", self.handle_protocols_page),
+            web.get("/api/protocols", self.handle_protocols_get),
+            web.put("/api/protocols", self.handle_protocols_put),
+            web.get("/api/protocols/unmatched", self.handle_protocols_unmatched),
             web.get("/users", self.handle_users_page),
             web.get("/api/users", self.handle_users_list),
             web.post("/api/users", self.handle_users_add),
@@ -374,6 +378,58 @@ class Dashboard:
         except UserStoreError as e:
             return web.json_response({"error": str(e)}, status=404)
         return web.json_response({"ok": True})
+
+    # ------------------------------------------------------------ protocols catalog
+    async def handle_protocols_page(self, request: web.Request) -> web.Response:
+        return await self._serve_template("protocols.html")
+
+    async def handle_protocols_get(self, request: web.Request) -> web.Response:
+        """The scanners & protocols catalog, its version (for PUT), per-protocol
+        study counts, and whether this user may edit it."""
+        sm: StorageManager = request.app['storage_manager']
+        catalog = sm.protocol_catalog
+        doc = await asyncio.to_thread(catalog.document)
+        usage = await asyncio.to_thread(sm.catalog_usage_sync)
+        return web.json_response({
+            "catalog": doc,
+            "version": catalog.version,
+            "usage": usage,
+            "editable": bool(request["user"].admin),
+            "path": str(catalog.path),
+        })
+
+    async def handle_protocols_put(self, request: web.Request) -> web.Response:
+        """Replace the catalog: ``{"catalog": {...}, "version": "<from GET>"}``.
+
+        400 with ``errors`` on invalid content, 409 if someone else saved in
+        between. On success every not-yet-exported study is re-matched.
+        """
+        self._require_admin(request)
+        body = await self._json_body(request)
+        doc = body.get("catalog")
+        if not isinstance(doc, dict):
+            return web.json_response({"error": 'body must be {"catalog": {...}, "version": …}'},
+                                     status=400)
+        sm: StorageManager = request.app['storage_manager']
+        try:
+            version = await asyncio.to_thread(
+                sm.protocol_catalog.replace, doc, expected_version=body.get("version"))
+        except protocol_catalog.CatalogConflictError as e:
+            return web.json_response({"error": str(e)}, status=409)
+        except protocol_catalog.CatalogValidationError as e:
+            return web.json_response({"error": "invalid catalog", "errors": e.errors},
+                                     status=400)
+        except OSError as e:
+            logger.error(f"Cannot save protocol catalog: {e}")
+            return web.json_response({"error": f"cannot write catalog: {e}"}, status=500)
+        logger.info(f"Protocol catalog saved by user={self._actor(request)}")
+        changed = await asyncio.to_thread(sm.reapply_catalog_sync)
+        return web.json_response({"ok": True, "version": version, "restudied": changed})
+
+    async def handle_protocols_unmatched(self, request: web.Request) -> web.Response:
+        sm: StorageManager = request.app['storage_manager']
+        return web.json_response({"unmatched": await asyncio.to_thread(
+            sm.unmatched_protocols_sync)})
 
     # ------------------------------------------------------------ admin: users
     @staticmethod
@@ -699,7 +755,7 @@ class Dashboard:
             "region_indications": options.REGION_INDICATIONS,
             "image_quality": options.IMAGE_QUALITY,
             "iv_contrast": options.IV_CONTRAST,
-            "scanners": options.scanner_options(sm.exam_extractor.scanner_map),
+            "scanners": options.scanner_options(sm.protocol_catalog),
             "required_fields": list(exam_merge.REQUIRED_PATHS),
         })
 
@@ -797,12 +853,12 @@ class Dashboard:
                 "anonymization_profile": storage_manager.settings.anonymization.get(
                     "profile", "research"
                 ),
-                # local protocol keys from config/rhythm_protocols.yaml, for
+                # protocol keys from the protocol catalog (config/protocols.yaml), for
                 # the exam panel's "RHYTHM protocol" dropdown
                 "rhythm_protocols": [
                     {"id": e.id, "name": e.name, "description": e.description,
-                     "uuid_pending": e.uuid_pending}
-                    for e in storage_manager.rhythm_storage.protocol_map.entries
+                     "uuid_pending": e.uuid_pending, "scanner_id": e.scanner_id}
+                    for e in storage_manager.protocol_catalog.entries
                 ],
             },
         })

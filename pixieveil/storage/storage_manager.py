@@ -123,7 +123,10 @@ class StorageManager:
         self.remote_storage = RemoteStorage(settings)
         self.dicom_storage = DicomStorage(settings)
         self.rhythm_storage = RhythmStorage(settings)
-        self.exam_extractor = ExamExtractor()
+        # One scanners & protocols catalog shared by RHYTHM export, exam
+        # extraction and the dashboard's /protocols page.
+        self.protocol_catalog = self.rhythm_storage.protocol_map
+        self.exam_extractor = ExamExtractor(catalog=self.protocol_catalog)
         
         # Thread safety
         self.lock = threading.Lock()
@@ -954,7 +957,7 @@ class StorageManager:
     # ExamExtractor runs on the completed, already-anonymized study. Under the
     # 'rhythm' profile that means Manufacturer / ManufacturerModelName /
     # ProtocolName / StudyDescription / SeriesDescription are gone by then, so
-    # the scanner_lookup / indication_lookup matches would all miss. These
+    # the protocol-catalog matches would all miss. These
     # helpers stash those five fields from each raw image before anonymize()
     # and hand them back to extract() as a fallback.
 
@@ -1311,6 +1314,102 @@ class StorageManager:
         exported_by = actor if ok and action in self._EXPORT_ACTIONS else None
         self.study_manager.append_audit(sc.original_study_uid, entry, exported_by=exported_by)
 
+    # ------------------------------------------------------------------
+    # Protocol catalog (config/protocols.yaml) — re-apply / inbox / usage
+
+    def _catalog_inputs_sync(self, study_number: int, exam: dict) -> tuple:
+        """(manufacturer, model, protocol_name, study_description) for matching.
+
+        Prefers the pre-anonymization hints next to the study (the richest
+        record), falling back to what the exam sidecar captured — which is
+        all there is once a study's directory has been purged.
+        """
+        scanner = exam.get("scanner") or {}
+        hint = exam.get("protocol_used_hint") or {}
+        manufacturer, model = scanner.get("manufacturer"), scanner.get("model")
+        protocol_name = hint.get("protocol_name")
+        description = hint.get("study_description")
+        hints = self._load_exam_hints_sync(self.base_path / f"{study_number:04d}") or {}
+        study_hints = hints.get("study") or {}
+        return (manufacturer or study_hints.get("manufacturer"),
+                model or study_hints.get("model"),
+                protocol_name or study_hints.get("protocol_name"),
+                description or study_hints.get("study_description"))
+
+    def _iter_exams_sync(self, *, include_archived: bool):
+        """Yield (StudySidecar, ExamSidecar data) for studies with a readable exam."""
+        for sc in sorted(StudySidecar.load_all(self.base_path).values(),
+                         key=lambda s: s.study_number):
+            if not include_archived and sc.status in ("archived", "receiving"):
+                continue
+            exam_path = ExamSidecar.path_for(self.base_path, sc.study_number)
+            if not exam_path.exists():
+                continue
+            try:
+                yield sc, ExamSidecar.load(exam_path).data
+            except Exception:
+                logger.warning("Corrupt exam sidecar %s — skipped", exam_path, exc_info=True)
+
+    def reapply_catalog_sync(self) -> list[int]:
+        """Re-match every not-yet-exported study against the current catalog.
+
+        Called after the catalog is edited. Values the operator set by hand
+        (``manual.fields``) are left alone. Each changed exam is saved,
+        announced on the event bus, and its export artifacts refreshed.
+        Returns the study numbers that changed.
+        """
+        changed: list[int] = []
+        for sc, exam in self._iter_exams_sync(include_archived=False):
+            n = sc.study_number
+            if n in self._manual_actions_in_progress:
+                continue
+            match = self.protocol_catalog.match(*self._catalog_inputs_sync(n, exam))
+            if not exam_merge.apply_catalog_match(exam, match):
+                continue
+            ExamSidecar(n, exam).save(self.base_path)
+            self.events.publish("exam", n=n)
+            try:
+                self._prepare_export_artifacts_sync(n)
+            except Exception:
+                logger.exception("Export artifact refresh failed for %04d", n)
+            changed.append(n)
+        if changed:
+            logger.info("Protocol catalog re-applied to %d stud(y/ies): %s", len(changed),
+                        ", ".join(f"{n:04d}" for n in changed))
+        return changed
+
+    def unmatched_protocols_sync(self) -> list[dict]:
+        """Not-yet-exported studies the catalog doesn't match, grouped by
+        (manufacturer, model, protocol name) — the /protocols page's inbox."""
+        groups: dict[tuple, dict] = {}
+        for sc, exam in self._iter_exams_sync(include_archived=False):
+            manufacturer, model, name, description = self._catalog_inputs_sync(
+                sc.study_number, exam)
+            match = self.protocol_catalog.match(manufacturer, model, name, description)
+            if match.matched:
+                continue
+            key = (manufacturer or "", model or "", match.protocol_name or "")
+            g = groups.setdefault(key, {
+                "manufacturer": manufacturer, "model": model,
+                "protocol_name": match.protocol_name or None,
+                "study_description": description,
+                "scanner_id": match.scanner.id if match.scanner else None,
+                "studies": [],
+            })
+            g["studies"].append(sc.study_number)
+        return sorted(groups.values(), key=lambda g: (-len(g["studies"]),
+                                                      g["manufacturer"] or "",
+                                                      g["protocol_name"] or ""))
+
+    def catalog_usage_sync(self) -> dict[str, int]:
+        """protocol key → number of studies (any status) currently using it."""
+        usage: dict[str, int] = {}
+        for _sc, exam in self._iter_exams_sync(include_archived=True):
+            key = (exam.get("rhythm") or {}).get("protocol_key")
+            if key:
+                usage[key] = usage.get(key, 0) + 1
+        return usage
+
     # Fields exposed to callers (e.g. the dashboard) for each study in
     # list/detail responses. StudySidecar also carries original_study_uid /
     # original_patient_id (PHI) — never expose to_dict() directly, always go
@@ -1628,42 +1727,6 @@ class StorageManager:
                 excluded.add(series_dir.name)
         return excluded
 
-    def _maybe_register_rhythm_protocol_stub(
-        self, study_number: int
-    ) -> Optional[str]:
-        """When a RHYTHM upload is blocked only because no protocol resolves
-        (empty map / no key picked), append a placeholder entry to
-        ``config/rhythm_protocols.yaml`` derived from this study's DICOM
-        ``ProtocolName`` (the ``protocol_used_hint.protocol_name`` the
-        extractor captured pre-anonymization), so the operator just pastes
-        the real ``CTProtocol`` UUID rather than authoring the whole block.
-
-        Returns the new local key, or ``None`` (no ProtocolName to slug, key
-        already present, sidecar unreadable). Idempotent via
-        ``rhythm_protocols.append_stub``.
-        """
-        try:
-            exam_path = ExamSidecar.path_for(self.base_path, study_number)
-            if not exam_path.exists():
-                return None
-            exam_data = ExamSidecar.load(exam_path).data
-        except Exception:
-            logger.warning(
-                "Could not read exam sidecar %04d for protocol-stub hint",
-                study_number, exc_info=True,
-            )
-            return None
-        name = (exam_data.get("protocol_used_hint") or {}).get("protocol_name")
-        if not name or not str(name).strip():
-            return None
-        region = (exam_data.get("indication") or {}).get("region") or ""
-        desc = (f"{region} — " if region else "") + (
-            f"auto-added from study {study_number:04d}"
-        )
-        return self.rhythm_storage.register_pending_protocol(
-            str(name), description=desc
-        )
-
     # Tags the `rhythm` anonymization profile removes outright. If any still
     # carries a value on a CT slice, the study was anonymized under a
     # different profile — RHYTHM's GDPR-strict ingest validator would reject
@@ -1717,7 +1780,7 @@ class StorageManager:
         writes manual edits into them at save time), so it feeds
         ``build_manifest_item`` directly.
 
-        ``protocol_id`` is resolved from ``config/rhythm_protocols.yaml``
+        ``protocol_id`` is resolved from the protocol catalog
         using the local protocol key the operator picked for the study
         (``rhythm.protocol_key`` in the exam sidecar); an unset key, or one
         the map doesn't know, leaves ``protocol_id`` null — a blocker.
@@ -1740,12 +1803,13 @@ class StorageManager:
             entry = pmap.get(protocol_key)
             if entry is not None and entry.uuid_pending:
                 return None, (
-                    f"protocol '{protocol_key}' has no UUID yet — paste the "
-                    f"CTProtocol UUID from RHYTHM's Protocol Records page into "
-                    f"config/rhythm_protocols.yaml"
+                    f"protocol '{protocol_key}' has no RHYTHM UUID yet — paste the "
+                    f"CTProtocol UUID from RHYTHM's Protocol Records page on the "
+                    f"/protocols page"
                 )
             return None, (
-                f"protocol '{protocol_key}' is not in config/rhythm_protocols.yaml"
+                f"protocol '{protocol_key}' is not in the protocol catalog — "
+                f"add it on the /protocols page"
             )
 
         if not self._rhythm_anonymized_sync(self.base_path / f"{study_number:04d}"):
@@ -2000,14 +2064,8 @@ class StorageManager:
             if blockers:
                 msg = "study is missing data RHYTHM requires: " + "; ".join(blockers)
                 if any("protocol_id" in b for b in blockers):
-                    stub = self._maybe_register_rhythm_protocol_stub(study_number)
-                    if stub:
-                        msg += (
-                            f" — added placeholder protocol '{stub}' to "
-                            f"config/rhythm_protocols.yaml from this study's "
-                            f"ProtocolName; paste its CTProtocol UUID and pick "
-                            f"it for the study"
-                        )
+                    msg += (" — map this study's protocol to a RHYTHM UUID on the "
+                            "/protocols page, or pick one for the study")
                 return {"ok": False, "message": msg}
 
             excluded = await asyncio.to_thread(

@@ -1,8 +1,7 @@
 """Fixture-based tests for ExamExtractor._scan_dicom_files — the highest-
 complexity, previously-untested function in the codebase (radon: E/40).
 It has no test-suite dependency on self, but is exercised through a real
-ExamExtractor instance with lookup_dir pointed at an empty tmp_path so it
-never touches the real integrations/rhythm/*.yaml files.
+ExamExtractor instance with no protocol catalog (nothing to match against).
 
 Where a field is genuinely "first value seen wins" (manufacturer, protocol
 name, per-series technique fields), each fixture puts that value on exactly
@@ -20,10 +19,8 @@ from .conftest import write_minimal_dicom
 
 
 def make_extractor(tmp_path) -> ExamExtractor:
-    # Empty lookup_dir: keeps this test hermetic against the real
-    # integrations/rhythm/*.yaml files, which _scan_dicom_files never
-    # touches anyway (that's ExamExtractor._match_indication's job).
-    return ExamExtractor(lookup_dir=tmp_path / "empty_lookup")
+    # No catalog: _scan_dicom_files never consults one anyway.
+    return ExamExtractor()
 
 
 class TestEmptyStudy:

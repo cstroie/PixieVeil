@@ -40,20 +40,22 @@ def _isolate_users_file(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def _isolate_rhythm_protocol_map(tmp_path, monkeypatch):
-    """Keep every test off the developer's real config/rhythm_protocols.yaml.
+def _isolate_protocol_catalog(tmp_path, monkeypatch):
+    """Keep every test off the developer's real config/protocols.yaml and the
+    legacy lookup files it is migrated from.
 
-    RhythmStorage resolves an unconfigured ``protocol_map`` to
-    ``rhythm_protocols.DEFAULT_PATH`` — a repo-relative path — so a real file
-    sitting there would otherwise bleed into tests that expect an empty map
-    (and fail the settings/site_code cross-check). Point it at a missing file
-    under tmp_path; a missing map is a valid empty map.
+    RhythmStorage resolves an unconfigured catalog path to
+    ``protocol_catalog.DEFAULT_PATH`` — repo-relative — and, when that is
+    absent, migrates ``config/rhythm_protocols.yaml`` +
+    ``integrations/rhythm/*_lookup.yaml`` into it. Point all three at missing
+    paths under tmp_path; a missing catalog is a valid empty one.
     """
-    from pixieveil.processing import rhythm_protocols
+    from pixieveil.processing import protocol_catalog
 
-    monkeypatch.setattr(
-        rhythm_protocols, "DEFAULT_PATH", tmp_path / "no_rhythm_protocols.yaml"
-    )
+    monkeypatch.setattr(protocol_catalog, "DEFAULT_PATH", tmp_path / "no_protocols.yaml")
+    monkeypatch.setattr(protocol_catalog, "LEGACY_PROTOCOL_MAP",
+                        tmp_path / "no_rhythm_protocols.yaml")
+    monkeypatch.setattr(protocol_catalog, "LEGACY_LOOKUP_DIR", tmp_path / "no_lookup_dir")
 
 
 @pytest.fixture

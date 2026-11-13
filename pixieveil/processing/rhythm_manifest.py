@@ -17,7 +17,7 @@ names one ``protocol_id`` — the UUID of a ``CTProtocol`` already registered
 in the RHYTHM app (``/protocols/records/``) — and the server derives
 anatomical region, clinical indication, contrast, protocol type, examination
 group and scanner from that protocol. PixieVeil resolves the UUID from
-``config/rhythm_protocols.yaml`` (see ``rhythm_protocols.ProtocolMap``),
+the protocol catalog ``config/protocols.yaml`` (see ``protocol_catalog``),
 keyed by the local protocol id the operator picks for the study on the
 ``/studies`` page. ``site_code`` on the item must match (case-insensitively)
 the registered protocol's own ``site_code`` or RHYTHM fails the job.
@@ -110,7 +110,7 @@ def build_manifest_item(
     """Build one RHYTHM v2 ``items[]`` entry from an *effective* exam sidecar
     (i.e. after ``exam_merge.apply_manual``), for the study's export ZIP.
 
-    ``protocol_id`` is the UUID resolved from ``config/rhythm_protocols.yaml``
+    ``protocol_id`` is the UUID resolved from the protocol catalog
     for the local protocol the operator selected; ``site_code`` is the
     configured submitting site (``settings.storage.remote_storage.rhythm``).
     Either may be ``None`` here — ``manifest_item_blockers`` reports that as a

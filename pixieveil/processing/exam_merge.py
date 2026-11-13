@@ -50,7 +50,7 @@ MANUAL_EDITABLE_PATHS = {
     # no longer shown in the exam form — RHYTHM derives the scanner from the
     # registered protocol behind rhythm.protocol_key
     "scanner.rhythm_scanner_id",
-    # local protocol key -> RHYTHM CTProtocol UUID via config/rhythm_protocols.yaml
+    # local protocol key -> RHYTHM CTProtocol UUID via the protocol catalog
     "rhythm.protocol_key",
     # patient's retention consent -> manifest retain_after_project (bool)
     "rhythm.retain_after_project",
@@ -257,3 +257,99 @@ def recompute_buckets(data: dict) -> None:
     kept = [n for n in notes if not str(n).startswith(_STALE_NOTE_PREFIXES)]
     kept.extend(bucket_notes)
     data["notes"] = kept
+
+
+# ---------------------------------------------------------------------------
+# Protocol catalog (config/protocols.yaml) → exam fields
+
+# Every notes[] entry about catalog matching starts with this, so a re-apply
+# can drop the previous verdict before adding the current one. The two
+# legacy prefixes cover sidecars extracted before the catalog existed.
+CATALOG_NOTE_PREFIX = "Protocol catalog:"
+_STALE_CATALOG_NOTES = (
+    CATALOG_NOTE_PREFIX, "No indication_lookup.yaml", "No scanner_lookup.yaml",
+)
+
+# Exam paths the catalog fills; a path the operator set by hand (present in
+# manual.fields) is never overwritten.
+_CATALOG_INDICATION_PATHS = (
+    "indication.region", "indication.clinical_indication", "indication.iv_contrast",
+)
+
+
+def catalog_notes(match: Any, manufacturer: Optional[str], model: Optional[str]) -> list[str]:
+    """The notes[] entries describing a catalog match outcome (empty when matched)."""
+    if match.protocol is not None:
+        return []
+    if match.scanner is None:
+        return [f"{CATALOG_NOTE_PREFIX} no scanner for manufacturer={manufacturer!r} "
+                f"model={model!r} — add it on the /protocols page"]
+    return [f"{CATALOG_NOTE_PREFIX} no protocol named {match.protocol_name!r} on scanner "
+            f"{match.scanner.label!r} — map it on the /protocols page"]
+
+
+def apply_catalog_match(data: dict, match: Any, *, recompute: bool = True) -> bool:
+    """Write a ``protocol_catalog.CatalogMatch`` into an exam dict, in place.
+
+    On a match: ``rhythm.protocol_key``, region/indication/contrast (when the
+    catalog entry carries them), ``indication.matched``/``source="catalog"``
+    and the scanner's catalog id/name/RHYTHM id. On no match, values a
+    previous catalog match put there are cleared, so deleting or renaming a
+    catalog entry doesn't leave stale data behind. Paths in
+    ``manual.fields`` are never touched. Returns True if anything changed.
+    """
+    before = repr((data.get("rhythm"), data.get("indication"), data.get("scanner"),
+                   data.get("catalog"), data.get("notes")))
+    manual_paths = set(((data.get("manual") or {}).get("fields") or {}).keys())
+
+    def put(path: str, value: Any) -> None:
+        if path not in manual_paths:
+            _set_dotted(data, path, value)
+
+    scanner = data.setdefault("scanner", {})
+    indication = data.setdefault("indication", {})
+    previous = data.get("catalog") or {}
+    proto = match.protocol
+
+    if match.scanner is not None:
+        scanner["catalog_id"] = match.scanner.id
+        scanner["name"] = match.scanner.label
+        if "scanner.rhythm_scanner_id" not in manual_paths:
+            scanner["rhythm_scanner_id"] = match.scanner.rhythm_scanner_id
+    else:
+        scanner.pop("catalog_id", None)
+        scanner.pop("name", None)
+
+    if proto is not None:
+        put("rhythm.protocol_key", proto.key)
+        if proto.has_indication:
+            put("indication.region", proto.region)
+            put("indication.clinical_indication", proto.clinical_indication)
+            if proto.iv_contrast:
+                put("indication.iv_contrast", proto.iv_contrast)
+            indication["matched"] = True
+            indication["source"] = "catalog"
+        data["catalog"] = {"scanner_id": proto.scanner_id, "protocol_key": proto.key,
+                           "protocol_name": match.protocol_name}
+    else:
+        if previous.get("protocol_key"):
+            rhythm = data.get("rhythm") or {}
+            if rhythm.get("protocol_key") == previous["protocol_key"]:
+                put("rhythm.protocol_key", None)
+        if indication.get("source") == "catalog":
+            put("indication.region", None)
+            put("indication.clinical_indication", None)
+            indication["matched"] = False
+            indication.pop("source", None)
+        data["catalog"] = {"scanner_id": match.scanner.id if match.scanner else None,
+                           "protocol_key": None, "protocol_name": match.protocol_name}
+
+    notes = [n for n in data.get("notes") or []
+             if not (isinstance(n, str) and n.startswith(_STALE_CATALOG_NOTES))]
+    notes.extend(catalog_notes(match, scanner.get("manufacturer"), scanner.get("model")))
+    data["notes"] = notes
+    if recompute:
+        recompute_buckets(data)
+    after = repr((data.get("rhythm"), data.get("indication"), data.get("scanner"),
+                  data.get("catalog"), data.get("notes")))
+    return before != after
