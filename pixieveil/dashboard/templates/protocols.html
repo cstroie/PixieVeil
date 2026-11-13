@@ -322,10 +322,16 @@
                     ? `<span class="old">${esc(r.local.rhythm_uuid)}</span><br>${esc(r.rhythm.id)}` : esc(r.rhythm.id);
                 const notes = [fillText(r.fill || {}), ...(r.notes || [])].filter(Boolean)
                     .map(n => `<div class="note">${esc(n)}</div>`).join('');
-                const can = !(r.action === 'same' && !Object.keys(r.fill || {}).length);
-                return `<tr><td><input type="checkbox" name="take-${si}-${ri}" ${r.selected ? 'checked' : ''} ${can ? '' : 'disabled'}></td>
+                // The ProtocolName(s) our scanner sends for this protocol —
+                // often not RHYTHM's protocol_name (e.g. CAP_N_1-6_ANI).
+                const names = r.local ? (r.local.names || []).join(', ')
+                    : r.action === 'add' ? r.rhythm.name : '';
+                return `<tr><td><input type="checkbox" name="take-${si}-${ri}" ${r.selected ? 'checked' : ''}></td>
                     <td><span class="pill ${tone} plain">${label}</span></td>
                     <td class="mono">${esc(r.rhythm.name)}</td><td>${local}</td>
+                    <td><input class="input mono" name="names-${si}-${ri}" value="${esc(names)}"
+                        placeholder="as the scanner sends it" style="height:28px; min-width:170px"
+                        title="Comma-separated ProtocolName(s) from the scanner that should select this protocol"></td>
                     <td class="uuid-cell">${uuid}</td><td>${notes}</td></tr>`;
             }).join('');
             const missing = sc.local_not_on_rhythm.length
@@ -335,7 +341,7 @@
                     <span class="note">→ local scanner</span>
                     <select class="select" name="sc-${si}" style="height:28px; max-width:280px">${scannerOpts(sc.match)}</select>
                     ${!sc.match && sc.candidates.length ? '<span class="note">(several possible — pick one)</span>' : ''}</h3>
-                ${rows ? `<table><thead><tr><th></th><th>Action</th><th>RHYTHM protocol</th><th>Local protocol</th><th>UUID</th><th>Notes</th></tr></thead>
+                ${rows ? `<table><thead><tr><th></th><th>Action</th><th>RHYTHM protocol</th><th>Local protocol</th><th>Scanner names</th><th>UUID</th><th>Notes</th></tr></thead>
                     <tbody>${rows}</tbody></table>` : '<p class="note">No protocols registered for this scanner on RHYTHM.</p>'}
                 ${missing}</section>`;
         }).join('');
@@ -356,6 +362,12 @@
         const fill = (p, f) => {
             for (const k of ['region', 'clinical_indication', 'iv_contrast']) if (f && f[k] && !p[k]) p[k] = f[k];
         };
+        const namesOf = (si, ri) => String(fd.get(`names-${si}-${ri}`) || '')
+            .split(',').map(x => x.trim()).filter(Boolean);
+        const mergeNames = (p, list) => {
+            const have = new Set((p.names || []).map(normName));
+            for (const nm of list) if (!have.has(normName(nm))) { (p.names = p.names || []).push(nm); have.add(normName(nm)); }
+        };
         plan.scanners.forEach((sc, si) => {
             const target = scannerById(String(fd.get(`sc-${si}`) || ''));
             if (target && !target.rhythm_scanner_id) { target.rhythm_scanner_id = sc.profile.id; n++; }
@@ -363,7 +375,11 @@
                 if (!fd.get(`take-${si}-${ri}`)) return;
                 if (r.action === 'add') {
                     if (!target) { skipped++; return; }
-                    const p = newProtocol(target, r.rhythm.name);
+                    const names = namesOf(si, ri);
+                    const p = newProtocol(target, names[0] || r.rhythm.name);
+                    p.names = [];
+                    mergeNames(p, names.length ? names : [r.rhythm.name]);
+                    p.label = r.rhythm.name;
                     p.rhythm_uuid = r.rhythm.id;
                     fill(p, r.fill);
                     n++;
@@ -372,6 +388,7 @@
                 const key = r.action === 'ambiguous' ? String(fd.get(`pick-${si}-${ri}`) || '') : r.local && r.local.key;
                 const p = key && findProtocol(key);
                 if (!p) { skipped++; return; }
+                mergeNames(p, namesOf(si, ri));
                 p.rhythm_uuid = r.rhythm.id;
                 fill(p, r.fill);
                 n++;

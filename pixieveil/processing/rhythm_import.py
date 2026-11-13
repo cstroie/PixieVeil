@@ -200,8 +200,13 @@ def _protocol_row(proto: dict, match: str | None, local_scanners: list[dict],
     uuid = str(proto.get("id") or "").lower()
     name = str(proto.get("protocol_name") or "").strip()
     name_key = protocol_key(name)
+    # A local protocol already carrying this UUID is the match, whatever its
+    # names are: local names are the scanner's ProtocolNames ("CAP_N_PESTE_6A"),
+    # which needn't resemble RHYTHM's protocol_name.
+    by_uuid = [(s["id"], p) for s in local_scanners for p in s.get("protocols") or []
+               if uuid and str(p.get("rhythm_uuid") or "").lower() == uuid]
     search = [s for s in local_scanners if s["id"] == match] + wildcards
-    hits = [(s["id"], p) for s in search for p in _protocol_candidates(name_key, s)]
+    hits = by_uuid or [(s["id"], p) for s in search for p in _protocol_candidates(name_key, s)]
     row: dict[str, Any] = {
         "rhythm": {"id": uuid, "name": name, "protocol_type": proto.get("protocol_type"),
                    "age_group": proto.get("age_group"),
@@ -227,7 +232,8 @@ def _protocol_row(proto: dict, match: str | None, local_scanners: list[dict],
     fill, notes = _indication_fill(local, proto, vocab)
     old = str(local.get("rhythm_uuid") or "").lower()
     row["local"] = {"scanner": sid, "key": local.get("key"), "label": local.get("label"),
-                    "rhythm_uuid": local.get("rhythm_uuid")}
+                    "rhythm_uuid": local.get("rhythm_uuid"),
+                    "names": list(local.get("names") or [])}
     row["fill"] = fill
     row["notes"] = notes
     if not is_pending_uuid(old) and old == uuid:

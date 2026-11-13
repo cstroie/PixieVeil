@@ -304,3 +304,14 @@ class TestRoute:
         d = _dashboard(tmp_path)
         status, body = _post(d, d._admin_token)
         assert status == 502 and "rejected" in body
+
+
+def test_pairs_by_uuid_even_when_names_differ():
+    cat = {"scanners": [{"id": "emotion", "manufacturer": "SIEMENS", "model": "Emotion 16",
+                         "protocols": [{"key": "cap-6", "label": "CAP_N_PESTE_6A",
+                                        "names": ["CAP_N_PESTE_6A"], "rhythm_uuid": U1}]}]}
+    plan = ri.plan_import(cat, PROFILES[:1], [_proto(U1, "Head trauma > 6 years")], VOCAB)
+    _sc, rows = _rows(plan, "p-emotion")
+    r = rows["Head trauma > 6 years"]
+    assert r["action"] == ri.SAME
+    assert r["local"]["key"] == "cap-6" and r["local"]["names"] == ["CAP_N_PESTE_6A"]

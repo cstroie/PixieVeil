@@ -184,8 +184,15 @@ unsaved changes.
   SOMATOM Emotion 16" pairs with the DICOM "SIEMENS / Emotion 16". Only an exact
   model match pairs automatically; otherwise pick the local scanner in the dialog,
   or *skip*. Pairing also fills the scanner's *RHYTHM scanner ID* if it's empty.
-- **Protocols** pair by name, ignoring case and treating `_`, `-` and spaces alike
-  (`CAP_SPIRAL_CONTRAST` = "cap spiral contrast"):
+- **Protocols** pair first by UUID: a local protocol that already carries the RHYTHM
+  protocol's UUID is its match, whatever its names. Otherwise they pair by name,
+  ignoring case and treating `_`, `-` and spaces alike (`CAP_SPIRAL_CONTRAST` =
+  "cap spiral contrast").
+- **Scanner names** column: type the ProtocolName(s) your scanner sends for that
+  RHYTHM protocol, comma-separated (for example `CAP_N_1-6_ANI`). They usually
+  differ from RHYTHM's protocol name, and they're what matches incoming studies.
+  They're added to the matched protocol's *Matches names*, or become the names of
+  a new protocol. Existing names are kept.
 
   | Proposal | Meaning | Ticked by default |
   |---|---|---|
