@@ -13,7 +13,11 @@ legitimately use multiple conflicting values.
 
 import pydicom
 
-from pixieveil.processing.exam_extractor import ExamExtractor
+from pixieveil.processing.exam_extractor import (
+    ExamExtractor,
+    _parse_rdsr_content,
+    _sr_text_or_code_value,
+)
 
 from .conftest import write_minimal_dicom
 
@@ -338,3 +342,154 @@ class TestRdsrDetection:
                              Modality="CT", SeriesNumber=1)
         scanned = make_extractor(tmp_path)._scan_dicom_files(study_dir)
         assert scanned["rdsr_data"] is None
+
+
+def _code(value, meaning=None, scheme="DCM"):
+    c = pydicom.Dataset()
+    c.CodeValue, c.CodingSchemeDesignator = value, scheme
+    if meaning is not None:
+        c.CodeMeaning = meaning
+    return c
+
+
+def _sr_item(code, value_type, children=None, **attrs):
+    item = pydicom.Dataset()
+    item.ValueType = value_type
+    item.ConceptNameCodeSequence = pydicom.Sequence([_code(code)])
+    for k, v in attrs.items():
+        setattr(item, k, v)
+    if children is not None:
+        item.ContentSequence = pydicom.Sequence(children)
+    return item
+
+
+def _text(code, text):
+    return _sr_item(code, "TEXT", TextValue=text)
+
+
+def _coded(code, meaning):
+    return _sr_item(code, "CODE", ConceptCodeSequence=pydicom.Sequence([_code("X", meaning)]))
+
+
+def _num(code, value):
+    mv = pydicom.Dataset()
+    mv.NumericValue = value
+    return _sr_item(code, "NUM", MeasuredValueSequence=pydicom.Sequence([mv]))
+
+
+class TestSrTextOrCodeValue:
+    """_sr_text_or_code_value: the reader behind every textual RDSR field
+    (acquisition protocol/type, target region, modulation type)."""
+
+    def test_text_item_returns_text_value(self):
+        assert _sr_text_or_code_value(_text("125203", "Head 120kV")) == "Head 120kV"
+
+    def test_code_item_returns_code_meaning(self):
+        assert _sr_text_or_code_value(_coded("113820", "Spiral Acquisition")) == \
+            "Spiral Acquisition"
+
+    def test_code_item_uses_first_concept_code(self):
+        item = _sr_item("113820", "CODE", ConceptCodeSequence=pydicom.Sequence(
+            [_code("P5-08001", "Spiral Acquisition"), _code("X", "Other")]))
+        assert _sr_text_or_code_value(item) == "Spiral Acquisition"
+
+    def test_blank_text_is_none(self):
+        assert _sr_text_or_code_value(_text("125203", "")) is None
+
+    def test_missing_text_value_is_none(self):
+        assert _sr_text_or_code_value(_sr_item("125203", "TEXT")) is None
+
+    def test_code_without_concept_code_sequence_is_none(self):
+        assert _sr_text_or_code_value(_sr_item("113820", "CODE")) is None
+
+    def test_code_with_empty_concept_code_sequence_is_none(self):
+        item = _sr_item("113820", "CODE", ConceptCodeSequence=pydicom.Sequence([]))
+        assert _sr_text_or_code_value(item) is None
+
+    def test_code_without_code_meaning_is_none(self):
+        item = _sr_item("113820", "CODE",
+                        ConceptCodeSequence=pydicom.Sequence([_code("P5-08001")]))
+        assert _sr_text_or_code_value(item) is None
+
+    def test_other_value_types_are_none(self):
+        # A NUM / CONTAINER / missing ValueType never yields text, even if a
+        # stray TextValue is present.
+        assert _sr_text_or_code_value(_num("113733", "120")) is None
+        assert _sr_text_or_code_value(_sr_item("113819", "CONTAINER", [])) is None
+        stray = pydicom.Dataset()
+        stray.TextValue = "x"
+        assert _sr_text_or_code_value(stray) is None
+
+
+class TestRdsrAcquisitionParsing:
+    """End to end through _parse_rdsr_content: textual fields come out of
+    CODE and TEXT items, nested at any depth inside a CT Acquisition."""
+
+    def _report(self, *acquisitions, total_dlp="512.3"):
+        ds = pydicom.Dataset()
+        ds.ConceptNameCodeSequence = pydicom.Sequence([_code("113701")])
+        accumulated = _sr_item("113811", "CONTAINER", [_num("113813", total_dlp)])
+        ds.ContentSequence = pydicom.Sequence([accumulated, *acquisitions])
+        return ds
+
+    def _acquisition(self, **over):
+        params = _sr_item("113822", "CONTAINER", [      # CT Acquisition Parameters
+            _num("113828", "0.8"),                       # pitch
+            _sr_item("113831", "CONTAINER", [            # CT X-Ray Source Parameters
+                _num("113733", "120"), _num("113833", "300"),
+                _num("113734", "180"), _num("113834", "0.5"),
+            ]),
+        ])
+        dose = _sr_item("113829", "CONTAINER", [         # CT Dose
+            _num("113830", "45.2"), _num("113838", "812.5"),
+        ])
+        children = [
+            over.get("protocol", _text("125203", "Head Routine")),
+            over.get("region", _coded("123014", "Head")),
+            over.get("acq_type", _coded("113820", "Spiral Acquisition")),
+            over.get("context", _coded("G-C32C", "CT without contrast")),
+            params, dose,
+            over.get("modulation", _text("113842", "XYZ_EC")),
+        ]
+        return _sr_item("113819", "CONTAINER", [c for c in children if c is not None])
+
+    def test_text_and_code_fields_parsed(self):
+        rdsr = _parse_rdsr_content(self._report(self._acquisition()))
+        assert rdsr["total_dlp_mgy_cm"] == 512.3
+        (acq,) = rdsr["acquisitions"]
+        assert acq == {
+            "acquisition_protocol": "Head Routine",
+            "target_region": "Head",
+            "acquisition_type": "Spiral Acquisition",
+            "procedure_context": "CT without contrast",
+            "pitch": 0.8, "kvp": 120.0, "mean_ma": 180.0, "max_ma": 300.0,
+            "rotation_time_s": 0.5, "mean_ctdivol_mgy": 45.2, "dlp_mgy_cm": 812.5,
+            "modulation_type": "XYZ_EC",
+        }
+
+    def test_vendor_variants_text_for_code_and_code_for_text(self):
+        # Vendors differ: acquisition type as TEXT, protocol as CODE.
+        acq = self._acquisition(protocol=_coded("125203", "Thorax Std"),
+                                acq_type=_text("113820", "Sequenced Acquisition"))
+        (parsed,) = _parse_rdsr_content(self._report(acq))["acquisitions"]
+        assert parsed["acquisition_protocol"] == "Thorax Std"
+        assert parsed["acquisition_type"] == "Sequenced Acquisition"
+
+    def test_missing_or_blank_text_fields_are_none(self):
+        acq = self._acquisition(protocol=None, region=_text("123014", ""),
+                                modulation=_sr_item("113842", "CODE"))
+        (parsed,) = _parse_rdsr_content(self._report(acq))["acquisitions"]
+        assert parsed["acquisition_protocol"] is None
+        assert parsed["target_region"] is None
+        assert parsed["modulation_type"] is None
+        assert parsed["kvp"] == 120.0                  # rest still parsed
+
+    def test_each_acquisition_keeps_its_own_values(self):
+        topo = self._acquisition(protocol=_text("125203", "Topogram"),
+                                 acq_type=_coded("113820", "Constant Angle Acquisition"))
+        spiral = self._acquisition()
+        acqs = _parse_rdsr_content(self._report(topo, spiral))["acquisitions"]
+        assert [(a["acquisition_protocol"], a["acquisition_type"]) for a in acqs] == [
+            ("Topogram", "Constant Angle Acquisition"),
+            ("Head Routine", "Spiral Acquisition"),
+        ]
