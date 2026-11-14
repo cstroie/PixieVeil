@@ -1857,6 +1857,11 @@ class StorageManager:
         str(LegacyConvertedEnhancedCTImageStorage),
     })
 
+    @staticmethod
+    def _series_dir_names_sync(study_dir: Path) -> set:
+        """Names of the numbered series folders directly under *study_dir*."""
+        return {d.name for d in study_dir.iterdir() if d.is_dir() and d.name.isdigit()}
+
     _SERIES_HEAD_CACHE_MAX = 4096
     _UNREADABLE = object()
 
@@ -2231,7 +2236,11 @@ class StorageManager:
                         "defacing did not complete for this study (a head-scan series "
                         "is still undefaced) — cannot export until that is resolved"}
 
-            item, item_err = self._rhythm_manifest_item_sync(study_number)
+            # Off the loop: loads the exam sidecar and reads a DICOM header
+            # per series (the rhythm-anonymization check).
+            item, item_err = await asyncio.to_thread(
+                self._rhythm_manifest_item_sync, study_number
+            )
             if item_err:
                 return {"ok": False, "message": item_err}
             blockers = rhythm_manifest.manifest_item_blockers(item)
@@ -2245,10 +2254,7 @@ class StorageManager:
             excluded = await asyncio.to_thread(
                 self._rhythm_excluded_series_sync, study_dir
             )
-            all_series = {
-                d.name for d in study_dir.iterdir()
-                if d.is_dir() and d.name.isdigit()
-            }
+            all_series = await asyncio.to_thread(self._series_dir_names_sync, study_dir)
             if not (all_series - excluded):
                 return {"ok": False,
                         "message": "no CT image series to upload (only non-CT objects found)"}
