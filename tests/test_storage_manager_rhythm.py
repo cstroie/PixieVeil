@@ -488,6 +488,28 @@ class TestCorrespondence:
         csv_text = correspondence.to_csv(correspondence.all_rows(sm.base_path))
         assert "RHY-S001-0001" in csv_text and csv_text.count("\n") == 3
 
+    def test_numeric_patient_id_does_not_sweep_in_study_number(self, tmp_path):
+        from pixieveil.storage import correspondence
+
+        sm = _manager(tmp_path)
+        a = register_study(sm, 1, "ready")
+        b = register_study(sm, 2, "ready")
+        a.original_patient_id = "2"          # patient A's ID == B's study number
+        a.save(sm.base_path)
+        b.original_patient_id = "pid-b"
+        b.save(sm.base_path)
+
+        def nums(q):
+            return [r["study_number"] for r in correspondence.search(sm.base_path, q)]
+
+        assert nums("2") == [1]              # identifier wins, B not swept in
+        assert nums("#2") == [2]             # explicit study number
+        assert nums("# 1") == [1]
+        assert nums("1") == [1]              # no identifier "1": falls back
+        assert nums("99") == []
+        for junk in ("²", "٣", "#²", "#", "#x"):
+            assert nums(junk) == [], junk    # no ValueError on unicode digits
+
     def test_cli(self, tmp_path, capsys):
         from pixieveil.storage import correspondence
 

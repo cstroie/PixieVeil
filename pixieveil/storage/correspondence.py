@@ -91,14 +91,24 @@ def _keys(row: dict) -> set[str]:
 def search(base_path: Path, query: str) -> list[dict]:
     """Rows whose any identifier equals *query* (case-insensitive, exact —
     no substring match, so a short query can't sweep in other patients).
-    A bare number also matches the study number."""
+    ``#N`` matches study number N only. A bare number matches the study
+    number only when it matches no identifier: numeric PatientIDs are
+    common, and "1042" must not return both patient 1042 and the
+    unrelated study 1042."""
     q = (query or "").strip()
     if not q:
         return []
+    rows = all_rows(base_path)
+    if q.startswith("#"):
+        n = q[1:].strip()
+        if not (n.isascii() and n.isdigit()):
+            return []
+        return [r for r in rows if r["study_number"] == int(n)]
     qf = q.casefold()
-    num = int(q) if q.isdigit() else None
-    return [r for r in all_rows(base_path)
-            if qf in _keys(r) or (num is not None and r["study_number"] == num)]
+    hits = [r for r in rows if qf in _keys(r)]
+    if hits or not (q.isascii() and q.isdigit()):
+        return hits
+    return [r for r in rows if r["study_number"] == int(q)]
 
 
 def to_csv(rows: list[dict]) -> str:
@@ -144,7 +154,7 @@ def main(argv: list[str] | None = None) -> int:
         description="Find which studies (and RHYTHM IDs) belong to a patient.")
     p.add_argument("query", nargs="?",
                    help="original or pseudonymized PatientID / StudyInstanceUID, "
-                        "study number, RHYTHM Repository Study ID, job id or batch")
+                        "study number (#N forces it), RHYTHM Repository Study ID, job id or batch")
     p.add_argument("--all", action="store_true", help="every study")
     p.add_argument("--csv", action="store_true", help="CSV output")
     p.add_argument("--base-path", help="study sidecar directory (default: from settings)")
