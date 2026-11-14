@@ -439,8 +439,12 @@ class StudyManager:
 
     _RHYTHM_JOB_FIELDS = frozenset(
         {"batch", "session_id", "job_id", "job_status_url", "status",
-         "zip_sha256", "zip_size"}
+         "zip_sha256", "zip_size", "repository_study_id", "orthanc_study_id"}
     )
+    # Fields mirrored into each rhythm_uploads[] history entry.
+    _RHYTHM_HISTORY_FIELDS = ("batch", "session_id", "job_id", "status",
+                              "zip_sha256", "zip_size", "repository_study_id",
+                              "orthanc_study_id")
 
     def set_rhythm_job(self, original_study_uid: str, **fields: object) -> None:
         """Persist RHYTHM upload job-tracking onto the study sidecar.
@@ -457,9 +461,28 @@ class StudyManager:
             sc = self._sidecars.get(original_study_uid)
             if sc is None:
                 return
+            now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+            history = sc.rhythm_uploads
+            if not history and sc.rhythm_batch and "batch" not in fields:
+                # Sidecar from before the history existed: seed it from the
+                # latest-attempt fields so the update lands somewhere.
+                history.append({"started_at": None, **{
+                    k: getattr(sc, f"rhythm_{k}") for k in self._RHYTHM_HISTORY_FIELDS}})
             for key, value in fields.items():
                 if key in self._RHYTHM_JOB_FIELDS:
                     setattr(sc, f"rhythm_{key}", value)
+            if "batch" in fields:
+                # A new upload attempt (manual_upload_rhythm sets batch).
+                history.append({"started_at": now})
+                # RHYTHM ids belong to the attempt that produced them.
+                for key in ("repository_study_id", "orthanc_study_id"):
+                    if key not in fields:
+                        setattr(sc, f"rhythm_{key}", None)
+            if history:
+                entry = history[-1]
+                for key in self._RHYTHM_HISTORY_FIELDS:
+                    entry[key] = getattr(sc, f"rhythm_{key}")
+                entry["updated_at"] = now
             self._save(sc)
 
     # ------------------------------------------------------------------

@@ -331,6 +331,13 @@ const PV = (() => {
                 // Settings sits between Users and About.
                 nav.insertBefore(a, nav.querySelector('a[href="/about"]'));
             }
+            if (nav && !nav.querySelector('a[href="/lookup"]')) {
+                const a = document.createElement('a');
+                a.href = '/lookup';
+                a.textContent = 'Lookup';
+                if (location.pathname === '/lookup') a.setAttribute('aria-current', 'page');
+                nav.insertBefore(a, nav.querySelector('a[href="/about"]'));
+            }
         }
         const wrap = document.createElement('div');
         wrap.className = 'account';

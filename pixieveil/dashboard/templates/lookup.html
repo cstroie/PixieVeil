@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PixieVeil · Lookup</title>
+    <script>
+        try { document.documentElement.dataset.theme = localStorage.getItem('pixieveil_theme') || 'dark'; }
+        catch (_e) { document.documentElement.dataset.theme = 'dark'; }
+    </script>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='1' y='1' width='30' height='30' rx='8' fill='%23151b22' stroke='%233cc8c0' stroke-width='2'/%3E%3Cg fill='%233cc8c0'%3E%3Crect x='8' y='8' width='4' height='4' rx='1'/%3E%3Crect x='14' y='8' width='4' height='4' rx='1' opacity='.6'/%3E%3Crect x='8' y='14' width='4' height='4' rx='1' opacity='.6'/%3E%3Crect x='20' y='8' width='4' height='4' rx='1' opacity='.3'/%3E%3Crect x='14' y='14' width='4' height='4' rx='1' opacity='.3'/%3E%3Crect x='8' y='20' width='4' height='4' rx='1' opacity='.3'/%3E%3C/g%3E%3C/svg%3E">
+    <link rel="stylesheet" href="/static/theme.css">
+    <style>
+        .page { max-width: 1100px; margin: 0 auto; padding: 28px 16px 48px; display: flex; flex-direction: column; gap: 20px; }
+        .page h1 { font-size: 22px; }
+        .page .lead { color: var(--text-dim); margin: 6px 0 0; }
+        .search { display: flex; gap: 8px; flex-wrap: wrap; }
+        .search .input { flex: 1 1 320px; }
+        .kv { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; font-size: 13px; }
+        .kv dt { color: var(--text-dim); }
+        .kv dd { margin: 0; word-break: break-all; }
+        .table-wrap { overflow-x: auto; }
+    </style>
+</head>
+<body>
+    <header class="topbar">
+        <a class="brand" href="/">
+            <svg viewBox="0 0 32 32" aria-hidden="true"><rect x="1.5" y="1.5" width="29" height="29" rx="8" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.5"/><g fill="var(--accent)"><rect x="8" y="8" width="4" height="4" rx="1"/><rect x="14" y="8" width="4" height="4" rx="1" opacity=".6"/><rect x="8" y="14" width="4" height="4" rx="1" opacity=".6"/><rect x="20" y="8" width="4" height="4" rx="1" opacity=".3"/><rect x="14" y="14" width="4" height="4" rx="1" opacity=".3"/><rect x="8" y="20" width="4" height="4" rx="1" opacity=".3"/></g><path d="M8 25.5C14 24 21 18 25 8" stroke="var(--accent)" stroke-width="1.6" fill="none" stroke-linecap="round"/></svg>
+            <span>PixieVeil <small>DICOM anonymizer</small></span>
+        </a>
+        <nav class="nav">
+            <a href="/">Status</a>
+            <a href="/studies">Studies<span class="count" id="nav-needs" hidden></span></a>
+            <a href="/protocols">Protocols</a>
+            <a href="/users">Users</a>
+            <a href="/about">About</a>
+        </nav>
+        <div class="spacer"></div>
+        <button type="button" class="btn btn-ghost btn-icon" data-theme-toggle></button>
+    </header>
+
+    <main class="page">
+        <section>
+            <h1>Patient lookup</h1>
+            <p class="lead">Find every study received for a patient and the IDs it has on RHYTHM, e.g. to answer a
+                data-erasure request. Matches exactly on original or pseudonymized PatientID / StudyInstanceUID,
+                study number, RHYTHM Repository Study ID, job id or batch. Works after a study's files are purged.
+                Each search is logged with your username.</p>
+        </section>
+
+        <section class="card">
+            <div class="card-body">
+                <form class="search" id="search" autocomplete="off">
+                    <input class="input mono" name="q" required spellcheck="false" placeholder="PatientID, UID or ID">
+                    <button type="submit" class="btn btn-primary">Search</button>
+                    <a class="btn btn-ghost" href="/api/lookup?all=1&amp;format=csv">Download full table (CSV)</a>
+                </form>
+            </div>
+        </section>
+
+        <div id="results"></div>
+    </main>
+
+    <script src="/static/common.js"></script>
+    <script>
+        const { esc, api, toast, fmtDate, pad4 } = PV;
+        const results = document.getElementById('results');
+        const v = x => x == null || x === '' ? '<span class="faint">—</span>' : `<span class="mono">${esc(x)}</span>`;
+
+        function card(r) {
+            const ups = r.rhythm_uploads.map(u => `<tr>
+                <td class="dim">${u.started_at ? fmtDate(u.started_at) : '—'}</td>
+                <td>${v(u.status)}</td><td>${v(u.repository_study_id)}</td>
+                <td>${v(u.job_id)}</td><td>${v(u.batch)}</td></tr>`).join('');
+            return `<section class="card">
+                <div class="card-head"><h3>Study ${pad4(r.study_number)} · ${esc(r.status)}</h3></div>
+                <div class="card-body">
+                    <dl class="kv">
+                        <dt>Original PatientID</dt><dd>${v(r.original_patient_id)}</dd>
+                        <dt>Original StudyUID</dt><dd>${v(r.original_study_uid)}</dd>
+                        <dt>Pseudonymized PatientID</dt><dd>${v(r.anonymized_patient_id)}</dd>
+                        <dt>Pseudonymized StudyUID</dt><dd>${v(r.anonymized_study_uid)}</dd>
+                        <dt>RHYTHM Repository Study ID</dt><dd>${r.rhythm_repository_study_ids.length
+                            ? r.rhythm_repository_study_ids.map(v).join(', ') : v(null)}</dd>
+                        <dt>Received</dt><dd>${fmtDate(r.received_at)}</dd>
+                        <dt>Exported</dt><dd>${r.exported_at ? `${fmtDate(r.exported_at)} via ${esc(r.archived_via || '?')} by ${esc(r.exported_by || '?')}` : v(null)}</dd>
+                        <dt>Files purged</dt><dd>${r.purged_at ? fmtDate(r.purged_at) : v(null)}</dd>
+                    </dl>
+                </div>
+                ${ups ? `<div class="table-wrap"><table class="data">
+                    <thead><tr><th>RHYTHM upload</th><th>Status</th><th>Repository Study ID</th><th>Job</th><th>Batch</th></tr></thead>
+                    <tbody>${ups}</tbody></table></div>` : ''}
+            </section>`;
+        }
+
+        document.getElementById('search').addEventListener('submit', async e => {
+            e.preventDefault();
+            const q = e.target.q.value.trim();
+            if (!q) return;
+            try {
+                const { rows } = await api(`/api/lookup?q=${encodeURIComponent(q)}`);
+                results.innerHTML = rows.length ? rows.map(card).join('')
+                    : '<p class="dim">No study matches that identifier.</p>';
+            } catch (ex) { toast(ex.message, 'bad'); }
+        });
+    </script>
+</body>
+</html>

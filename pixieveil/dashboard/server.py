@@ -37,6 +37,7 @@ from pixieveil.dicom_server.server import SUPPORTED_STORAGE_SOP_CLASSES
 from pixieveil.processing import exam_merge, protocol_catalog, protocol_draft, rhythm_import
 from pixieveil.storage import rhythm_storage as rhythm_storage_mod
 from pixieveil.storage.storage_manager import StorageManager
+from pixieveil.storage import correspondence
 
 logger = logging.getLogger(__name__)
 
@@ -170,6 +171,8 @@ class Dashboard:
             web.post("/api/settings/rhythm-test", self.handle_settings_rhythm_test),
             web.post("/api/settings/rhythm-login", self.handle_settings_rhythm_login),
             web.post("/api/settings/rhythm-login/verify", self.handle_settings_rhythm_verify),
+            web.get("/lookup", self.handle_lookup_page),
+            web.get("/api/lookup", self.handle_lookup),
             web.get("/users", self.handle_users_page),
             web.get("/api/users", self.handle_users_list),
             web.post("/api/users", self.handle_users_add),
@@ -1015,6 +1018,40 @@ class Dashboard:
         if user is None or not user.admin:
             raise web.HTTPFound("/")
         return await self._serve_template("users.html")
+
+    async def handle_lookup_page(self, request: web.Request) -> web.Response:
+        user = request.get("user")
+        if user is None or not user.admin:
+            raise web.HTTPFound("/")
+        return await self._serve_template("lookup.html")
+
+    async def handle_lookup(self, request: web.Request) -> web.Response:
+        """Admin-only patient -> study -> RHYTHM ID correspondence.
+
+        ``?q=<id>`` exact-matches any identifier; ``?all=1`` returns every
+        study (``&format=csv`` downloads it). Returns original PatientIDs, so
+        it is admin-gated and every call is logged with the user and query.
+        """
+        self._require_admin(request)
+        sm: StorageManager = request.app['storage_manager']
+        q = request.query.get("q", "").strip()
+        everything = request.query.get("all") in ("1", "true")
+        if not q and not everything:
+            raise web.HTTPBadRequest(text=json.dumps({"error": "q or all=1 required"}),
+                                     content_type="application/json")
+        logger.info("Audit: user=%s action=lookup query=%r all=%s",
+                    self._actor(request), q, everything)
+        if everything:
+            rows = await asyncio.to_thread(correspondence.all_rows, sm.base_path)
+        else:
+            rows = await asyncio.to_thread(correspondence.search, sm.base_path, q)
+        if request.query.get("format") == "csv":
+            return web.Response(
+                text=correspondence.to_csv(rows), content_type="text/csv",
+                headers={"Content-Disposition":
+                         'attachment; filename="pixieveil_correspondence.csv"',
+                         "Cache-Control": "no-store"})
+        return web.json_response({"rows": rows}, headers={"Cache-Control": "no-store"})
 
     async def handle_users_list(self, request: web.Request) -> web.Response:
         self._require_admin(request)

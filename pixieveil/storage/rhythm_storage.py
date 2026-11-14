@@ -218,6 +218,35 @@ class RhythmStorage:
             ok=False, status=status, error=f"job ended {status}", error_report=report
         )
 
+    async def fetch_study_ids(self, study_uid: str) -> dict[str, Any] | None:
+        """RHYTHM's identifiers for an ingested study, looked up by the
+        (anonymized) StudyInstanceUID we shipped — RHYTHM keys its
+        ``StudyMapping`` on that UID unchanged.
+
+        Returns ``{"repository_study_id", "orthanc_study_id"}`` (either may
+        be None), or None if the study can't be read (not ingested yet, not
+        visible to this token, RHYTHM unreachable). The Repository Study ID
+        is RHYTHM's own ID for the study (``Patient.pseudo_id`` ==
+        ``CTExamination.repository_study_id``) — the one a data-erasure
+        request to RHYTHM has to name.
+        """
+        if not self.enabled or not study_uid:
+            return None
+        try:
+            status, body = await _send_json(
+                "GET", self.base_url, self.auth_token, f"{STUDIES_PATH}{study_uid}/"
+            )
+        except RhythmApiError:
+            return None
+        if status != 200 or not isinstance(body, dict):
+            logger.warning("RHYTHM study lookup for %s: HTTP %s", study_uid, status)
+            return None
+        patient = body.get("patient") if isinstance(body.get("patient"), dict) else {}
+        return {
+            "repository_study_id": body.get("patient_pseudo_id") or patient.get("pseudo_id"),
+            "orthanc_study_id": body.get("orthanc_study_id"),
+        }
+
     # -- steps -----------------------------------------------------------
 
     async def _init(
@@ -395,6 +424,7 @@ async def _json(resp: aiohttp.ClientResponse) -> Any:
 PROBE_PATH = "/api/v1/protocols-api/"
 PROFILES_PATH = "/api/v1/scanner-profiles/"
 PROTOCOLS_PATH = "/api/v1/protocols-api/"
+STUDIES_PATH = "/api/v1/studies/"
 PAGE_SIZE = 100          # RHYTHM's max_page_size
 
 

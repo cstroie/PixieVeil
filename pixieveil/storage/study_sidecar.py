@@ -132,6 +132,18 @@ class StudySidecar:
     # re-zipping.
     rhythm_zip_sha256: Optional[str] = None
     rhythm_zip_size: Optional[int] = None
+    # RHYTHM's own identifiers for the ingested study, fetched once the job
+    # reaches COMPLETE (RhythmStorage.fetch_study_ids). The Repository Study
+    # ID is what a data-erasure request to RHYTHM must name; together with
+    # original_patient_id above it is the patient -> RHYTHM correspondence,
+    # kept after the study's files are purged.
+    rhythm_repository_study_id: Optional[str] = None
+    rhythm_orthanc_study_id: Optional[str] = None
+    # One entry per upload attempt, oldest first — the rhythm_* fields above
+    # only describe the latest. Keys: started_at, updated_at, batch,
+    # session_id, job_id, status, zip_sha256, zip_size,
+    # repository_study_id, orthanc_study_id.
+    rhythm_uploads: list = field(default_factory=list)
 
     # Retention. ``exported_at`` is stamped when the study is first
     # successfully exported by any method (for RHYTHM: when the ingest job

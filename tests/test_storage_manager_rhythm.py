@@ -90,6 +90,14 @@ class FakeRhythm:
         self.job_checks.append(job_status_url)
         return self._job_result
 
+    # RHYTHM study-id lookup; None = not readable (yet).
+    study_ids: dict | None = {"repository_study_id": "RHY-S001-0001",
+                              "orthanc_study_id": "orth-1"}
+
+    async def fetch_study_ids(self, study_uid):
+        self.study_lookups = getattr(self, "study_lookups", []) + [study_uid]
+        return self.study_ids
+
 
 def _manager(tmp_path, *, profile="rhythm", rhythm_configured=True, retain_days=None):
     storage = {
@@ -385,6 +393,110 @@ class TestReconcile:
         asyncio.run(sm.reconcile_rhythm_jobs())
 
         assert fake.job_checks == []
+
+
+class TestRhythmIds:
+    """RHYTHM's Repository Study ID is captured and every attempt is kept."""
+
+    def test_complete_records_repository_study_id(self, tmp_path):
+        sm = _manager(tmp_path, retain_days=30)
+        fake = FakeRhythm(job_result=RhythmUploadResult(ok=True, status="COMPLETE"))
+        sm.rhythm_storage = fake
+        sc = TestReconcile()._study_with_pending_job(sm)
+
+        asyncio.run(sm.reconcile_rhythm_jobs())
+
+        sc = sm.find_sidecar_by_number(1)
+        assert fake.study_lookups == [sc.anonymized_study_uid]
+        assert sc.rhythm_repository_study_id == "RHY-S001-0001"
+        assert sc.rhythm_orthanc_study_id == "orth-1"
+        assert sc.rhythm_uploads[-1]["repository_study_id"] == "RHY-S001-0001"
+        assert sc.rhythm_uploads[-1]["status"] == "COMPLETE"
+
+    def test_failed_lookup_is_backfilled_later(self, tmp_path):
+        sm = _manager(tmp_path, retain_days=30)
+        fake = FakeRhythm(job_result=RhythmUploadResult(ok=True, status="COMPLETE"))
+        fake.study_ids = None
+        sm.rhythm_storage = fake
+        TestReconcile()._study_with_pending_job(sm)
+
+        asyncio.run(sm.reconcile_rhythm_jobs())
+        sc = sm.find_sidecar_by_number(1)
+        assert sc.status == "archived"           # archiving doesn't wait for the id
+        assert sc.rhythm_repository_study_id is None
+
+        asyncio.run(sm.reconcile_rhythm_jobs())  # within the retry interval
+        assert len(fake.study_lookups) == 1
+
+        sm._rhythm_id_attempts.clear()           # interval elapsed
+        fake.study_ids = {"repository_study_id": "RHY-9", "orthanc_study_id": None}
+        asyncio.run(sm.reconcile_rhythm_jobs())
+        assert sm.find_sidecar_by_number(1).rhythm_repository_study_id == "RHY-9"
+        assert fake.job_checks == ["/api/v1/uploads/job-1/"]   # job not re-polled
+
+    def test_each_attempt_kept_in_history(self, tmp_path):
+        sm = _manager(tmp_path)
+        sc = register_study(sm, 1, "ready")
+        uid = sc.original_study_uid
+        sm.study_manager.set_rhythm_job(uid, batch="b1", job_id="j1", status="uploaded")
+        sm.study_manager.set_rhythm_job(uid, status="FAILED")
+        sm.study_manager.set_rhythm_job(uid, batch="b2", job_id="j2", status="uploaded")
+        sm.study_manager.set_rhythm_job(uid, status="COMPLETE", repository_study_id="R2")
+
+        sc = sm.find_sidecar_by_number(1)
+        assert [(u["batch"], u["job_id"], u["status"], u["repository_study_id"])
+                for u in sc.rhythm_uploads] == [
+            ("b1", "j1", "FAILED", None), ("b2", "j2", "COMPLETE", "R2")]
+        assert sc.rhythm_job_id == "j2"
+
+    def test_legacy_sidecar_history_is_seeded(self, tmp_path):
+        sm = _manager(tmp_path)
+        sc = register_study(sm, 1, "ready")
+        live = sm.study_manager._sidecars[sc.original_study_uid]
+        live.rhythm_batch, live.rhythm_job_id, live.rhythm_status = "old", "j0", "uploaded"
+        sm.study_manager.set_rhythm_job(sc.original_study_uid, status="COMPLETE")
+        ups = sm.find_sidecar_by_number(1).rhythm_uploads
+        assert len(ups) == 1 and ups[0]["job_id"] == "j0" and ups[0]["status"] == "COMPLETE"
+
+
+class TestCorrespondence:
+    def test_lookup_survives_purge_and_matches_any_id(self, tmp_path):
+        from pixieveil.storage import correspondence
+
+        sm = _manager(tmp_path)              # no retention: purged at COMPLETE
+        sm.rhythm_storage = FakeRhythm(
+            job_result=RhythmUploadResult(ok=True, status="COMPLETE"))
+        sc = TestReconcile()._study_with_pending_job(sm)
+        other = register_study(sm, 2, "ready")   # another patient
+        other.original_patient_id, other.anonymized_study_uid = "pid-2", "anon-uid-2"
+        other.anonymized_patient_id = "anon-pid-2"
+        other.save(sm.base_path)
+        asyncio.run(sm.reconcile_rhythm_jobs())
+        assert not (sm.base_path / "0001").exists()
+
+        for q in (sc.original_patient_id, sc.original_study_uid,
+                  sc.anonymized_study_uid, "rhy-s001-0001", "job-1", "1"):
+            rows = correspondence.search(sm.base_path, q)
+            assert [r["study_number"] for r in rows] == [1], q
+        row = correspondence.search(sm.base_path, sc.original_patient_id)[0]
+        assert row["rhythm_repository_study_ids"] == ["RHY-S001-0001"]
+        assert row["purged_at"]
+        assert correspondence.search(sm.base_path, "") == []
+        # exact match only — a prefix must not sweep in other patients
+        assert correspondence.search(sm.base_path, sc.original_patient_id[:-1]) == []
+
+        csv_text = correspondence.to_csv(correspondence.all_rows(sm.base_path))
+        assert "RHY-S001-0001" in csv_text and csv_text.count("\n") == 3
+
+    def test_cli(self, tmp_path, capsys):
+        from pixieveil.storage import correspondence
+
+        sm = _manager(tmp_path)
+        sc = register_study(sm, 1, "ready")
+        assert correspondence.main([sc.original_patient_id,
+                                    "--base-path", str(sm.base_path)]) == 0
+        assert "Study 0001" in capsys.readouterr().out
+        assert correspondence.main(["nope", "--base-path", str(sm.base_path)]) == 1
 
 
 class TestBatch:

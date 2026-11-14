@@ -387,3 +387,44 @@ class TestCheckJob:
     def test_disabled_storage_short_circuits(self):
         r = asyncio.run(RhythmStorage(Settings()).check_job("/x/"))
         assert r.ok is False and "not configured" in r.error
+
+
+class TestFetchStudyIds:
+    """GET studies/<anonymized StudyInstanceUID>/ -> RHYTHM's identifiers."""
+
+    def _install(self, monkeypatch, status, body):
+        seen = []
+
+        class _Session:
+            def __init__(self, headers=None, timeout=None):
+                seen.append(("headers", headers))
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *a):
+                return False
+
+            def request(self, method, url, json=None):
+                seen.append((method, url))
+                return FakeResp(status, body)
+
+        monkeypatch.setattr(rhythm_storage_module.aiohttp, "ClientSession", _Session)
+        return seen
+
+    def test_reads_repository_and_orthanc_ids(self, monkeypatch):
+        seen = self._install(monkeypatch, 200, {
+            "pseudo_study_uid": "1.2.3", "patient_pseudo_id": "RHY-S001-0007",
+            "orthanc_study_id": "orth-7"})
+        ids = asyncio.run(make_storage().fetch_study_ids("1.2.3"))
+        assert ids == {"repository_study_id": "RHY-S001-0007", "orthanc_study_id": "orth-7"}
+        assert ("GET", "https://rhythm.example/api/v1/studies/1.2.3/") in seen
+        assert seen[0] == ("headers", {"Authorization": "Bearer tok-xyz"})
+
+    def test_not_found_is_none(self, monkeypatch):
+        self._install(monkeypatch, 404, {"error": "Study not found"})
+        assert asyncio.run(make_storage().fetch_study_ids("1.2.3")) is None
+
+    def test_unconfigured_never_calls(self, monkeypatch):
+        monkeypatch.setattr(rhythm_storage_module.aiohttp, "ClientSession", NeverCallSession)
+        assert asyncio.run(make_storage(auth_token="").fetch_study_ids("1.2.3")) is None

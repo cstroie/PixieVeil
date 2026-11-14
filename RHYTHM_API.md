@@ -128,6 +128,13 @@ completion-loop tick (`reconcile_rhythm_jobs`).
 RHYTHM; RHYTHM derives region, indication, contrast, protocol type, exam group and
 scanner from it), `image_quality`, and optional dose and patient numbers.
 
+**RHYTHM's ID for the study.** The job reply has no study id. Once a job is `COMPLETE`,
+PixieVeil calls `GET studies/<anonymized StudyInstanceUID>/` (RHYTHM stores our UID unchanged)
+and keeps `patient_pseudo_id` (the **Repository Study ID**) and `orthanc_study_id` on the study's
+`.state.json`. Look a patient up on **/lookup** (admin) or with
+`python -m pixieveil.storage.correspondence <PatientID>` to find the IDs an erasure request to
+RHYTHM must name.
+
 Other upload endpoints, not used yet:
 
 | Request | Purpose |

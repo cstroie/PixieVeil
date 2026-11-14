@@ -232,6 +232,13 @@ class TestAdmin:
                                        json={"username": "eve", "password": "password1"})).status)
         assert _run(_dash(tmp_path), script) == (302, 403, 403)
 
+    def test_lookup_is_admin_only(self, tmp_path):
+        async def script(client):
+            await _login(client)
+            page = await client.get("/lookup", allow_redirects=False)
+            return page.status, (await client.get("/api/lookup?q=pid")).status
+        assert _run(_dash(tmp_path), script) == (302, 403)
+
     def test_admin_manages_users(self, tmp_path):
         d = _dash(tmp_path)
         h = auth_headers(d)

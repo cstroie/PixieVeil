@@ -356,3 +356,27 @@ class TestEventsStream:
                 return rest, sm.events.subscriber_count
         rest, count = asyncio.run(go())
         assert rest == b"" and count == 0
+
+
+class TestLookup:
+    def test_search_csv_and_validation(self, tmp_path):
+        d = _dashboard(tmp_path)
+        sm = d.app["storage_manager"]
+        register_study(sm, 1, "archived", archived_via="rhythm")
+        sm.study_manager.set_rhythm_job("study-uid-1", batch="b1", job_id="j1",
+                                        status="COMPLETE", repository_study_id="RHY-1")
+        h = auth_headers(d)
+        (s1, found), (s2, none), (s3, _), (s4, csv_body), (s5, page) = _calls(
+            d,
+            ("GET", "/api/lookup?q=pid", {"headers": h}),
+            ("GET", "/api/lookup?q=other", {"headers": h}),
+            ("GET", "/api/lookup", {"headers": h}),
+            ("GET", "/api/lookup?all=1&format=csv", {"headers": h}),
+            ("GET", "/lookup", {"headers": h}),
+        )
+        assert s1 == 200 and [r["study_number"] for r in found["rows"]] == [1]
+        assert found["rows"][0]["rhythm_repository_study_ids"] == ["RHY-1"]
+        assert s2 == 200 and none["rows"] == []
+        assert s3 == 400
+        assert s4 == 200 and "RHY-1" in csv_body and "original_patient_id" in csv_body
+        assert s5 == 200 and "/api/lookup" in page

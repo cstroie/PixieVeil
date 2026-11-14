@@ -234,6 +234,8 @@ class StorageManager:
         # needing to translate between study_number and study_uid to guard
         # the other's operations.
         self._manual_actions_in_progress: set = set()
+        # study_number -> monotonic time of the last RHYTHM study-id lookup.
+        self._rhythm_id_attempts: dict[int, float] = {}
         # Active pipeline stage counters (thread-safe via self.lock)
         self._active_receiving: int = 0
         self._active_waiting: int = 0
@@ -2324,6 +2326,11 @@ class StorageManager:
             return
         for sc in StudySidecar.load_all(self.base_path).values():
             url = getattr(sc, "rhythm_job_status_url", None)
+            if sc.rhythm_status == "COMPLETE" and not sc.rhythm_repository_study_id:
+                # Backfill: COMPLETE before this existed, or the lookup
+                # failed last time. Retried at most once per interval.
+                await self._record_rhythm_study_ids(sc)
+                continue
             if not url or sc.rhythm_status in self._RHYTHM_TERMINAL:
                 continue
             if sc.study_number in self._manual_actions_in_progress:
@@ -2337,6 +2344,7 @@ class StorageManager:
                 sc.original_study_uid, status=result.status
             )
             if result.status == "COMPLETE":
+                await self._record_rhythm_study_ids(sc, force=True)
                 if sc.status != "archived":
                     await self._finalize_rhythm_export(sc)
             else:
@@ -2344,6 +2352,35 @@ class StorageManager:
                     "RHYTHM ingest for study %04d ended %s: %s",
                     sc.study_number, result.status, result.error_report,
                 )
+
+    RHYTHM_ID_RETRY_S = 3600
+
+    async def _record_rhythm_study_ids(self, sc: StudySidecar, *, force: bool = False) -> None:
+        """Fetch and store RHYTHM's Repository Study ID / Orthanc ID for a
+        COMPLETE study (the patient -> RHYTHM correspondence an erasure
+        request needs). Best-effort: a failure is logged and retried on a
+        later tick, at most once per RHYTHM_ID_RETRY_S."""
+        now = time.monotonic()
+        last = self._rhythm_id_attempts.get(sc.study_number)
+        if not force and last is not None and now - last < self.RHYTHM_ID_RETRY_S:
+            return
+        self._rhythm_id_attempts[sc.study_number] = now
+        ids = await self.rhythm_storage.fetch_study_ids(sc.anonymized_study_uid)
+        if not ids or not ids.get("repository_study_id"):
+            logger.warning(
+                "RHYTHM study %04d is COMPLETE but its Repository Study ID could not "
+                "be read yet (study UID %s); will retry", sc.study_number,
+                sc.anonymized_study_uid,
+            )
+            return
+        self._rhythm_id_attempts.pop(sc.study_number, None)
+        self.study_manager.set_rhythm_job(
+            sc.original_study_uid,
+            repository_study_id=ids["repository_study_id"],
+            orthanc_study_id=ids.get("orthanc_study_id"),
+        )
+        logger.info("RHYTHM study %04d -> Repository Study ID %s",
+                    sc.study_number, ids["repository_study_id"])
 
     async def _finalize_rhythm_export(self, sc: StudySidecar) -> None:
         """Archive a study whose RHYTHM job reached COMPLETE and start its
