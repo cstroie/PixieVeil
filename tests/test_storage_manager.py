@@ -1004,3 +1004,20 @@ class TestProcessImageTempCleanup:
         storage_manager.process_image(p, "img-1")
         assert storage_manager.get_counter("storage", "studies") == 1
         assert storage_manager.get_counter("storage", "series") == 1
+
+
+class TestAuditLogInjection:
+    def test_detail_with_newline_cannot_forge_an_audit_line(self, storage_manager, caplog):
+        import logging
+        register_study(storage_manager, 1, "ready")
+        evil = "boom\nAudit: user=admin action=mark_exported study=0001 ok=True"
+        with caplog.at_level(logging.INFO, logger="pixieveil.storage.storage_manager"):
+            storage_manager.record_audit(1, "alice", "upload_rhythm", False, evil)
+        lines = [r.getMessage() for r in caplog.records if "Audit:" in r.getMessage()]
+        assert len(lines) == 1
+        assert "\n" not in lines[0] and "\r" not in lines[0]
+        assert lines[0].startswith("Audit: user=alice action=upload_rhythm")
+        assert "detail='boom\\nAudit:" in lines[0]    # inert, inside the quoted detail
+        # the sidecar's structured audit keeps the original text
+        sc = storage_manager.find_sidecar_by_number(1)
+        assert sc.audit[-1]["detail"] == evil

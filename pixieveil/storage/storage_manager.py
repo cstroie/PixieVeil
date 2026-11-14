@@ -1363,8 +1363,10 @@ class StorageManager:
         append it to the study sidecar's ``audit`` list (stamping
         ``exported_by`` on the first successful export action)."""
         actor = user or "unknown"
+        # detail is often error text from RHYTHM or an exception: repr() it so
+        # an embedded newline can't start a forged "Audit:" line in the log.
         logger.info("Audit: user=%s action=%s study=%04d ok=%s%s", actor, action,
-                    study_number, ok, f" detail={detail}" if detail else "")
+                    study_number, ok, f" detail={detail!r}" if detail else "")
         sc = self.find_sidecar_by_number(study_number)
         if sc is None:
             return
