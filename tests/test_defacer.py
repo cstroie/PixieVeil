@@ -477,3 +477,22 @@ class TestAirFillValue:
     def test_no_air_voxels_falls_back_to_minus_1000(self):
         np = pytest.importorskip("numpy")
         assert Defacer._air_fill_value(np.array([0.0, 50.0, -3024.0])) == -1000.0
+
+
+class TestSafeUidStem:
+    """dicom_to_nifti names its output after the SeriesInstanceUID, a value
+    the C-STORE sender controls when a profile KEEPs it."""
+
+    def test_conformant_uid_unchanged(self):
+        from pixieveil.processing.defacer import _safe_uid_stem
+        assert _safe_uid_stem("1.2.840.113619.2.55") == "1.2.840.113619.2.55"
+
+    @pytest.mark.parametrize("uid", ["../../etc/cron.d/x", "/abs/path", "1.2\\..\\3",
+                                     "..", "...", "", None, ".1.2."])
+    def test_hostile_or_empty_uid_stays_inside_the_directory(self, tmp_path, uid):
+        from pixieveil.processing.defacer import _safe_uid_stem
+        stem = _safe_uid_stem(uid)
+        assert stem == "series" or set(stem) <= set("0123456789._")
+        assert ".." not in stem and not stem.startswith(".")
+        target = (tmp_path / f"{stem}_0000.nii.gz").resolve()
+        assert target.parent == tmp_path.resolve()

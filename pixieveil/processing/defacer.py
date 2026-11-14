@@ -43,6 +43,15 @@ class DefacingCancelled(Exception):
 _HEAD_BODY_PARTS = {"HEAD", "BRAIN", "NECK", "SKULL"}
 
 
+
+def _safe_uid_stem(uid: str) -> str:
+    """A filename stem for a DICOM UID. A conformant UI value is digits and
+    dots only, but the value is whatever the sender (or a KEEP profile)
+    put there — strip anything else so it can't add path separators, '..'
+    components or an absolute path to the NIfTI file name."""
+    stem = re.sub(r"[^0-9.]", "_", str(uid or "")).strip(".")
+    return stem.replace("..", "_") or "series"
+
 class Defacer:
     """DICOM defacing conversion utilities."""
 
@@ -651,7 +660,7 @@ class Defacer:
         reader.SetFileNames(fnames)
         image = reader.Execute()
 
-        nifti_path = output_path / f"{series_instance_uid}_0000.nii.gz"
+        nifti_path = output_path / f"{_safe_uid_stem(series_instance_uid)}_0000.nii.gz"
         sitk.WriteImage(image, str(nifti_path))
 
         logger.info("Converted DICOM to NIfTI: %s", nifti_path)
