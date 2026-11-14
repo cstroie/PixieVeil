@@ -121,6 +121,21 @@ class TestNumberMapIndex:
         sm.initialize_from_sidecars(tmp_path)
         assert sm.get_sidecar_by_number(5).original_study_uid == "restored-uid"
 
+    def test_new_series_after_restart_continues_above_restored_max(self, tmp_path):
+        sc = StudySidecar.create(
+            study_number=5, original_study_uid="restored-uid",
+            original_patient_id="pid", anonymized_study_uid="anon-uid",
+            anonymized_patient_id="anon-pid",
+        )
+        sc.add_series("s-a", 1, "anon-a")
+        sc.add_series("s-c", 3, "anon-c")
+        sc.save(tmp_path)
+
+        sm = StudyManager(Settings())
+        sm.initialize_from_sidecars(tmp_path)
+        assert sm.add_image_to_study("restored-uid", "s-new")[:2] == (5, 4)
+        assert sm.add_image_to_study("other-uid", "s-x")[1] == 1
+
 
 class TestCheckStudyCompletions:
     def test_study_not_yet_timed_out_is_not_completed(self, tmp_path):

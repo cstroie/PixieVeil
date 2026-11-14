@@ -50,6 +50,9 @@ class StudyManager:
         self.study_map: Dict[str, int] = {}                          # orig_study_uid → study_number
         self.number_map: Dict[int, str] = {}                         # study_number → orig_study_uid
         self.series_map: Dict[Tuple[str, str], Tuple[int, int]] = {} # (study_uid, series_uid) → (study_num, series_num)
+        # study_num → highest series_num assigned, so a new series doesn't
+        # scan every series of every study ever loaded.
+        self._max_series: Dict[int, int] = {}
         self.image_counters: Dict[Tuple[int, int], int] = {}         # (study_num, series_num) → image_count
 
         self.study_counter: int = 0
@@ -114,6 +117,8 @@ class StudyManager:
                     self.series_map[(study_uid, orig_series_uid)] = (
                         sc.study_number, rec.series_number
                     )
+                    self._max_series[sc.study_number] = max(
+                        self._max_series.get(sc.study_number, 0), rec.series_number)
 
                 # Restore image counters from the file system
                 study_dir = base_path / f"{sc.study_number:04d}"
@@ -178,11 +183,8 @@ class StudyManager:
             is_new_series = series_key not in self.series_map
 
             if is_new_series:
-                existing = [
-                    sn for (suid, _), (stnum, sn) in self.series_map.items()
-                    if stnum == study_number
-                ]
-                series_number = max(existing) + 1 if existing else 1
+                series_number = self._max_series.get(study_number, 0) + 1
+                self._max_series[study_number] = series_number
                 self.series_map[series_key] = (study_number, series_number)
                 logger.debug(
                     "New series %d assigned to %s in study %d",
