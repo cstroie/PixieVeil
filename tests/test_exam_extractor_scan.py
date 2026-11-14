@@ -75,7 +75,7 @@ class TestStudyLevelHeaders:
         assert scanned["model"] == "Emotion 16"
         assert scanned["protocol_name"] == "CAP_SPIRAL_NATIV"
         assert scanned["study_description"] == "Head^CAP_SPIRAL_NATIV"
-        assert scanned["series_records"]["3"]["series_description"] == "CEREBRAL 5.0 H31s"
+        assert scanned["series_records"]["0001"]["series_description"] == "CEREBRAL 5.0 H31s"
 
     def test_series_hints_follow_folder_not_series_number(self, tmp_path):
         """Scanner sent series out of order (seen on a SOMATOM go.All): the
@@ -89,8 +89,8 @@ class TestStudyLevelHeaders:
                             "2": {"series_description": "Topogram 0,70 Tr20 cor"}}}
         recs = make_extractor(tmp_path)._scan_dicom_files(study_dir, hints)["series_records"]
 
-        assert recs["1"]["series_description"] == "Topogram 0,70 Tr20 cor"
-        assert recs["2"]["series_description"] == "Torace Nativ 1,50 Br40"
+        assert recs["0002"]["series_description"] == "Topogram 0,70 Tr20 cor"
+        assert recs["0001"]["series_description"] == "Torace Nativ 1,50 Br40"
         assert all("_folder" not in r for r in recs.values())
 
     def test_real_header_wins_over_hint(self, tmp_path):
@@ -102,7 +102,7 @@ class TestStudyLevelHeaders:
                  "series": {"1": {"series_description": "from hint"}}}
         scanned = make_extractor(tmp_path)._scan_dicom_files(study_dir, hints)
         assert scanned["manufacturer"] == "ACME"
-        assert scanned["series_records"]["1"]["series_description"] == "from header"
+        assert scanned["series_records"]["0001"]["series_description"] == "from header"
 
     def test_contrast_bolus_agent_present_sets_contrast_seen(self, tmp_path):
         study_dir = tmp_path / "study"
@@ -177,7 +177,7 @@ class TestSeriesRecords:
         assert scanned["manufacturer"] == "ACME"
         assert scanned["series_records"] == {}
 
-    def test_ct_image_creates_series_record_keyed_by_series_number(self, tmp_path):
+    def test_ct_image_creates_series_record_keyed_by_folder(self, tmp_path):
         study_dir = tmp_path / "study"
         write_minimal_dicom(
             study_dir / "0001" / "img1.dcm",
@@ -185,18 +185,18 @@ class TestSeriesRecords:
         )
         scanned = make_extractor(tmp_path)._scan_dicom_files(study_dir)
 
-        assert set(scanned["series_records"].keys()) == {"7"}
-        rec = scanned["series_records"]["7"]
+        assert set(scanned["series_records"].keys()) == {"0001"}
+        rec = scanned["series_records"]["0001"]
         assert rec["series_number"] == 7
         assert rec["series_description"] == "Axial 5mm"
         assert rec["is_topogram"] is False
 
-    def test_missing_series_number_uses_question_mark_key(self, tmp_path):
+    def test_missing_series_number_kept_as_none(self, tmp_path):
         study_dir = tmp_path / "study"
         write_minimal_dicom(study_dir / "0001" / "img1.dcm", Modality="CT")
         scanned = make_extractor(tmp_path)._scan_dicom_files(study_dir)
-        assert set(scanned["series_records"].keys()) == {"?"}
-        assert scanned["series_records"]["?"]["series_number"] is None
+        assert set(scanned["series_records"].keys()) == {"0001"}
+        assert scanned["series_records"]["0001"]["series_number"] is None
 
     def test_localizer_image_type_flags_topogram(self, tmp_path):
         study_dir = tmp_path / "study"
@@ -206,7 +206,7 @@ class TestSeriesRecords:
             ImageType=["ORIGINAL", "PRIMARY", "LOCALIZER"],
         )
         scanned = make_extractor(tmp_path)._scan_dicom_files(study_dir)
-        assert scanned["series_records"]["1"]["is_topogram"] is True
+        assert scanned["series_records"]["0001"]["is_topogram"] is True
 
     def test_two_series_produce_two_records(self, tmp_path):
         study_dir = tmp_path / "study"
@@ -215,7 +215,46 @@ class TestSeriesRecords:
         write_minimal_dicom(study_dir / "0002" / "img1.dcm",
                              Modality="CT", SeriesNumber=2, SeriesDescription="Axial")
         scanned = make_extractor(tmp_path)._scan_dicom_files(study_dir)
-        assert set(scanned["series_records"].keys()) == {"1", "2"}
+        assert set(scanned["series_records"].keys()) == {"0001", "0002"}
+
+    def test_two_series_sharing_a_series_number_stay_separate(self, tmp_path):
+        """Distinct series (own folder / SeriesInstanceUID) that reuse one
+        SeriesNumber — e.g. a localizer and the axial run — must not merge:
+        a merge marks the axial run a topogram (no DLP) and unions z-extents."""
+        study_dir = tmp_path / "study"
+        write_minimal_dicom(study_dir / "0001" / "img1.dcm",
+                             Modality="CT", SeriesNumber=1, SeriesDescription="Topogram",
+                             ImageType=["ORIGINAL", "PRIMARY", "LOCALIZER"],
+                             ImagePositionPatient=[0.0, 0.0, 400.0])
+        for i, z in enumerate((0.0, 100.0)):
+            write_minimal_dicom(study_dir / "0002" / f"img{i}.dcm",
+                                 Modality="CT", SeriesNumber=1, SeriesDescription="Axial",
+                                 CTDIvol=10.0, SliceThickness=5.0,
+                                 ImagePositionPatient=[0.0, 0.0, z])
+        ex = make_extractor(tmp_path)
+        scanned = ex._scan_dicom_files(study_dir)
+        recs = sorted(scanned["series_records"].values(),
+                      key=lambda r: r["series_description"])
+        assert [r["series_description"] for r in recs] == ["Axial", "Topogram"]
+        axial, topo = recs
+        assert axial["is_topogram"] is False and topo["is_topogram"] is True
+        assert (axial["z_min_mm"], axial["z_max_mm"]) == (0.0, 100.0)
+
+        series, _ = ex._build_series_list(scanned["series_records"])
+        assert [s["series_number"] for s in series] == [1, 1]
+        by_desc = {s["series_description"]: s for s in series}
+        assert by_desc["Axial"]["dlp_mgy_cm"] == 105.0   # 10 × (100 + 5) mm
+        assert by_desc["Topogram"]["dlp_mgy_cm"] is None
+
+    def test_series_without_series_number_stay_separate(self, tmp_path):
+        study_dir = tmp_path / "study"
+        write_minimal_dicom(study_dir / "0001" / "img1.dcm",
+                             Modality="CT", SeriesDescription="A")
+        write_minimal_dicom(study_dir / "0002" / "img1.dcm",
+                             Modality="CT", SeriesDescription="B")
+        scanned = make_extractor(tmp_path)._scan_dicom_files(study_dir)
+        assert sorted(r["series_description"]
+                      for r in scanned["series_records"].values()) == ["A", "B"]
 
     def test_ctdivol_tracks_maximum_within_a_series(self, tmp_path):
         # Order-independent by construction: whichever file the OS hands
@@ -226,7 +265,7 @@ class TestSeriesRecords:
         write_minimal_dicom(study_dir / "0001" / "img2.dcm",
                              Modality="CT", SeriesNumber=1, CTDIvol=8.0)
         scanned = make_extractor(tmp_path)._scan_dicom_files(study_dir)
-        assert scanned["series_records"]["1"]["ctdi_vol_mgy"] == 8.0
+        assert scanned["series_records"]["0001"]["ctdi_vol_mgy"] == 8.0
 
     def test_z_position_tracks_min_and_max_within_a_series(self, tmp_path):
         study_dir = tmp_path / "study"
@@ -237,7 +276,7 @@ class TestSeriesRecords:
                              Modality="CT", SeriesNumber=1,
                              ImagePositionPatient=[0.0, 0.0, -10.0])
         scanned = make_extractor(tmp_path)._scan_dicom_files(study_dir)
-        rec = scanned["series_records"]["1"]
+        rec = scanned["series_records"]["0001"]
         assert rec["z_min_mm"] == -10.0
         assert rec["z_max_mm"] == 30.0
 
@@ -252,7 +291,7 @@ class TestSeriesRecords:
             SpiralPitchFactor=0.9,
         )
         scanned = make_extractor(tmp_path)._scan_dicom_files(study_dir)
-        rec = scanned["series_records"]["1"]
+        rec = scanned["series_records"]["0001"]
         assert rec["slice_thickness_mm"] == 5.0
         assert rec["exposure_time_ms"] == 800.0
         assert rec["patient_position"] == "HFS"
@@ -267,7 +306,7 @@ class TestSeriesRecords:
             Modality="CT", SeriesNumber=1, ConvolutionKernel=["B", "70f"],
         )
         scanned = make_extractor(tmp_path)._scan_dicom_files(study_dir)
-        assert scanned["series_records"]["1"]["convolution_kernel"] == "B/70f"
+        assert scanned["series_records"]["0001"]["convolution_kernel"] == "B/70f"
 
 
 class TestRdsrDetection:

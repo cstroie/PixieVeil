@@ -43,6 +43,16 @@ class TestApplyManual:
         assert out["series"][0]["dlp_mgy_cm"] is None
         assert any("series 99" in n for n in out["notes"])
 
+    def test_series_field_with_ambiguous_series_number_is_dropped_with_note(self):
+        # Two distinct series sharing SeriesNumber 1: the edit can't say
+        # which one it meant, so neither gets it.
+        data = {"series": [{"series_number": 1, "dlp_mgy_cm": None},
+                           {"series_number": 1, "dlp_mgy_cm": 7.0}], "notes": []}
+        manual = {"edited_at": "t", "fields": {"series.1.dlp_mgy_cm": 55.0}}
+        out = exam_merge.apply_manual(data, manual)
+        assert [s["dlp_mgy_cm"] for s in out["series"]] == [None, 7.0]
+        assert any("series 1" in n and "ambiguous" in n for n in out["notes"])
+
     def test_unknown_path_is_ignored_not_written(self):
         data = {}
         manual = {"edited_at": "t", "fields": {"totally.unknown.path": "x"}}

@@ -618,8 +618,12 @@
                     </tbody></table></div>`
                 : `<div class="callout">${icon('info')}<div>No RDSR dose record in this study.</div></div>`;
 
+            // A SeriesNumber shared by several series can't address one of
+            // them; the server discards such edits, so don't offer them.
+            const numCount = {};
+            series.forEach(s => { numCount[s.series_number] = (numCount[s.series_number] || 0) + 1; });
             const seriesRows = series.map(s => {
-                const editable = s.series_number != null;
+                const editable = s.series_number != null && numCount[s.series_number] === 1;
                 const edited = editable && SERIES_FIELDS.some(([leaf]) => isManual(`series.${s.series_number}.${leaf}`));
                 const main = `<tr class="${edited ? 'is-edited' : ''}">
                     <td class="mono">${esc(s.series_number ?? '?')}</td>

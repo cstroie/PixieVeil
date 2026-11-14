@@ -454,7 +454,11 @@ class ExamExtractor:
                 continue
 
             series_number = getattr(ds, "SeriesNumber", None)
-            key = str(series_number) if series_number is not None else "?"
+            # Keyed by local folder — one per SeriesInstanceUID — not by
+            # SeriesNumber: scanners reuse a number (a localizer and the
+            # axial run, recons) or omit it, and merging distinct series
+            # unions their z-extents and spreads a topogram flag.
+            key = f.parent.relative_to(study_dir).as_posix()
             rec = series_records.setdefault(key, {
                 # Local storage folder (<study>/<NNNN>/, numbered by arrival
                 # order) — the key the pre-anonymization hints use. Not the
@@ -562,11 +566,12 @@ class ExamExtractor:
         "series[*].dlp_mgy_cm is an estimate" note in extract().
         """
         sorted_records = sorted(
-            series_records.values(), key=lambda r: (r["series_number"] is None, r["series_number"])
+            series_records.items(),
+            key=lambda kv: (kv[1]["series_number"] is None, kv[1]["series_number"] or 0, kv[0]),
         )
         series_list = []
         any_estimated_dlp = False
-        for rec in sorted_records:
+        for _key, rec in sorted_records:
             estimated_dlp = _estimate_series_dlp(rec)
             if estimated_dlp is not None:
                 any_estimated_dlp = True

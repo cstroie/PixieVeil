@@ -185,16 +185,19 @@ def apply_manual(data: dict, manual: dict[str, Any]) -> dict:
         series_path = _is_series_path(path)
         if series_path is not None:
             series_number, leaf = series_path
-            target = next(
-                (s for s in data.get("series") or [] if s.get("series_number") == series_number),
-                None,
-            )
-            if target is None:
-                note = f"manual field for series {series_number} has no matching series — discarded"
+            targets = [s for s in data.get("series") or []
+                       if s.get("series_number") == series_number]
+            if len(targets) != 1:
+                if targets:
+                    note = (f"manual field for series {series_number} is ambiguous — "
+                            f"{len(targets)} series share that number — discarded")
+                else:
+                    note = (f"manual field for series {series_number} has no matching "
+                            "series — discarded")
                 if note not in notes:
                     notes.append(note)
                 continue
-            target[leaf] = value
+            targets[0][leaf] = value
             continue
 
         if path not in _SIMPLE_PATHS:
