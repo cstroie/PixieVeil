@@ -1583,10 +1583,11 @@ class StorageManager:
         return counts
 
     def list_studies_summary_sync(self) -> List[dict]:
-        """Blocking: enumerate every study sidecar plus its exam sidecar, if any."""
-        sidecars = StudySidecar.load_all(self.base_path)
+        """Blocking: every study (from the in-memory sidecars — only scalar
+        fields are copied out, so the live objects are never shared) plus its
+        exam sidecar, read from disk, if any."""
         results = []
-        for sc in sorted(sidecars.values(), key=lambda s: s.study_number):
+        for sc in sorted(self.study_manager.all_sidecars(), key=lambda s: s.study_number):
             _dir, location = self.resolve_study_dir(sc.study_number)
             entry = self._whitelist_sidecar(sc, location)
 

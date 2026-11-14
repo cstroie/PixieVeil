@@ -96,6 +96,20 @@ class TestListStudiesSummarySync:
         assert results[0]["exam_summary"] is None
         assert results[0]["exam_corrupt"] is False
 
+    def test_list_comes_from_memory_not_disk_in_number_order(self, storage_manager,
+                                                            monkeypatch):
+        from pixieveil.storage.study_sidecar import StudySidecar
+        register_study(storage_manager, 2, "archived", archived_via="dicom")
+        register_study(storage_manager, 1, "ready")
+
+        def no_disk_scan(*a, **k):
+            raise AssertionError("study list must not re-read every sidecar")
+        monkeypatch.setattr(StudySidecar, "load_all", classmethod(no_disk_scan))
+
+        results = storage_manager.list_studies_summary_sync()
+        assert [(r["study_number"], r["status"]) for r in results] == [
+            (1, "ready"), (2, "archived")]
+
     def test_study_with_valid_exam_sidecar_is_not_corrupt(self, storage_manager):
         register_study(storage_manager, 1, "ready")
         ExamSidecar(1, {
