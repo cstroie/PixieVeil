@@ -14,30 +14,36 @@
 # Usernames: 2-32 chars, lowercase letters, digits, '.', '_' or '-'.
 # Passwords: at least 8 characters.
 
-users:
-  # A new admin, written by hand. Only `password` is required; `admin`
-  # defaults to false and `disabled` to false.
-  alice:
-    password: "change-me-now"
-    admin: true
+# Every entry below is commented out: copying this file as-is must not
+# create a login with a password published here. To add a user by hand,
+# change `users: {}` to `users:`, uncomment an entry, pick your own
+# password, then start the server (or just use the CLI / setup wizard).
 
-  # A new regular user.
-  bob:
-    password: "another-secret"
+users: {}
 
-  # What an entry looks like once the server (or the CLI) has processed it.
-  # Don't write these fields by hand, except `admin` / `disabled`, which
-  # you can toggle here.
-  carol:
-    password_hash: "scrypt$16384$8$1$<salt-base64>$<hash-base64>"
-    admin: false
-    disabled: false          # true = cannot log in, API tokens stop working
-    created_at: "2026-11-13T10:00:00+00:00"
-    last_login: null
-    session_version: 1       # bumped to log the user out everywhere
-    tokens:                  # API tokens: create with `token-add`, never by hand
-      - id: "a1b2c3d4"
-        name: "export watcher"
-        hash: "<sha256-hex-of-secret>"
-        created_at: "2026-11-13T10:05:00+00:00"
-        last_used: null
+# # A new admin, written by hand. Only `password` is required; `admin`
+# # defaults to false and `disabled` to false.
+#   alice:
+#     password: "change-me-now"
+#     admin: true
+#
+# # A new regular user.
+#   bob:
+#     password: "another-secret"
+#
+# # What an entry looks like once the server (or the CLI) has processed it.
+# # Don't write these fields by hand, except `admin` / `disabled`, which
+# # you can toggle here.
+#   carol:
+#     password_hash: "scrypt$16384$8$1$<salt-base64>$<hash-base64>"
+#     admin: false
+#     disabled: false          # true = cannot log in, API tokens stop working
+#     created_at: "2026-11-13T10:00:00+00:00"
+#     last_login: null
+#     session_version: 1       # bumped to log the user out everywhere
+#     tokens:                  # API tokens: create with `token-add`, never by hand
+#       - id: "a1b2c3d4"
+#         name: "export watcher"
+#         hash: "<sha256-hex-of-secret>"
+#         created_at: "2026-11-13T10:05:00+00:00"
+#         last_used: null

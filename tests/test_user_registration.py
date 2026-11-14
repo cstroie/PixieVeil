@@ -432,7 +432,15 @@ class TestHandEditedYaml:
     def test_shipped_example_file(self, tmp_path):
         f = _users_file(tmp_path)
         f.parent.mkdir(parents=True)
-        f.write_text((REPO / "config" / "users.example.yaml").read_text())
+        example = (REPO / "config" / "users.example.yaml").read_text()
+        # Copied verbatim it must create no user at all (no published
+        # default login); the first-run wizard then takes over.
+        f.write_text(example)
+        assert UserStore(f).list_users() == []
+        # Uncommenting the documented entries works as described.
+        import re
+        body = example.split("users: {}", 1)[1]
+        f.write_text("users:\n" + re.sub(r"(?m)^# ?", "", body))
         store = UserStore(f)
         assert {u.username for u in store.list_users()} == {"alice", "bob", "carol"}
         assert store.authenticate("alice", "change-me-now").admin
