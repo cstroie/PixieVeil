@@ -1598,10 +1598,14 @@ class StorageManager:
         study_dir, _loc = self.resolve_study_dir(study_number)
         if study_dir is not None:
             hints = (self._load_exam_hints_sync(study_dir) or {}).get("study") or {}
-            for k in ("Manufacturer", "ManufacturerModelName", "ProtocolName",
-                      "StudyDescription"):
-                if hints.get(k):
-                    headers[k] = hints[k]
+            # .exam_hints.json uses _EXAM_HINT_STUDY_KEYS (lowercase), not
+            # DICOM keywords; map them onto the header names the drafter reads.
+            for hint_key, tag in (("manufacturer", "Manufacturer"),
+                                  ("model", "ManufacturerModelName"),
+                                  ("protocol_name", "ProtocolName"),
+                                  ("study_description", "StudyDescription")):
+                if hints.get(hint_key):
+                    headers[tag] = hints[hint_key]
             for series_dir in sorted(p for p in study_dir.iterdir()
                                      if p.is_dir() and not p.name.endswith("_pre_deface")):
                 first = next(iter(sorted(series_dir.glob("*.dcm"))), None)

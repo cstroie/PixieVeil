@@ -12,6 +12,8 @@ import json
 import os
 import time
 
+import pytest
+
 from pydicom.uid import (
     CTImageStorage,
     SecondaryCaptureImageStorage,
@@ -1013,3 +1015,96 @@ class TestMarkExported:
         assert r["ok"] is True
         assert "sha256 mismatch" in r["warning"]
         assert sm.find_sidecar_by_number(1).status == "archived"
+
+
+class TestProtocolDraftInputs:
+    """protocol_draft_inputs_sync's on-disk path: which image's headers feed
+    "Draft protocol from study", and the pre-anonymization hint fallback."""
+
+    def _sm(self, tmp_path):
+        sm = _manager(tmp_path)
+        register_study(sm, 1, "ready")
+        from pixieveil.storage.exam_sidecar import ExamSidecar
+        ExamSidecar(1, dict(EXAM_OK)).save(sm.base_path)
+        return sm, sm.base_path / "0001"
+
+    def test_no_exam_record_returns_none(self, tmp_path):
+        sm = _manager(tmp_path)
+        register_study(sm, 1, "ready")
+        assert sm.protocol_draft_inputs_sync(1) is None
+
+    def test_purged_study_gives_exam_and_no_headers(self, tmp_path):
+        sm, study_dir = self._sm(tmp_path)
+        exam, headers = sm.protocol_draft_inputs_sync(1)
+        assert exam["image_quality"] == EXAM_OK["image_quality"]
+        assert headers == {}
+
+    def test_headers_come_from_first_diagnostic_ct_series(self, tmp_path):
+        sm, d = self._sm(tmp_path)
+        # 0001: topogram — skipped (LOCALIZER)
+        write_minimal_dicom(d / "0001" / "a.dcm", SOPClassUID=CTImageStorage,
+                            ImageType=["ORIGINAL", "PRIMARY", "LOCALIZER"], KVP="120")
+        # 0002: Dose Report screen capture — skipped (not CT)
+        write_minimal_dicom(d / "0002" / "a.dcm", SOPClassUID=SecondaryCaptureImageStorage,
+                            KVP="999")
+        # 0003: unreadable — skipped, not fatal
+        (d / "0003").mkdir()
+        (d / "0003" / "a.dcm").write_bytes(b"not dicom")
+        # 0004: empty series folder — skipped
+        (d / "0004").mkdir()
+        # 0005_pre_deface: defacing backup — never read
+        write_minimal_dicom(d / "0005_pre_deface" / "a.dcm", SOPClassUID=CTImageStorage,
+                            KVP="70")
+        # 0006: the diagnostic series — wins; only its *first* file is read
+        write_minimal_dicom(d / "0006" / "a.dcm", SOPClassUID=CTImageStorage,
+                            ImageType=["ORIGINAL", "PRIMARY", "AXIAL"],
+                            KVP="100", ConvolutionKernel="Br40", SliceThickness="1.5",
+                            ContrastBolusAgent="")
+        write_minimal_dicom(d / "0006" / "b.dcm", SOPClassUID=CTImageStorage, KVP="140")
+        # 0007: a later CT series — not reached (first one wins)
+        write_minimal_dicom(d / "0007" / "a.dcm", SOPClassUID=CTImageStorage, KVP="80")
+
+        _exam, headers = sm.protocol_draft_inputs_sync(1)
+
+        assert headers["KVP"] == "100"
+        assert headers["ConvolutionKernel"] == "Br40"
+        assert headers["SliceThickness"] == "1.5"
+        assert "ContrastBolusAgent" not in headers      # blank values dropped
+        assert "SpiralPitchFactor" not in headers       # absent tags dropped
+
+    @pytest.mark.filterwarnings("ignore:Invalid value for VR CS")
+    def test_only_localizers_gives_no_technique_headers(self, tmp_path):
+        sm, d = self._sm(tmp_path)
+        write_minimal_dicom(d / "0001" / "a.dcm", SOPClassUID=CTImageStorage,
+                            ImageType=["ORIGINAL", "PRIMARY", "localizer"], KVP="120")
+        _exam, headers = sm.protocol_draft_inputs_sync(1)
+        assert "KVP" not in headers                     # case-insensitive skip
+
+    def test_pre_anonymization_hints_fill_scanner_and_protocol(self, tmp_path):
+        # Under the rhythm profile these tags are stripped from the images;
+        # the hints file (as StorageManager writes it) is the only source.
+        sm, d = self._sm(tmp_path)
+        d.mkdir(parents=True, exist_ok=True)
+        sm._flush_exam_hints_sync(d, {
+            "study": {"manufacturer": "SIEMENS", "model": "SOMATOM go.All",
+                      "protocol_name": "Head Routine",
+                      "study_description": "Head^HeadRoutine (Adult)"},
+            "series": {},
+        })
+        write_minimal_dicom(d / "0001" / "a.dcm", SOPClassUID=CTImageStorage, KVP="120")
+
+        _exam, headers = sm.protocol_draft_inputs_sync(1)
+
+        assert headers["Manufacturer"] == "SIEMENS"
+        assert headers["ManufacturerModelName"] == "SOMATOM go.All"
+        assert headers["ProtocolName"] == "Head Routine"
+        assert headers["StudyDescription"] == "Head^HeadRoutine (Adult)"
+        assert headers["KVP"] == "120"
+
+    def test_corrupt_hints_file_is_ignored(self, tmp_path):
+        sm, d = self._sm(tmp_path)
+        d.mkdir(parents=True, exist_ok=True)
+        (d / ".exam_hints.json").write_text("{not json")
+        write_minimal_dicom(d / "0001" / "a.dcm", SOPClassUID=CTImageStorage, KVP="120")
+        _exam, headers = sm.protocol_draft_inputs_sync(1)
+        assert headers == {"KVP": "120"}
