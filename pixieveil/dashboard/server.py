@@ -1271,7 +1271,7 @@ class Dashboard:
         - ``details``: every other counter, grouped, for the collapsible drawer
         """
         sm: StorageManager = request.app['storage_manager']
-        status_counts = await asyncio.to_thread(sm.get_status_counts_sync)
+        status_counts = sm.get_status_counts_sync()
 
         def c(category: str, sub: str) -> Any:
             return sm.get_counter(category, sub, 0)

@@ -1573,9 +1573,11 @@ class StorageManager:
     )
 
     def get_status_counts_sync(self) -> dict:
-        """Blocking: count studies per sidecar status (unknown statuses under 'other')."""
+        """Count studies per sidecar status (unknown statuses under 'other').
+        In-memory (StudyManager.all_sidecars()), so cheap enough to call on
+        the event loop."""
         counts = dict.fromkeys(self._STUDY_STATUSES, 0)
-        for sc in StudySidecar.load_all(self.base_path).values():
+        for sc in self.study_manager.all_sidecars():
             key = sc.status if sc.status in counts else "other"
             counts[key] = counts.get(key, 0) + 1
         return counts

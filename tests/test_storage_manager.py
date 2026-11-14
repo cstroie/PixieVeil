@@ -793,6 +793,18 @@ class TestStatusCountsAndExamSummary:
                           "defacing_failed": 0, "defacing_disabled": 0,
                           "ready": 2, "archived": 1}
 
+    def test_status_counts_come_from_memory_not_disk(self, storage_manager, monkeypatch):
+        from pixieveil.storage.study_sidecar import StudySidecar
+        register_study(storage_manager, 1, "ready")
+
+        def no_disk_scan(*a, **k):
+            raise AssertionError("status counts must not re-read every sidecar")
+        monkeypatch.setattr(StudySidecar, "load_all", classmethod(no_disk_scan))
+
+        assert storage_manager.get_status_counts_sync()["ready"] == 1
+        storage_manager.study_manager.mark_study_archived("study-uid-1", via="dicom")
+        assert storage_manager.get_status_counts_sync()["archived"] == 1
+
     def test_exam_summary_reports_missing_fields_and_completeness(self):
         summary = StorageManager._exam_summary({
             "image_quality": None,
