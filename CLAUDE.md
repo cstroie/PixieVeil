@@ -82,7 +82,7 @@ logic — arcname layout, `_pre_deface` exclusion, the default-vs-explicit
 `source_dir` split, empty/missing-source-dir
 edge cases), `RemoteStorage` (config resolution and the HTTP upload
 path against a small fake `aiohttp.ClientSession`/response substituted with
-`monkeypatch` — never a real HTTP request), the RHYTHM export path
+`monkeypatch` — never a real HTTP request; `tests/test_remote_storage_loopback.py` additionally posts to a real in-process aiohttp server on 127.0.0.1 to check the multipart body, auth header and 2xx handling the fake can't see), the RHYTHM export path
 (`rhythm_manifest`'s pure item builder + `manifest_item_blockers`;
 the protocol catalog (`tests/test_protocol_catalog.py`: validation, exact/
 StudyDescription-fallback/wildcard matching, versioned save, legacy migration,

@@ -9,6 +9,8 @@ Classes:
 """
 
 import logging
+import asyncio
+
 import aiohttp
 from pathlib import Path
 from typing import Dict, Any, Optional
@@ -43,7 +45,7 @@ class RemoteStorage:
         """
         self.settings = settings
         http_cfg = settings.storage.get("remote_storage", {}).get("http", {})
-        self.base_url = http_cfg.get("base_url")
+        self.base_url = (http_cfg.get("base_url") or "").rstrip("/") or None
         self.auth_token = http_cfg.get("auth_token")
         # Mirrors DicomStorage.enabled so callers can check configuration up
         # front instead of relying on upload_file's tri-state None return.
@@ -78,8 +80,8 @@ class RemoteStorage:
                 logger.error(f"File not found for upload: {file_path}")
                 return False
             
-            with open(file_path, "rb") as file_handle:
-                file_content = file_handle.read()
+            # Off the event loop: export ZIPs run to hundreds of MB.
+            file_content = await asyncio.to_thread(file_path.read_bytes)
 
             async with aiohttp.ClientSession() as session:
                 # Use FormData for multipart file upload
@@ -95,9 +97,12 @@ class RemoteStorage:
                 async with session.post(
                     f"{self.base_url}/upload",
                     data=form_data,
-                    headers={"Authorization": f"Bearer {self.auth_token}"}
+                    # No token configured → no header (not "Bearer None").
+                    headers=({"Authorization": f"Bearer {self.auth_token}"}
+                             if self.auth_token else {}),
                 ) as response:
-                    if response.status == 200:
+                    # Any 2xx: upload endpoints commonly answer 201 Created.
+                    if 200 <= response.status < 300:
                         logger.info(f"Successfully uploaded {file_path} to {remote_path}")
                         return True
                     else:
