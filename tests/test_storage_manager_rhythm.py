@@ -891,6 +891,21 @@ class TestPrepareExportArtifacts:
         assert any("rhythm' profile" in b for b in blockers)
         assert sm._prepare_export_artifacts_sync(1) is False
 
+    def test_blocked_when_only_a_later_series_is_not_rhythm_anonymized(self, tmp_path):
+        # Series 0001 clean, series 0002 still carries device identity:
+        # every CT series must be checked, not just the first.
+        sm = _manager(tmp_path)
+        register_study(sm, 1, "ready")
+        write_minimal_dicom(sm.base_path / "0001" / "0001" / "img.dcm",
+                            SOPClassUID=CTImageStorage)
+        write_minimal_dicom(sm.base_path / "0001" / "0002" / "img.dcm",
+                            SOPClassUID=CTImageStorage, StationName="CTAWP1")
+        from pixieveil.storage.exam_sidecar import ExamSidecar
+        ExamSidecar(1, dict(EXAM_OK)).save(sm.base_path)
+
+        _item, blockers = sm._export_data_blockers_sync(1)
+        assert any("rhythm' profile" in b for b in blockers)
+
     def test_stale_artifacts_removed_when_study_stops_qualifying(self, tmp_path):
         sm = _manager(tmp_path)
         _ready_study(sm)

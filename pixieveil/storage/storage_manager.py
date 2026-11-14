@@ -1855,10 +1855,11 @@ class StorageManager:
                 continue
             if str(getattr(ds, "SOPClassUID", "")) not in self._RHYTHM_CT_SOP_CLASSES:
                 continue
-            return not any(
-                str(getattr(ds, kw, "") or "").strip()
-                for kw in self._RHYTHM_STRIPPED_SENTINELS
-            )
+            # Check every CT series, not just the first: series of one
+            # study can have been anonymized under different profiles.
+            if any(str(getattr(ds, kw, "") or "").strip()
+                   for kw in self._RHYTHM_STRIPPED_SENTINELS):
+                return False
         return True
 
     def _rhythm_manifest_item_sync(
