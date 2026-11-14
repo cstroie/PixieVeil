@@ -13,9 +13,10 @@ license = "GPL-3.0"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "pynetdicom>=2.0.0",
-    "pydicom>=2.0.0",
-    "aiohttp>=3.0.0",
+    "pynetdicom>=3.0.4",
+    "pydicom>=3.0.2",       # save_as(enforce_file_format=...) is 3.x-only
+    "aiohttp>=3.14.4",      # GHSA-2g87-pp6c-29x5 et al. (dashboard server DoS)
+    "multidict>=6.9.1",    # GHSA-54p9-h82j-f925 (aiohttp dependency)
     "pydantic>=2.0.0",
     "pyyaml>=6.0"
 ]
@@ -26,6 +27,10 @@ deface = [
     "nibabel>=4.0.0",
     "numpy>=1.21.0",
     "gdown>=5.0.0",
+    # Model weights are fetched over HTTPS and then torch.load()ed: keep the
+    # CA bundle and HTTP stack patched (GHSA-6q48-6c7w-9gw2, GHSA-8988-9cw3-xx77).
+    "certifi>=2026.10.18",
+    "urllib3>=2.8.0",
     "nnunetv2"
 ]
 test = [
