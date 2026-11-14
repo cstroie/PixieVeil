@@ -111,7 +111,7 @@ def search(base_path: Path, query: str) -> list[dict]:
     return [r for r in rows if r["study_number"] == int(q)]
 
 
-_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r", "\n")
 
 
 def _csv_cell(value: object) -> object:
@@ -119,7 +119,8 @@ def _csv_cell(value: object) -> object:
     from DICOM any C-STORE peer can send, and a cell starting with = + - @
     (or tab/CR) is evaluated when the CSV is opened in Excel/LibreOffice.
     Prefixing a quote keeps the text readable but inert."""
-    if isinstance(value, str) and value.startswith(_FORMULA_PREFIXES):
+    # lstrip: spreadsheets also evaluate " =..." (leading blanks skipped).
+    if isinstance(value, str) and value.lstrip(" ").startswith(_FORMULA_PREFIXES):
         return "'" + value
     return value
 
