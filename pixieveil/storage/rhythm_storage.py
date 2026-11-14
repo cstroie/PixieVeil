@@ -69,6 +69,12 @@ class RhythmUploadResult:
     error_report: Any = None
 
 
+def _read_and_hash(fh, size: int) -> tuple[bytes, str]:
+    """Read up to *size* bytes from *fh* and return them with their sha256."""
+    data = fh.read(size)
+    return data, hashlib.sha256(data).hexdigest()
+
+
 class RhythmStorage:
     """Uploads a study ZIP to the RHYTHM CT upload platform (v2 batch API)."""
 
@@ -330,10 +336,12 @@ class RhythmStorage:
 
         with open(zip_path, "rb") as fh:
             for chunk_number in range(total_chunks):
-                data = await asyncio.to_thread(fh.read, self.chunk_size)
+                # Read + hash in the worker: hashing a 10 MiB chunk on the
+                # event loop stalls every request for tens of ms per chunk.
+                data, chunk_hash = await asyncio.to_thread(
+                    _read_and_hash, fh, self.chunk_size)
                 if not data:
                     break
-                chunk_hash = hashlib.sha256(data).hexdigest()
                 err = await self._send_one_chunk(
                     session, url, chunk_number, chunk_hash, data
                 )
