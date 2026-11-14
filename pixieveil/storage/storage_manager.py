@@ -63,6 +63,29 @@ def _format_dicom_age(age_years: float) -> str:
     return f"{int(age_years * 365.25 + eps):03d}D"
 
 
+def _tree_bytes(root: Path) -> int:
+    """Total size of the regular files under *root* (symlinks not followed).
+    scandir gets the entry type from readdir, so this costs one stat per
+    file instead of the two that ``rglob`` + ``is_file()`` + ``stat()`` do."""
+    total = 0
+    stack = [str(root)]
+    while stack:
+        try:
+            it = os.scandir(stack.pop())
+        except OSError:
+            continue
+        with it:
+            for e in it:
+                try:
+                    if e.is_dir(follow_symlinks=False):
+                        stack.append(e.path)
+                    elif e.is_file(follow_symlinks=False):
+                        total += e.stat(follow_symlinks=False).st_size
+                except OSError:
+                    continue
+    return total
+
+
 class StorageManager:
     """
     Manages DICOM image storage and processing workflow.
@@ -1263,7 +1286,7 @@ class StorageManager:
         max_bytes = int(max_storage_gb * 1024 * 1024 * 1024)
         target_bytes = int(max_bytes * 0.75)
 
-        used_bytes = sum(f.stat().st_size for f in self.base_path.rglob("*") if f.is_file())
+        used_bytes = _tree_bytes(self.base_path)
         if used_bytes <= max_bytes:
             return
 
@@ -1295,7 +1318,7 @@ class StorageManager:
                 skipped_unexported += 1
                 continue
 
-            dir_size = sum(f.stat().st_size for f in study_dir.rglob("*") if f.is_file())
+            dir_size = _tree_bytes(study_dir)
             # Also drop the export pair + deface scratch — same as a
             # retention purge, just triggered by disk pressure instead of age.
             self._purge_study_artifacts_sync(study_number)

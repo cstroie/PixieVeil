@@ -1021,3 +1021,13 @@ class TestAuditLogInjection:
         # the sidecar's structured audit keeps the original text
         sc = storage_manager.find_sidecar_by_number(1)
         assert sc.audit[-1]["detail"] == evil
+
+
+def test_tree_bytes_sums_regular_files_recursively(tmp_path):
+    from pixieveil.storage.storage_manager import _tree_bytes
+    (tmp_path / "a" / "b").mkdir(parents=True)
+    (tmp_path / "x").write_bytes(b"12345")
+    (tmp_path / "a" / "b" / "y").write_bytes(b"123")
+    (tmp_path / "link").symlink_to(tmp_path / "x")  # not double-counted
+    assert _tree_bytes(tmp_path) == 8
+    assert _tree_bytes(tmp_path / "missing") == 0
