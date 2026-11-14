@@ -230,18 +230,35 @@ class TestEnforceRetentionPurge:
 
         assert (sm.base_path / "0001").exists()
 
-    def test_no_op_when_retention_not_configured(self, tmp_path):
+    def test_retention_switched_off_purges_already_exported_studies(self, tmp_path):
+        # Exported while a 14-day window was set, then retention switched off
+        # ("delete immediately"): the next pass purges it, record kept.
+        sm = self._manager_with_retention(tmp_path, retain_days=14)
+        self._exported_study(sm, exported_at=60)
+        sm.enforce_retention_purge_sync()
+        assert (sm.base_path / "0001").exists()
+
+        sm.settings.storage["retain_after_export_days"] = None
+        sm.enforce_retention_purge_sync()
+
+        assert not (sm.base_path / "0001").exists()
+        assert not (sm.export_path / "0001.zip").exists()
+        reloaded = StudySidecar.load(StudySidecar.path_for(sm.base_path, 1))
+        assert reloaded.purged_at is not None
+
+    def test_retention_off_still_keeps_studies_never_exported(self, tmp_path):
+        # No exported_at (e.g. a RHYTHM job not yet COMPLETE) => keep.
         from .conftest import make_settings
         sm = StorageManager(make_settings(tmp_path))
         register_study(sm, 1, "archived", archived_via="dicom")
         write_minimal_dicom(sm.base_path / "0001" / "0001" / "img.dcm")
-        sc = sm.find_sidecar_by_number(1)
-        sc.exported_at = _iso_ago(999999)
-        sc.save(sm.base_path)
+        register_study(sm, 2, "ready")
+        write_minimal_dicom(sm.base_path / "0002" / "0001" / "img.dcm")
 
         sm.enforce_retention_purge_sync()
 
         assert (sm.base_path / "0001").exists()
+        assert (sm.base_path / "0002").exists()
 
 
 class TestHttpExportArtifacts:

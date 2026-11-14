@@ -1175,8 +1175,11 @@ class StorageManager:
         Purge exported studies whose retention window has elapsed: remove the
         study directory, the ``export_path/<NNNN>.{zip,json}`` pair and the
         deface scratch, keeping the ``.state.json`` / ``.exam.json`` records.
-        No-op if ``storage.retain_after_export_days`` is not configured (the
-        artifacts are then deleted at export time, not here).
+        With ``storage.retain_after_export_days`` unset (retention off, i.e.
+        "delete immediately") every exported, unpurged study is purged — new
+        exports are already purged at export time, so this catches studies
+        exported while a window was configured and then retention was
+        switched off (live, from /settings, or across a restart).
 
         The retention clock is ``StudySidecar.exported_at`` (set on first
         successful export; for RHYTHM, when the ingest job reached COMPLETE).
@@ -1185,10 +1188,10 @@ class StorageManager:
         kept indefinitely.
         """
         retain_days = self.settings.storage.get("retain_after_export_days")
-        if not retain_days:
-            return
-
-        cutoff = datetime.now(timezone.utc).timestamp() - (retain_days * 86400)
+        if retain_days:
+            cutoff = datetime.now(timezone.utc).timestamp() - (retain_days * 86400)
+        else:
+            cutoff = float("inf")  # retention off: everything exported is due
         for sc in StudySidecar.load_all(self.base_path).values():
             # No exported_at → never purge: either a RHYTHM job that hasn't
             # confirmed COMPLETE (keep the retry source), or a study archived
