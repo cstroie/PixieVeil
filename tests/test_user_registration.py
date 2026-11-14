@@ -439,7 +439,7 @@ class TestHandEditedYaml:
         assert UserStore(f).list_users() == []
         # Uncommenting the documented entries works as described.
         import re
-        body = example.split("users: {}", 1)[1]
+        body = example.split("\nusers: {}\n", 1)[1]
         f.write_text("users:\n" + re.sub(r"(?m)^# ?", "", body))
         store = UserStore(f)
         assert {u.username for u in store.list_users()} == {"alice", "bob", "carol"}
