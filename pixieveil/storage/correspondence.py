@@ -111,6 +111,19 @@ def search(base_path: Path, query: str) -> list[dict]:
     return [r for r in rows if r["study_number"] == int(q)]
 
 
+_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _csv_cell(value: object) -> object:
+    """Neutralise spreadsheet formula injection: PatientIDs and UIDs come
+    from DICOM any C-STORE peer can send, and a cell starting with = + - @
+    (or tab/CR) is evaluated when the CSV is opened in Excel/LibreOffice.
+    Prefixing a quote keeps the text readable but inert."""
+    if isinstance(value, str) and value.startswith(_FORMULA_PREFIXES):
+        return "'" + value
+    return value
+
+
 def to_csv(rows: list[dict]) -> str:
     buf = io.StringIO()
     w = csv.writer(buf)
@@ -122,7 +135,7 @@ def to_csv(rows: list[dict]) -> str:
             u["job_id"] for u in r["rhythm_uploads"] if u.get("job_id"))
         flat["rhythm_batches"] = " ".join(
             u["batch"] for u in r["rhythm_uploads"] if u.get("batch"))
-        w.writerow(["" if flat.get(c) is None else flat[c] for c in CSV_COLUMNS])
+        w.writerow(["" if flat.get(c) is None else _csv_cell(flat[c]) for c in CSV_COLUMNS])
     return buf.getvalue()
 
 

