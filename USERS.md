@@ -132,7 +132,9 @@ example. To start from it:
 ```bash
 cp config/users.example.yaml config/users.yaml
 chmod 600 config/users.yaml
-# edit names and passwords; remove the sample "carol" entry
+# change `users: {}` to `users:`, uncomment the entries you want, set your
+# own passwords, and drop the sample "carol" entry. Copied unedited, the file
+# defines no users (no published default login) and /setup takes over.
 ```
 
 ---
