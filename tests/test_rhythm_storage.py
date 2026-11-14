@@ -390,6 +390,15 @@ class TestCheckJob:
         r = asyncio.run(RhythmStorage(Settings()).check_job("/x/"))
         assert r.ok is False and "not configured" in r.error
 
+    @pytest.mark.parametrize("bad", ["@evil.example/x/", "//evil.example/x/",
+                                     "https://evil.example/x/", "x/"])
+    def test_foreign_job_status_url_never_requested(self, monkeypatch, bad):
+        def boom(*a, **k):
+            raise AssertionError("must not open a session")
+        monkeypatch.setattr(rhythm_storage_module.aiohttp, "ClientSession", boom)
+        r = asyncio.run(make_storage().check_job(bad))
+        assert r.ok is False and "invalid job_status_url" in r.error
+
 
 class TestFetchStudyIds:
     """GET studies/<anonymized StudyInstanceUID>/ -> RHYTHM's identifiers."""

@@ -195,8 +195,15 @@ class RhythmStorage:
         if not job_status_url:
             return RhythmUploadResult(ok=False, error="no job_status_url")
 
-        headers = {"Authorization": f"Bearer {self.auth_token}"}
         url = f"{self.base_url}{job_status_url}"
+        # job_status_url comes from RHYTHM's init/complete reply; never let it
+        # steer the bearer token to another host (e.g. "@evil.example/...").
+        if (not job_status_url.startswith("/") or job_status_url.startswith("//")
+                or urlparse(url).netloc != urlparse(self.base_url).netloc):
+            logger.error("RHYTHM job_status_url rejected (not a same-host path): %r",
+                         job_status_url)
+            return RhythmUploadResult(ok=False, error="invalid job_status_url")
+        headers = {"Authorization": f"Bearer {self.auth_token}"}
         try:
             async with aiohttp.ClientSession(headers=headers) as session:
                 async with session.get(url) as resp:
