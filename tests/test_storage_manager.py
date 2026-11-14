@@ -828,3 +828,77 @@ class TestLiveEvents:
 
         prog = [(p["done"], p["total"]) for p in bus.of("progress") if p["kind"] == "deface"]
         assert prog == [(0, 2), (1, 2), (2, 2)]
+
+
+class TestCompletionLoop:
+    """completion_loop: every step runs each tick, in order; one step
+    raising never starves the others; stop_event ends it promptly."""
+
+    STEPS = ("check_study_completions", "enforce_storage_quota",
+             "enforce_retention_purge", "reconcile_rhythm_jobs",
+             "reapply_catalog_if_changed", "prepare_ready_exports")
+
+    def _run(self, tmp_path, monkeypatch, *, failing=(), ticks=2, interval=0.01):
+        from .conftest import make_settings
+        sm = StorageManager(make_settings(
+            tmp_path, study={"completion_check_interval": interval}))
+        calls: list[str] = []
+
+        def fake(name):
+            async def step(*args):
+                calls.append(name)
+                if calls.count(self.STEPS[-1]) >= ticks:
+                    sm._stop_event.set()
+                if name in failing:
+                    raise RuntimeError(f"{name} boom")
+            return step
+
+        for name in self.STEPS:
+            monkeypatch.setattr(sm, name, fake(name))
+
+        async def main():
+            sm._stop_event = asyncio.Event()
+            await asyncio.wait_for(sm.completion_loop(), timeout=5)
+        asyncio.run(main())
+        return calls
+
+    def test_every_step_runs_each_tick_in_order(self, tmp_path, monkeypatch):
+        calls = self._run(tmp_path, monkeypatch, ticks=2)
+        assert calls == list(self.STEPS) * 2
+
+    def test_a_failing_step_does_not_starve_the_others(self, tmp_path, monkeypatch, caplog):
+        calls = self._run(tmp_path, monkeypatch, ticks=2,
+                          failing=set(self.STEPS[:-1]))
+        assert calls == list(self.STEPS) * 2
+        errors = [r for r in caplog.records if r.levelname == "ERROR"]
+        assert len(errors) == 2 * (len(self.STEPS) - 1)
+
+    def test_last_step_failing_still_loops(self, tmp_path, monkeypatch):
+        calls = self._run(tmp_path, monkeypatch, ticks=3, failing={self.STEPS[-1]})
+        assert calls == list(self.STEPS) * 3
+
+    def test_stop_during_wait_exits_without_waiting_the_interval(self, tmp_path, monkeypatch):
+        # Interval of an hour: the loop must still exit right after the tick
+        # that set the stop event (wait_for returns on the event, not timeout).
+        import time as _time
+        t0 = _time.monotonic()
+        calls = self._run(tmp_path, monkeypatch, ticks=1, interval=3600)
+        assert calls == list(self.STEPS)
+        assert _time.monotonic() - t0 < 2
+
+    def test_already_stopped_runs_no_tick(self, tmp_path, monkeypatch):
+        from .conftest import make_settings
+        sm = StorageManager(make_settings(tmp_path))
+        calls = []
+
+        async def step(*a):
+            calls.append(1)
+        for name in self.STEPS:
+            monkeypatch.setattr(sm, name, step)
+
+        async def main():
+            sm._stop_event = asyncio.Event()
+            sm._stop_event.set()
+            await sm.completion_loop()
+        asyncio.run(main())
+        assert calls == []
