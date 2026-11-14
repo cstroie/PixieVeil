@@ -396,3 +396,124 @@ class TestRoutes:
         g, p = _run(d, script)
         assert g["choices_source"] == "offline" and g["rhythm_configured"] is False
         assert p == 409
+
+
+UUID_A = "11111111-2222-3333-4444-555555555555"
+UUID_B = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+SCANNER_UUID = "99999999-8888-7777-6666-555555555555"
+
+
+def _doc():
+    return {"scanners": [{
+        "id": "siemens-go-all", "name": "go.All", "manufacturer": "SIEMENS",
+        "model": "SOMATOM go.All", "rhythm_scanner_id": None,
+        "protocols": [{"key": "head-routine", "label": "Head Routine",
+                       "names": ["Head  Routine"], "rhythm_uuid": None,
+                       "region": "Head", "clinical_indication": None,
+                       "iv_contrast": None, "notes": "keep"}],
+    }]}
+
+
+class TestApplyLocal:
+    """Dashboard._apply_local: how a drafted protocol lands in the catalog."""
+
+    def test_existing_protocol_on_scanner_gets_uuid_and_only_empty_fields(self):
+        doc, key = Dashboard._apply_local(_doc(), {
+            "scanner_id": "siemens-go-all", "names": ["head routine"],  # normalized match
+            "region": "Neck", "clinical_indication": "Trauma",
+            "iv_contrast": "Non-contrast"}, UUID_A)
+        (proto,) = doc["scanners"][0]["protocols"]
+        assert key == "head-routine"
+        assert proto["rhythm_uuid"] == UUID_A
+        assert proto["region"] == "Head"                    # set: not overwritten
+        assert proto["clinical_indication"] == "Trauma"     # empty: filled
+        assert proto["iv_contrast"] == "Non-contrast"
+        assert proto["names"] == ["Head  Routine"] and proto["notes"] == "keep"
+
+    def test_new_protocol_appended_with_unique_key(self):
+        doc = _doc()
+        # another scanner already owns "chest" → the new key gets a suffix
+        doc["scanners"].append({"id": "x", "protocols": [{"key": "chest", "names": ["Chest"]},
+                                                          {"key": "chest-2", "names": ["C2"]}]})
+        doc, key = Dashboard._apply_local(doc, {
+            "scanner_id": "siemens-go-all", "names": [" Chest ", ""], "region": None}, UUID_B)
+        assert key == "chest-3"
+        new = doc["scanners"][0]["protocols"][-1]
+        assert new == {"key": "chest-3", "label": "Chest", "names": ["Chest"],
+                       "rhythm_uuid": UUID_B, "region": None,
+                       "clinical_indication": None, "iv_contrast": None, "notes": ""}
+
+    def test_explicit_key_and_label_win(self):
+        _doc_, key = Dashboard._apply_local(_doc(), {
+            "scanner_id": "siemens-go-all", "names": ["Abdomen"],
+            "key": "My Abdomen", "label": "Abdomen (paeds)"}, UUID_B)
+        assert key == "my-abdomen"
+        assert _doc_["scanners"][0]["protocols"][-1]["label"] == "Abdomen (paeds)"
+
+    def test_new_scanner_created_with_unique_id(self):
+        doc = _doc()
+        doc["scanners"].append({"id": "ge-revolution", "protocols": []})
+        doc, key = Dashboard._apply_local(doc, {
+            "new_scanner": {"manufacturer": "GE", "model": "Revolution"},
+            "names": ["Head"]}, UUID_A, SCANNER_UUID)
+        scanner = doc["scanners"][-1]
+        assert scanner["id"] == "ge-revolution-2"
+        assert scanner["name"] == "GE Revolution"
+        assert scanner["rhythm_scanner_id"] == SCANNER_UUID
+        assert [p["key"] for p in scanner["protocols"]] == [key]
+
+    def test_unknown_scanner_id_falls_back_to_new_scanner(self):
+        doc, _key = Dashboard._apply_local(_doc(), {
+            "scanner_id": "gone", "new_scanner": {"manufacturer": "GE", "model": "X"},
+            "names": ["Head"]}, UUID_A)
+        assert [s["id"] for s in doc["scanners"]] == ["siemens-go-all", "ge-x"]
+
+    def test_scanner_rhythm_id_only_set_when_empty_and_a_uuid(self):
+        doc, _ = Dashboard._apply_local(_doc(), {"scanner_id": "siemens-go-all",
+                                                 "names": ["A"]}, UUID_A, "not-a-uuid")
+        assert doc["scanners"][0]["rhythm_scanner_id"] is None
+        doc["scanners"][0]["rhythm_scanner_id"] = "existing"
+        doc, _ = Dashboard._apply_local(doc, {"scanner_id": "siemens-go-all",
+                                              "names": ["B"]}, UUID_A, SCANNER_UUID)
+        assert doc["scanners"][0]["rhythm_scanner_id"] == "existing"
+
+    def test_match_is_per_scanner(self):
+        # Same name on another scanner is a different protocol.
+        doc = _doc()
+        doc["scanners"].append({"id": "other", "protocols": []})
+        doc, key = Dashboard._apply_local(doc, {"scanner_id": "other",
+                                                "names": ["Head Routine"]}, UUID_A)
+        assert key == "head-routine-2"
+        assert doc["scanners"][0]["protocols"][0]["rhythm_uuid"] is None
+
+
+class TestValidateLocal:
+    OK = {"scanner_id": "siemens-go-all", "names": ["Head"],
+          "region": "Head", "clinical_indication": "Trauma", "iv_contrast": "Non-contrast"}
+
+    def test_valid(self):
+        assert Dashboard._validate_local(dict(self.OK), _doc()) == {}
+
+    def test_not_a_dict(self):
+        assert Dashboard._validate_local(None, _doc()) == {"local": "missing local protocol"}
+
+    @pytest.mark.parametrize("change, field", [
+        ({"names": ["  ", ""]}, "local.names"),
+        ({"scanner_id": "nope"}, "local.scanner_id"),
+        ({"scanner_id": None, "new_scanner": {"manufacturer": "GE"}}, "local.scanner_id"),
+        ({"clinical_indication": "Not a real one"}, "local.region"),
+        ({"region": None}, "local.region"),           # half a combo is invalid too
+        ({"iv_contrast": "Maybe"}, "local.iv_contrast"),
+    ])
+    def test_errors(self, change, field):
+        errors = Dashboard._validate_local({**self.OK, **change}, _doc())
+        assert list(errors) == [field]
+
+    def test_new_scanner_with_manufacturer_and_model_is_ok(self):
+        local = {**self.OK, "scanner_id": None,
+                 "new_scanner": {"manufacturer": "GE", "model": "X"}}
+        assert Dashboard._validate_local(local, _doc()) == {}
+
+    def test_region_and_indication_both_empty_is_ok(self):
+        local = {**self.OK, "region": None, "clinical_indication": None}
+        assert Dashboard._validate_local(local, _doc()) == {}
