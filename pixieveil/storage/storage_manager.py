@@ -907,11 +907,13 @@ class StorageManager:
             # (e.g. re-queued spuriously after reaching "ready"/"archived").
             sc = self.study_manager.get_sidecar_by_uid(study_uid)
             already_processed = sc is not None and sc.status in ("ready", "archived")
+            untracked_head = False
             if self.defacer.enabled and not already_processed:
                 with self.lock:
                     self._active_defacing += 1
                 try:
-                    await asyncio.to_thread(self._deface_study, study_uid, study_number, study_dir)
+                    untracked_head = await asyncio.to_thread(
+                        self._deface_study, study_uid, study_number, study_dir)
                 finally:
                     with self.lock:
                         self._active_defacing -= 1
@@ -919,7 +921,7 @@ class StorageManager:
                 # Defacing is off, but still classify series so a head scan
                 # is flagged (is_head=True, defaced=False) and the study is
                 # marked defacing_disabled below instead of looking "ready".
-                await asyncio.to_thread(
+                untracked_head = await asyncio.to_thread(
                     self._deface_study, study_uid, study_number, study_dir, classify_only=True
                 )
 
@@ -943,7 +945,7 @@ class StorageManager:
             # reach "ready" looking indistinguishable from one that fully
             # succeeded — manual_send_dicom/manual_upload_http both refuse to
             # export a study in that state.
-            if self.study_manager.has_undefaced_head_series(study_uid):
+            if untracked_head or self.study_manager.has_undefaced_head_series(study_uid):
                 if self.defacer.enabled:
                     logger.warning(
                         "Study %04d has an undefaced head-scan series — marking "
@@ -1052,7 +1054,7 @@ class StorageManager:
             return None
 
     def _deface_study(self, study_uid: str, study_number: int, study_dir: Path,
-                      classify_only: bool = False) -> None:
+                      classify_only: bool = False) -> bool:
         """
         Blocking: deface all head-scan series in one study.
         Called via asyncio.to_thread — must not use await.
@@ -1063,6 +1065,10 @@ class StorageManager:
         if not classify_only:
             self.study_manager.mark_study_defacing(study_uid)
             self.inc_counter('defacing', 'studies')
+        # A head series whose original UID can't be resolved has nowhere to
+        # record is_head/defaced, so has_undefaced_head_series() can't see it.
+        # Report it to the caller instead, so the study fails closed.
+        untracked_head = False
         series_dirs = [
             d for d in sorted(study_dir.iterdir())
             if d.is_dir() and not d.name.endswith("_pre_deface")
@@ -1100,6 +1106,7 @@ class StorageManager:
                         "Series %s in study %04d is a head scan but defacing is disabled",
                         series_dir.name, study_number,
                     )
+                    untracked_head = untracked_head or not orig_series_uid
                     continue
                 logger.info("Defacing series %s in study %04d", series_dir.name, study_number)
                 ok = self.defacer.deface_series(series_dir, data_dir=self.base_path)
@@ -1109,6 +1116,7 @@ class StorageManager:
                         self.study_manager.mark_series_defaced(study_uid, orig_series_uid)
                 else:
                     self.inc_counter('defacing', 'errors')
+                    untracked_head = untracked_head or not orig_series_uid
             else:
                 logger.debug("Series %s is not a head scan — skipping defacing", series_dir.name)
                 if not classify_only:
@@ -1119,6 +1127,10 @@ class StorageManager:
                     )
         if not classify_only:
             self.events.progress(study_number, "deface", len(series_dirs), len(series_dirs))
+        if untracked_head:
+            logger.warning("Study %04d has an undefaced head series with no sidecar "
+                           "record — export will be blocked", study_number)
+        return untracked_head
 
     def _clear_deface_temp_sync(self, study_number: int) -> None:
         """Remove the persistent ``pixieveil_deface_<NNNN>_<SSSS>`` NIfTI

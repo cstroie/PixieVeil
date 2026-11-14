@@ -746,6 +746,30 @@ class TestDefacingDisabled:
 
         assert storage_manager.study_manager.get_sidecar_by_number(1).status == "defacing_failed"
 
+    @pytest.mark.parametrize("enabled, deface_ok, expected", [
+        (True, False, "defacing_failed"),
+        (False, None, "defacing_disabled"),
+        (True, True, "ready"),
+    ])
+    def test_head_series_without_a_resolvable_uid_still_blocks_export(
+            self, storage_manager, monkeypatch, enabled, deface_ok, expected):
+        # The series folder exists but its original UID can't be looked up
+        # (no sidecar record): its head/defaced state can't be recorded, so
+        # it must fail closed instead of letting the study reach "ready".
+        sc = register_study(storage_manager, 1, "complete")
+        sc.save(storage_manager.base_path)
+        storage_manager.study_manager._base_path = storage_manager.base_path
+        storage_manager._active_waiting = 1
+        write_minimal_dicom(storage_manager.base_path / "0001" / "0001" / "img1.dcm",
+                            SeriesDescription="Head routine")
+        storage_manager.defacer.enabled = enabled
+        monkeypatch.setattr(storage_manager.defacer, "deface_series",
+                            lambda *a, **k: deface_ok)
+
+        asyncio.run(storage_manager._process_study("study-uid-1"))
+
+        assert storage_manager.study_manager.get_sidecar_by_number(1).status == expected
+
     def test_exports_refuse_a_defacing_disabled_study(self, tmp_path):
         sm = TestManualExportBlockedOnDefacingFailure()._manager_with_dicom_configured(tmp_path)
         register_study(sm, 1, "defacing_disabled")
