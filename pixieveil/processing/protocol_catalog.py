@@ -205,6 +205,21 @@ def _opt(v: Any) -> str | None:
     return s or None
 
 
+def _canon_uuid(v: Any) -> str | None:
+    """Canonical lowercase hyphenated form of a UUID-ish value, else as-is.
+
+    validate_document accepts anything uuid.UUID() parses — braces,
+    ``urn:uuid:``, no hyphens, uppercase — but the value is sent to RHYTHM
+    verbatim as ``protocol_id``, which expects the plain form."""
+    s = _opt(v)
+    if s is None:
+        return None
+    try:
+        return str(_uuid.UUID(s))
+    except ValueError:
+        return s
+
+
 def validate_document(doc: Any, *, expected_site_code: str | None = None) -> list[str]:
     """Return human-readable errors for a catalog document (``[]`` = valid)."""
     from pixieveil.dashboard import options  # lazy: avoid import cycle
@@ -312,7 +327,7 @@ def _parse(doc: dict) -> tuple[str | None, list[CatalogScanner]]:
                 scanner_id=sid,
                 label=_str(p.get("label")),
                 names=tuple(_str(n) for n in (p.get("names") or []) if _str(n)),
-                rhythm_uuid=_opt(p.get("rhythm_uuid")),
+                rhythm_uuid=_canon_uuid(p.get("rhythm_uuid")),
                 region=_opt(p.get("region")),
                 clinical_indication=_opt(p.get("clinical_indication")),
                 iv_contrast=_opt(p.get("iv_contrast")),
@@ -322,7 +337,7 @@ def _parse(doc: dict) -> tuple[str | None, list[CatalogScanner]]:
         )
         scanners.append(CatalogScanner(
             id=sid, name=_str(sc.get("name")), manufacturer=_str(sc.get("manufacturer")),
-            model=_str(sc.get("model")), rhythm_scanner_id=_opt(sc.get("rhythm_scanner_id")),
+            model=_str(sc.get("model")), rhythm_scanner_id=_canon_uuid(sc.get("rhythm_scanner_id")),
             protocols=protos,
         ))
     return _opt(doc.get("site_code")), scanners

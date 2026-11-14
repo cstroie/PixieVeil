@@ -133,6 +133,33 @@ class TestMatching:
         assert cat.match("SIEMENS", "Emotion 16", "CAP_SPIRAL_NATIV", None).protocol.key \
             == "cap-spiral-nativ"
 
+    @pytest.mark.parametrize("written", [
+        "{11111111-2222-3333-4444-555555555555}",
+        "urn:uuid:11111111-2222-3333-4444-555555555555",
+        "11111111222233334444555555555555",
+        "  11111111-2222-3333-4444-555555555555 ",
+    ])
+    def test_uuid_forms_accepted_by_validation_are_sent_canonical(self, tmp_path, written):
+        # validate_document accepts anything uuid.UUID() parses; what goes to
+        # RHYTHM as protocol_id must still be the plain lowercase form.
+        doc = _doc()
+        doc["scanners"][0]["protocols"][0]["rhythm_uuid"] = written
+        doc["scanners"][0]["rhythm_scanner_id"] = written.upper().replace("URN:UUID:", "")
+        assert pc.validate_document(doc) == []
+        p = tmp_path / "p.yaml"
+        _write(p, doc)
+        cat = pc.ProtocolCatalog.load(p)
+        assert cat.uuid_for("cap-spiral-nativ") == "11111111-2222-3333-4444-555555555555"
+        assert cat.get_scanner("siemens-emotion-16").rhythm_scanner_id == \
+            "11111111-2222-3333-4444-555555555555"
+
+    def test_uppercase_uuid_sent_lowercase(self, tmp_path):
+        doc = _doc()
+        doc["scanners"][0]["protocols"][0]["rhythm_uuid"] = UUID_A.upper()
+        p = tmp_path / "p.yaml"
+        _write(p, doc)
+        assert pc.ProtocolCatalog.load(p).uuid_for("cap-spiral-nativ") == UUID_A.lower()
+
     def test_rhythm_surface(self, catalog):
         assert catalog.uuid_for("cap-spiral-nativ") == UUID_A
         assert catalog.uuid_for("thorax") is None              # pending
