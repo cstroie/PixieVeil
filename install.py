@@ -43,24 +43,34 @@ _MODEL_GDRIVE_URL = (
     "1k4o35Dkl7PWd2yvHqWA2ia-BNKrWBrqg?usp=sharing"
 )
 
-# PyTorch install variants.
-# CPU: pinned +cpu builds from the PyTorch wheel index.
-#   torch.GradScaler moved to top-level in 2.4 — don't go below 2.4.0.
+# PyTorch install variants, pinned per wheel index to what
+# download.pytorch.org actually publishes for cp312 (checked 2026-11).
+# torch < 2.10 carries a HIGH advisory for RCE via untrusted checkpoint
+# files (and < 2.6 a CRITICAL torch.load one) — nnU-Net torch.load()s the
+# downloaded model, so stay on a patched build wherever one exists.
+# nnunetv2 needs torch>=2.1.2 but not 2.9.*; torchvision is needed (via
+# dynamic_network_architectures -> timm), torchaudio is not.
+_TORCH_VERSION = "2.14.1"
+_TORCHVISION_VERSION = "0.29.1"
 _TORCH_CPU = [
-    "torch==2.4.0+cpu",
-    "torchvision==0.19.0+cpu",
-    "torchaudio==2.4.0+cpu",
+    f"torch=={_TORCH_VERSION}+cpu",
+    f"torchvision=={_TORCHVISION_VERSION}+cpu",
     "--index-url", "https://download.pytorch.org/whl/cpu",
 ]
 
-# Ascending by CUDA version so ceiling selection (first entry >= installed) works naturally.
+# One build per CUDA major: a cuXY wheel runs on any driver of that major
+# (CUDA minor-version compatibility), never on an older major. cu118 tops
+# out at torch 2.7.1 — the newest that index has, still affected by the
+# checkpoint-RCE advisory; prefer a CUDA 12+ driver.
+# (cuda_version, tag, index_url, torch, torchvision)
 _CUDA_WHEEL_MAP = [
-    ((11, 8), "cu118", "https://download.pytorch.org/whl/cu118"),
-    ((12, 1), "cu121", "https://download.pytorch.org/whl/cu121"),
-    ((12, 4), "cu124", "https://download.pytorch.org/whl/cu124"),
-    ((12, 6), "cu126", "https://download.pytorch.org/whl/cu126"),
-    ((12, 8), "cu128", "https://download.pytorch.org/whl/cu128"),
+    ((11, 8), "cu118", "https://download.pytorch.org/whl/cu118", "2.7.1", "0.22.1"),
+    ((12, 6), "cu126", "https://download.pytorch.org/whl/cu126",
+     _TORCH_VERSION, _TORCHVISION_VERSION),
+    ((13, 0), "cu130", "https://download.pytorch.org/whl/cu130",
+     _TORCH_VERSION, _TORCHVISION_VERSION),
 ]
+_MIN_TORCH = {"cpu": _TORCH_VERSION, **{e[1]: e[3] for e in _CUDA_WHEEL_MAP}}
 
 
 def _detect_cuda_version() -> tuple[int, int] | None:
@@ -90,28 +100,40 @@ def _detect_cuda_version() -> tuple[int, int] | None:
     return None
 
 
-def _select_wheel(cuda_ver: tuple[int, int]) -> tuple[tuple[int, int], str, str]:
-    """Return the wheel map entry whose version is the ceiling of *cuda_ver*.
-
-    Ceiling = smallest wheel_ver >= cuda_ver, so CUDA 12.0 → cu121.
-    Falls back to the highest entry when cuda_ver exceeds all known wheels.
-    """
+def _select_wheel(cuda_ver: tuple[int, int]) -> tuple:
+    """The wheel-map entry for *cuda_ver*'s major version. A newer major
+    than any known gets the newest build; an older one the oldest."""
     for entry in _CUDA_WHEEL_MAP:
-        if entry[0] >= cuda_ver:
+        if entry[0][0] == cuda_ver[0]:
             return entry
-    return _CUDA_WHEEL_MAP[-1]
+    if cuda_ver[0] > _CUDA_WHEEL_MAP[-1][0][0]:
+        return _CUDA_WHEEL_MAP[-1]
+    return _CUDA_WHEEL_MAP[0]
 
 
 def _torch_cuda_args(cuda_ver: tuple[int, int]) -> list[str]:
     """Return pip install args for the CUDA-enabled PyTorch wheel matching *cuda_ver*."""
-    wheel_ver, tag, index_url = _select_wheel(cuda_ver)
+    _ver, tag, index_url, torch_v, vision_v = _select_wheel(cuda_ver)
     _info(f"CUDA {cuda_ver[0]}.{cuda_ver[1]} → selecting PyTorch wheels for {tag}")
+    if tag == "cu118":
+        _info("WARNING: CUDA 11 only has torch 2.7.1 wheels, which carry a known "
+              "checkpoint-loading RCE advisory — a CUDA 12+ driver is recommended.")
     return [
-        f"torch==2.4.0+{tag}",
-        f"torchvision==0.19.0+{tag}",
-        f"torchaudio==2.4.0+{tag}",
+        f"torch=={torch_v}+{tag}",
+        f"torchvision=={vision_v}+{tag}",
         "--index-url", index_url,
     ]
+
+
+def _torch_outdated(installed: str, tag: str) -> bool:
+    """True if *installed* (e.g. ``2.4.0+cpu``) is older than the patched
+    build pinned for *tag* — an existing install is then upgraded."""
+    def parts(v: str) -> tuple[int, ...] | None:
+        m = re.match(r"(\d+)\.(\d+)\.(\d+)", v or "")
+        return tuple(int(x) for x in m.groups()) if m else None
+    have, want = parts(installed), parts(_MIN_TORCH.get(tag, _TORCH_VERSION))
+    return have is None or have < want
+
 
 _NNUNET_PACKAGES = ["nnunetv2", "gdown"]
 
@@ -277,6 +299,9 @@ def install_packages(choice: str, cuda_ver: tuple[int, int] | None) -> bool:
     # --- PyTorch ---
     torch_ver = _check_package("torch")
     needs_install = not torch_ver
+    if torch_ver and choice == DefacingChoice.CPU and _torch_outdated(torch_ver, "cpu"):
+        _info(f"torch {torch_ver} has known security advisories — upgrading.")
+        needs_install = True
 
     if torch_ver and choice == DefacingChoice.CUDA:
         try:
@@ -289,13 +314,17 @@ def install_packages(choice: str, cuda_ver: tuple[int, int] | None) -> bool:
                 installed_cuda = _torch.version.cuda  # e.g. "12.1" or None
                 if installed_cuda:
                     installed_parts = tuple(int(x) for x in installed_cuda.split(".")[:2])
-                    expected_ver, expected_tag, _ = _select_wheel(cuda_ver)
+                    expected_ver, expected_tag = _select_wheel(cuda_ver)[:2]
                     if installed_parts != expected_ver:
                         _info(
                             f"torch built for CUDA {installed_cuda}, "
                             f"expected {expected_tag} for CUDA {cuda_ver[0]}.{cuda_ver[1]} "
                             f"— reinstalling."
                         )
+                        needs_install = True
+                    elif _torch_outdated(torch_ver, expected_tag):
+                        _info(f"torch {torch_ver} has known security advisories "
+                              f"— upgrading.")
                         needs_install = True
                     else:
                         _ok(f"torch {torch_ver} (CUDA {installed_cuda}) matches {expected_tag} — skipping.")
@@ -313,7 +342,7 @@ def install_packages(choice: str, cuda_ver: tuple[int, int] | None) -> bool:
             torch_args = _torch_cuda_args(cuda_ver)
         else:
             _info("CUDA version unknown — installing unpinned CUDA wheels from PyPI.")
-            torch_args = ["torch==2.4.0", "torchvision==0.19.0", "torchaudio==2.4.0"]
+            torch_args = [f"torch=={_TORCH_VERSION}", f"torchvision=={_TORCHVISION_VERSION}"]
         if not _pip_install(torch_args, f"PyTorch ({choice.upper()})"):
             return False
     elif not (torch_ver and choice == DefacingChoice.CUDA):
