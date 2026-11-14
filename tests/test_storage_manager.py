@@ -1,3 +1,4 @@
+import pytest
 """Unit tests for StorageManager: study-dir resolution, quota enforcement,
 the DICOM patient-field write-back, and the manual-export "not configured"
 guard rails. Export/upload/defacing stay disabled throughout (see
@@ -365,6 +366,30 @@ class TestWritebackPatientFields:
         study_dir, p1, _ = self._study_with_two_images(storage_manager)
         storage_manager._writeback_patient_fields_sync(study_dir, None, 1500.0)
         assert read_dicom(p1).PatientAge == "005Y"  # unchanged
+
+    @pytest.mark.parametrize("age, expected", [
+        (0.2, "002M"),     # neonate head group (< 0.25 y) — not "000Y"
+        (0.24, "002M"),    # truncated, never rounded up across 0.25
+        (0.6, "007M"),     # infant (< 1 y) — not "001Y" (would be group 3)
+        (0.99, "011M"),
+        (1.5, "018M"),
+        (5.9, "005Y"),     # completed years: still < 6 → group 3
+        (8.0, "008Y"),
+        (0.01, "003D"),
+        (0.0, "000D"),
+    ])
+    def test_age_written_in_a_unit_that_keeps_the_age_group(
+            self, storage_manager, age, expected):
+        from pixieveil.processing.exam_extractor import HEAD_AGE_GROUPS
+
+        def group(a):
+            return next(g for upper, g in HEAD_AGE_GROUPS if a < upper)
+
+        study_dir, p1, _ = self._study_with_two_images(storage_manager)
+        storage_manager._writeback_patient_fields_sync(study_dir, None, age)
+        written = read_dicom(p1).PatientAge
+        assert written == expected
+        assert group(_parse_dicom_age(written)) == group(age)
 
     def test_only_weight_given_leaves_age_untouched(self, storage_manager):
         study_dir, p1, _ = self._study_with_two_images(storage_manager)

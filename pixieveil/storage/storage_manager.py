@@ -49,6 +49,20 @@ from pixieveil.storage.study_sidecar import StudySidecar, _now_iso
 logger = logging.getLogger(__name__)
 
 
+def _format_dicom_age(age_years: float) -> str:
+    """Format years as a DICOM AS value in completed units (truncated, as
+    ages are counted): days under a month, months under 2 years, else
+    years. Whole years would turn a 0.6-year infant into "001Y" — a
+    different RHYTHM age group — and every neonate into "000Y"."""
+    eps = 1e-6  # 0.58333… × 12 must count as 7 months, not 6
+    if age_years >= 2:
+        return f"{int(age_years + eps):03d}Y"
+    months = int(age_years * 12 + eps)
+    if months >= 1:
+        return f"{months:03d}M"
+    return f"{int(age_years * 365.25 + eps):03d}D"
+
+
 class StorageManager:
     """
     Manages DICOM image storage and processing workflow.
@@ -2600,7 +2614,7 @@ class StorageManager:
         if weight_kg is None and age_years is None:
             return []
 
-        age_str = f"{int(round(age_years)):03d}Y" if age_years is not None else None
+        age_str = _format_dicom_age(age_years) if age_years is not None else None
 
         failed: List[Path] = []
         for dcm_path in study_dir.rglob("*.dcm"):
