@@ -25,10 +25,11 @@ the result so a caller can persist it, but a re-run starts a fresh session.
 """
 
 import asyncio
+import re
 import hashlib
 import logging
 import time
-from urllib.parse import urlparse
+from urllib.parse import quote, urlencode, urlparse
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Iterable
@@ -232,6 +233,11 @@ class RhythmStorage:
         """
         if not self.enabled or not study_uid:
             return None
+        if not _UID_RE.fullmatch(study_uid):
+            # Sender-controlled under a profile that KEEPs StudyInstanceUID:
+            # never let it add path segments to an authenticated request.
+            logger.warning("RHYTHM study lookup skipped: %r is not a DICOM UID", study_uid)
+            return None
         try:
             status, body = await _send_json(
                 "GET", self.base_url, self.auth_token, f"{STUDIES_PATH}{study_uid}/"
@@ -424,6 +430,7 @@ async def _json(resp: aiohttp.ClientResponse) -> Any:
 PROBE_PATH = "/api/v1/protocols-api/"
 PROFILES_PATH = "/api/v1/scanner-profiles/"
 PROTOCOLS_PATH = "/api/v1/protocols-api/"
+_UID_RE = re.compile(r"[0-9]+(\.[0-9]+)*")  # DICOM UI: digits, single dots
 STUDIES_PATH = "/api/v1/studies/"
 PAGE_SIZE = 100          # RHYTHM's max_page_size
 
@@ -646,7 +653,7 @@ async def get_protocol(base_url: str, auth_token: str, protocol_id: str) -> dict
     """Read one CTProtocol back (None if it can't be read)."""
     try:
         status, body = await _send_json("GET", base_url, auth_token,
-                                        f"{PROTOCOLS_PATH}{protocol_id}/")
+                                        f"{PROTOCOLS_PATH}{quote(str(protocol_id), safe='')}/")
     except RhythmApiError:
         return None
     return body if status == 200 and isinstance(body, dict) else None
@@ -655,7 +662,10 @@ async def get_protocol(base_url: str, auth_token: str, protocol_id: str) -> dict
 async def find_protocols(base_url: str, auth_token: str, scanner_id: str,
                          protocol_type: str | None = None) -> list[dict]:
     """The site's protocols on one scanner profile (optionally one type)."""
-    q = f"?scanner={scanner_id}" + (f"&protocol_type={protocol_type}" if protocol_type else "")
+    params = {"scanner": scanner_id}
+    if protocol_type:
+        params["protocol_type"] = protocol_type
+    q = "?" + urlencode(params)
     items = await fetch_all(base_url, auth_token, PROTOCOLS_PATH + q)
     return [p for p in items if str(p.get("scanner")) == str(scanner_id)
             and (not protocol_type or p.get("protocol_type") == protocol_type)]

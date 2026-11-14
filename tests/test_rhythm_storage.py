@@ -10,6 +10,8 @@ of fake responses keyed by endpoint.
 
 import asyncio
 
+import pytest
+
 import aiohttp
 
 import pixieveil.storage.rhythm_storage as rhythm_storage_module
@@ -425,6 +427,54 @@ class TestFetchStudyIds:
         self._install(monkeypatch, 404, {"error": "Study not found"})
         assert asyncio.run(make_storage().fetch_study_ids("1.2.3")) is None
 
+    @pytest.mark.parametrize("uid", ["..", "../protocols-api/x", "1.2/../../users",
+                                     "1.2.3?x=1", "1..2", ".1.2", "1.2.", "abc", " 1.2"])
+    def test_non_uid_never_reaches_the_url(self, monkeypatch, uid):
+        # Under a profile that KEEPs StudyInstanceUID this is sender-
+        # controlled; it must not steer the authenticated GET elsewhere.
+        seen = self._install(monkeypatch, 200, {"patient_pseudo_id": "X"})
+        assert asyncio.run(make_storage().fetch_study_ids(uid)) is None
+        assert not [s for s in seen if s[0] == "GET"]
+
     def test_unconfigured_never_calls(self, monkeypatch):
         monkeypatch.setattr(rhythm_storage_module.aiohttp, "ClientSession", NeverCallSession)
         assert asyncio.run(make_storage(auth_token="").fetch_study_ids("1.2.3")) is None
+
+
+
+class TestUrlComponentsEncoded:
+    def _capture(self, monkeypatch, body):
+        seen = []
+
+        class _Session:
+            def __init__(self, headers=None, timeout=None):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *a):
+                return False
+
+            def request(self, method, url, json=None):
+                seen.append(url)
+                return FakeResp(200, body)
+
+            def get(self, url, **kw):
+                seen.append(url)
+                return FakeResp(200, body)
+
+        monkeypatch.setattr(rhythm_storage_module.aiohttp, "ClientSession", _Session)
+        return seen
+
+    def test_find_protocols_query_is_encoded(self, monkeypatch):
+        seen = self._capture(monkeypatch, [])
+        asyncio.run(rhythm_storage_module.find_protocols(
+            "https://r.example", "t", "abc&scanner=evil", "A B#x"))
+        assert seen and "scanner=abc%26scanner%3Devil" in seen[0]
+        assert "protocol_type=A+B%23x" in seen[0]
+
+    def test_get_protocol_id_is_one_path_segment(self, monkeypatch):
+        seen = self._capture(monkeypatch, {})
+        asyncio.run(rhythm_storage_module.get_protocol("https://r.example", "t", "../users"))
+        assert seen == ["https://r.example/api/v1/protocols-api/..%2Fusers/"]
