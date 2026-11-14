@@ -115,7 +115,21 @@ class DicomStorage:
                     errors += 1
                     continue
 
-                status = assoc.send_c_store(ds)
+                try:
+                    status = assoc.send_c_store(ds)
+                except (ValueError, RuntimeError) as exc:
+                    # pynetdicom raises — rather than returning a status —
+                    # when the peer accepted no presentation context for this
+                    # object (e.g. a PACS that takes CT but refuses the RDSR
+                    # / Dose Report SC) or the association dropped. Count it
+                    # and keep going so the rest of the study still arrives.
+                    logger.error("C-STORE failed for %s: %s", dcm_path.name, exc)
+                    errors += 1
+                    if not assoc.is_established:
+                        logger.error("Association lost — aborting send of %s", study_dir)
+                        errors += total - done
+                        break
+                    continue
                 if status and status.Status == 0x0000:
                     logger.debug("C-STORE OK: %s", dcm_path.name)
                 elif status is None:

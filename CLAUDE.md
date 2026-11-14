@@ -67,7 +67,7 @@ consistency, original/derived series detection; the `rhythm` profile's
 against RHYTHM's vendored `GDPR-strict.json` in `test_anonymizer_rhythm.py`),
 `DicomStorage` (config
 resolution and the C-STORE send loop, via a small fake AE/association
-substituted with `monkeypatch` — never a real network call), and `Defacer`
+substituted with `monkeypatch` — never a real network call; plus `tests/test_dicom_storage_loopback.py`, which sends to a real pynetdicom Storage SCP on 127.0.0.1 to catch what the fake association can't — a peer refusing one SOP class makes `send_c_store` raise, not return a status — loopback only, nothing leaves the machine), and `Defacer`
 (config, head/topogram detection, model-path resolution, `_prepare_for_write`,
 `_load_series_groups`, device resolution via monkeypatched `torch`, and
 `deface_series`'s directory bookkeeping/atomic-swap safety with the three
