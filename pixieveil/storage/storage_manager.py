@@ -2353,6 +2353,15 @@ class StorageManager:
             result = await self.rhythm_storage.check_job(url)
             if result.status not in self._RHYTHM_TERMINAL:
                 continue  # still pending, or a transient poll failure
+            live = self.study_manager.get_sidecar_by_number(sc.study_number)
+            if (sc.study_number in self._manual_actions_in_progress
+                    or live is None or live.rhythm_job_status_url != url):
+                # A retry started while we were polling: this result belongs
+                # to the superseded job — writing it would mark the new
+                # attempt terminal and it would never be polled.
+                logger.info("RHYTHM job %s for study %04d superseded by a retry; "
+                            "ignoring its %s", url, sc.study_number, result.status)
+                continue
 
             self.study_manager.set_rhythm_job(
                 sc.original_study_uid, status=result.status

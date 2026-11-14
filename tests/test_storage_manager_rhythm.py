@@ -341,6 +341,30 @@ class TestReconcile:
         assert sm.get_counter("export", "rhythm_images") == 2
         assert sm.get_counter("cleanup", "studies") == 1
 
+    def test_retry_started_during_poll_is_not_overwritten(self, tmp_path):
+        """The operator retries while the old job's poll is awaiting: the old
+        job's FAILED must not land on the new attempt (it would look
+        terminal and never be polled)."""
+        sm = _manager(tmp_path)
+        fake = FakeRhythm()
+        sm.rhythm_storage = fake
+        sc = self._study_with_pending_job(sm)
+
+        async def check_job(url):
+            fake.job_checks.append(url)
+            sm.study_manager.set_rhythm_job(        # retry lands mid-poll
+                sc.original_study_uid, batch="S001-y", job_id="job-2",
+                job_status_url="/api/v1/uploads/job-2/", status="uploaded")
+            return RhythmUploadResult(ok=False, status="FAILED", error="old")
+        fake.check_job = check_job
+
+        asyncio.run(sm.reconcile_rhythm_jobs())
+
+        live = sm.find_sidecar_by_number(1)
+        assert live.rhythm_job_id == "job-2"
+        assert live.rhythm_status == "uploaded"   # still in flight → polled next tick
+        assert [u["status"] for u in live.rhythm_uploads] == ["uploaded", "uploaded"]
+
     def test_failed_records_state_without_archiving(self, tmp_path):
         sm = _manager(tmp_path)
         sm.rhythm_storage = FakeRhythm(
