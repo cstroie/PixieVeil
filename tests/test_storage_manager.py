@@ -125,6 +125,27 @@ class TestListStudiesSummarySync:
         assert results[0]["exam_corrupt"] is False
         assert results[0]["exam_summary"]["protocol_type"] == "PEDIATRIC_BODY"
 
+    def test_exam_summary_memoized_until_exam_saved(self, storage_manager, monkeypatch):
+        register_study(storage_manager, 1, "ready")
+        data = {"study_number": 1, "protocol_type": "PEDIATRIC_BODY",
+                "indication": {"region": "Chest"}, "scanner": {}, "rdsr": {}, "manual": {}}
+        ExamSidecar(1, dict(data)).save(storage_manager.base_path)
+        loads = []
+        real = ExamSidecar.load
+        monkeypatch.setattr(ExamSidecar, "load",
+                            classmethod(lambda cls, p: loads.append(p) or real(p)))
+
+        first = storage_manager.list_studies_summary_sync()[0]["exam_summary"]
+        first["indication"]["region"] = "tampered"   # must not leak into the cache
+        again = storage_manager.list_studies_summary_sync()[0]["exam_summary"]
+        assert len(loads) == 1
+        assert again["indication"]["region"] == "Chest"
+
+        ExamSidecar(1, dict(data, protocol_type="ADULT_BODY")).save(storage_manager.base_path)
+        assert (storage_manager.list_studies_summary_sync()[0]["exam_summary"]
+                ["protocol_type"] == "ADULT_BODY")
+        assert len(loads) == 2
+
     def test_study_with_corrupt_exam_sidecar_is_flagged_not_silently_empty(self, storage_manager):
         # Regression: a corrupt sidecar used to be indistinguishable from
         # "nothing extracted yet" — both rendered exam_summary: None.

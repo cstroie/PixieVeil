@@ -14,6 +14,7 @@ Classes:
 """
 
 import asyncio
+import copy
 import logging
 import os
 import shutil
@@ -272,10 +273,15 @@ class StorageManager:
         # the other's operations.
         self._manual_actions_in_progress: set = set()
         # First-.dcm header per series, keyed by path and validated by
-        # (mtime_ns, size): the completion loop re-checks every ready study
+        # (inode, mtime_ns, size): the completion loop re-checks every ready study
         # each tick, and an unchanged series should cost a stat, not a read.
         self._series_head_cache: dict = {}
         self._series_head_lock = threading.Lock()
+        # /api/studies exam summaries, keyed by exam path and validated by
+        # (inode, mtime_ns, size): every list request (one per live-update hint per
+        # open browser) otherwise re-parses every study's exam JSON.
+        self._exam_summary_cache: dict = {}
+        self._exam_summary_lock = threading.Lock()
         # study_number -> monotonic time of the last RHYTHM study-id lookup.
         self._rhythm_id_attempts: dict[int, float] = {}
         # Active pipeline stage counters (thread-safe via self.lock)
@@ -1592,21 +1598,40 @@ class StorageManager:
             entry = self._whitelist_sidecar(sc, location)
 
             exam_path = ExamSidecar.path_for(self.base_path, sc.study_number)
-            exam_data = None
-            exam_corrupt = False
-            if exam_path.exists():
-                try:
-                    exam_data = ExamSidecar.load(exam_path).data
-                except Exception:
-                    logger.warning("Corrupt exam sidecar %s — skipping", exam_path, exc_info=True)
-                    exam_corrupt = True
             # A corrupt sidecar must not render identically to "not yet
             # extracted" — a caller needs to know exam data exists but
             # couldn't be read, not just that the summary is empty.
-            entry["exam_summary"] = self._exam_summary(exam_data)
-            entry["exam_corrupt"] = exam_corrupt
+            entry["exam_summary"], entry["exam_corrupt"] = self._cached_exam_summary_sync(
+                exam_path)
             results.append(entry)
         return results
+
+    _EXAM_SUMMARY_CACHE_MAX = 8192
+
+    def _cached_exam_summary_sync(self, exam_path: Path) -> tuple[Optional[dict], bool]:
+        """``(summary, corrupt)`` for one exam sidecar; memoized until the
+        file's inode/mtime/size change. Returns a deep copy so callers can't alter
+        the cached value."""
+        try:
+            st = exam_path.stat()
+        except OSError:
+            return None, False  # not extracted yet
+        sig = (st.st_ino, st.st_mtime_ns, st.st_size)
+        key = str(exam_path)
+        with self._exam_summary_lock:
+            hit = self._exam_summary_cache.get(key)
+        if hit is None or hit[0] != sig:
+            try:
+                summary, corrupt = self._exam_summary(ExamSidecar.load(exam_path).data), False
+            except Exception:
+                logger.warning("Corrupt exam sidecar %s — skipping", exam_path, exc_info=True)
+                summary, corrupt = None, True
+            hit = (sig, summary, corrupt)
+            with self._exam_summary_lock:
+                if len(self._exam_summary_cache) >= self._EXAM_SUMMARY_CACHE_MAX:
+                    self._exam_summary_cache.clear()
+                self._exam_summary_cache[key] = hit
+        return copy.deepcopy(hit[1]), hit[2]
 
     def get_study_detail_sync(self, study_number: int) -> Optional[dict]:
         sc = self.find_sidecar_by_number(study_number)
@@ -1871,7 +1896,7 @@ class StorageManager:
     def _series_head_sync(self, series_dir: Path) -> tuple[Optional[Path], object]:
         """``(first .dcm, header)`` for a series folder, the header being a
         pixel-less Dataset or :attr:`_UNREADABLE`. ``(None, None)`` when the
-        folder holds no ``.dcm``. Cached until the file's mtime/size change."""
+        folder holds no ``.dcm``. Cached until the file's inode/mtime/size change."""
         first = next(iter(sorted(series_dir.glob("*.dcm"))), None)
         if first is None:
             return None, None
@@ -1879,7 +1904,7 @@ class StorageManager:
             st = first.stat()
         except OSError:
             return first, self._UNREADABLE
-        sig = (st.st_mtime_ns, st.st_size)
+        sig = (st.st_ino, st.st_mtime_ns, st.st_size)
         key = str(first)
         with self._series_head_lock:
             hit = self._series_head_cache.get(key)
