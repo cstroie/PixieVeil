@@ -622,6 +622,9 @@ class StorageManager:
         # Skip processing if shutting down
         if self._shutting_down:
             logger.debug(f"Skipping image {image_id} during shutdown")
+            # Nothing reprocesses temp_path: a leftover is a permanent
+            # copy of the raw, identifiable image.
+            image_path.unlink(missing_ok=True)
             return
 
         with self.lock:
@@ -729,9 +732,10 @@ class StorageManager:
             if is_new_series:
                 base_path = self.base_path
                 study_dir = base_path / f"{study_number:04d}"
+                new_study_dir = not study_dir.exists()
                 study_dir.mkdir(exist_ok=True)
                 self._flush_exam_hints_sync(study_dir, self._exam_hints.get(study_uid))
-                if not study_dir.exists():
+                if new_study_dir:
                     with self.lock:
                         self.inc_counter('storage', 'studies')
                 with self.lock:
@@ -802,6 +806,16 @@ class StorageManager:
                 self.counters['processing']['errors']['processing'] += 1
                 self.inc_counter('errors', 'total')
         finally:
+            # On success the file was moved into the study tree; on any
+            # early return or error it is still here, raw and identifiable
+            # (or half-anonymized) — and nothing else ever cleans temp_path.
+            try:
+                if image_path.exists():
+                    image_path.unlink()
+                    logger.warning("Discarded unprocessed received image %s", image_id)
+            except OSError:
+                logger.error("Could not delete unprocessed image %s", image_path,
+                             exc_info=True)
             with self.lock:
                 self._active_receiving -= 1
 

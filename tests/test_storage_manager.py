@@ -902,3 +902,81 @@ class TestCompletionLoop:
             await sm.completion_loop()
         asyncio.run(main())
         assert calls == []
+
+
+class TestProcessImageTempCleanup:
+    """process_image's failure/skip paths must not leave the raw, still
+    identifiable received image in temp_path: nothing else ever deletes or
+    reprocesses it, so a leftover is a permanent PHI copy."""
+
+    def _raw(self, sm, **attrs):
+        from pydicom.uid import generate_uid
+        sm.temp_path.mkdir(parents=True, exist_ok=True)
+        p = sm.temp_path / "img-1.dcm"
+        base = dict(StudyInstanceUID=generate_uid(), SeriesInstanceUID=generate_uid(),
+                    PatientID="REAL-PATIENT-42", PatientName="Doe^Jane")
+        base.update(attrs)
+        write_minimal_dicom(p, **{k: v for k, v in base.items() if v is not None})
+        return p
+
+    def test_success_moves_file_out_of_temp(self, storage_manager):
+        p = self._raw(storage_manager)
+        storage_manager.process_image(p, "img-1")
+        assert not p.exists()
+        assert list(storage_manager.base_path.rglob("0001.dcm"))
+
+    def test_invalid_dicom_is_deleted(self, storage_manager):
+        p = self._raw(storage_manager, SeriesInstanceUID=None)
+        storage_manager.process_image(p, "img-1")
+        assert not p.exists()
+        assert storage_manager.counters["processing"]["errors"]["validation"] == 1
+
+    def test_anonymization_failure_is_deleted(self, storage_manager, monkeypatch):
+        p = self._raw(storage_manager)
+
+        def boom(ds):
+            raise RuntimeError("anonymizer broke")
+        monkeypatch.setattr(storage_manager.anonymizer, "anonymize", boom)
+        storage_manager.process_image(p, "img-1")
+        assert not p.exists()
+        assert storage_manager.counters["processing"]["errors"]["anonymization"] == 1
+        assert not list(storage_manager.base_path.rglob("*.dcm"))
+
+    def test_unexpected_error_after_anonymization_is_deleted(self, storage_manager,
+                                                             monkeypatch):
+        p = self._raw(storage_manager)
+
+        def boom(*a, **k):
+            raise OSError("disk full")
+        monkeypatch.setattr(storage_manager.study_manager, "add_image_to_study", boom)
+        storage_manager.process_image(p, "img-1")
+        assert not p.exists()
+        assert storage_manager.counters["processing"]["errors"]["processing"] == 1
+
+    def test_unreadable_file_is_deleted(self, storage_manager):
+        storage_manager.temp_path.mkdir(parents=True, exist_ok=True)
+        p = storage_manager.temp_path / "img-1.dcm"
+        p.write_bytes(b"\0" * 10)
+        storage_manager.process_image(p, "img-1")
+        assert not p.exists()
+
+    def test_skipped_during_shutdown_is_deleted(self, storage_manager):
+        p = self._raw(storage_manager)
+        storage_manager._shutting_down = True
+        storage_manager.process_image(p, "img-1")
+        assert not p.exists()
+
+    def test_study_size_limit_drops_image(self, tmp_path):
+        from .conftest import make_settings
+        sm = StorageManager(make_settings(tmp_path, study={"max_study_size_mb": 0.000001}))
+        p = self._raw(sm)
+        sm.process_image(p, "img-1")
+        assert not p.exists()
+        assert sm.counters["processing"]["filtered_images"] == 1
+        assert not list(sm.base_path.rglob("*.dcm"))
+
+    def test_new_study_counts_in_storage_studies(self, storage_manager):
+        p = self._raw(storage_manager)
+        storage_manager.process_image(p, "img-1")
+        assert storage_manager.get_counter("storage", "studies") == 1
+        assert storage_manager.get_counter("storage", "series") == 1
