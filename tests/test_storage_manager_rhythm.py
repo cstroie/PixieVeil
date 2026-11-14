@@ -646,6 +646,26 @@ class TestExcludedSeriesHelper:
         excluded = sm._rhythm_excluded_series_sync(sm.base_path / "0001")
         assert excluded == {"0009", "0010"}
 
+    def test_series_header_read_once_until_file_changes(self, tmp_path, monkeypatch):
+        import pixieveil.storage.storage_manager as smod
+        sm = _manager(tmp_path)
+        f = sm.base_path / "0001" / "0001" / "a.dcm"
+        write_minimal_dicom(f, SOPClassUID=CTImageStorage)
+        reads = []
+        real = smod.pydicom.dcmread
+        monkeypatch.setattr(smod.pydicom, "dcmread",
+                            lambda *a, **k: reads.append(a[0]) or real(*a, **k))
+        study = sm.base_path / "0001"
+        sm._rhythm_excluded_series_sync(study)
+        sm._rhythm_anonymized_sync(study)
+        sm._rhythm_excluded_series_sync(study)
+        assert len(reads) == 1
+        # A rewrite (e.g. defacing) must invalidate the cached header.
+        write_minimal_dicom(f, SOPClassUID=SecondaryCaptureImageStorage)
+        os.utime(f, ns=(1, 1))
+        assert sm._rhythm_excluded_series_sync(study) == {"0001"}
+        assert len(reads) == 2
+
     def test_batch_id_uses_site_code(self, tmp_path):
         sm = _manager(tmp_path)
         assert sm._new_rhythm_batch_id().startswith("S001-")

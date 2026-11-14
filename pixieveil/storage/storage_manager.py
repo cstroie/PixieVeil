@@ -248,6 +248,11 @@ class StorageManager:
         # needing to translate between study_number and study_uid to guard
         # the other's operations.
         self._manual_actions_in_progress: set = set()
+        # First-.dcm header per series, keyed by path and validated by
+        # (mtime_ns, size): the completion loop re-checks every ready study
+        # each tick, and an unchanged series should cost a stat, not a read.
+        self._series_head_cache: dict = {}
+        self._series_head_lock = threading.Lock()
         # study_number -> monotonic time of the last RHYTHM study-id lookup.
         self._rhythm_id_attempts: dict[int, float] = {}
         # Active pipeline stage counters (thread-safe via self.lock)
@@ -1829,6 +1834,37 @@ class StorageManager:
         str(LegacyConvertedEnhancedCTImageStorage),
     })
 
+    _SERIES_HEAD_CACHE_MAX = 4096
+    _UNREADABLE = object()
+
+    def _series_head_sync(self, series_dir: Path) -> tuple[Optional[Path], object]:
+        """``(first .dcm, header)`` for a series folder, the header being a
+        pixel-less Dataset or :attr:`_UNREADABLE`. ``(None, None)`` when the
+        folder holds no ``.dcm``. Cached until the file's mtime/size change."""
+        first = next(iter(sorted(series_dir.glob("*.dcm"))), None)
+        if first is None:
+            return None, None
+        try:
+            st = first.stat()
+        except OSError:
+            return first, self._UNREADABLE
+        sig = (st.st_mtime_ns, st.st_size)
+        key = str(first)
+        with self._series_head_lock:
+            hit = self._series_head_cache.get(key)
+        if hit is not None and hit[0] == sig:
+            return first, hit[1]
+        try:
+            ds: object = pydicom.dcmread(key, stop_before_pixels=True, force=True)
+        except Exception:
+            logger.warning("Could not read series header %s", first, exc_info=True)
+            ds = self._UNREADABLE
+        with self._series_head_lock:
+            if len(self._series_head_cache) >= self._SERIES_HEAD_CACHE_MAX:
+                self._series_head_cache.clear()
+            self._series_head_cache[key] = (sig, ds)
+        return first, ds
+
     def _rhythm_excluded_series_sync(self, study_dir: Path) -> set:
         """Series-folder names under *study_dir* to leave out of a RHYTHM
         upload: every series whose representative object is not a CT image
@@ -1839,20 +1875,15 @@ class StorageManager:
         for series_dir in study_dir.iterdir():
             if not series_dir.is_dir() or not series_dir.name.isdigit():
                 continue
-            first_dcm = next(series_dir.glob("*.dcm"), None)
+            first_dcm, ds = self._series_head_sync(series_dir)
             if first_dcm is None:
                 continue
-            try:
-                ds = pydicom.dcmread(str(first_dcm), stop_before_pixels=True, force=True)
-                sop_class = str(getattr(ds, "SOPClassUID", ""))
-            except Exception:
-                logger.warning(
-                    "RHYTHM: could not classify series %s (%s) — excluding it",
-                    series_dir.name, first_dcm, exc_info=True,
-                )
+            if ds is self._UNREADABLE:
+                logger.warning("RHYTHM: could not classify series %s (%s) — excluding it",
+                               series_dir.name, first_dcm)
                 excluded.add(series_dir.name)
                 continue
-            if sop_class not in self._RHYTHM_CT_SOP_CLASSES:
+            if str(getattr(ds, "SOPClassUID", "")) not in self._RHYTHM_CT_SOP_CLASSES:
                 excluded.add(series_dir.name)
         return excluded
 
@@ -1875,18 +1906,8 @@ class StorageManager:
         for series_dir in sorted(study_dir.iterdir()):
             if not series_dir.is_dir() or not series_dir.name.isdigit():
                 continue
-            first_dcm = next(
-                (f for f in sorted(series_dir.glob("*.dcm"))
-                 if "_pre_deface" not in str(f)),
-                None,
-            )
-            if first_dcm is None:
-                continue
-            try:
-                ds = pydicom.dcmread(
-                    str(first_dcm), stop_before_pixels=True, force=True
-                )
-            except Exception:
+            first_dcm, ds = self._series_head_sync(series_dir)
+            if first_dcm is None or ds is self._UNREADABLE:
                 continue
             if str(getattr(ds, "SOPClassUID", "")) not in self._RHYTHM_CT_SOP_CLASSES:
                 continue
