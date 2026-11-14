@@ -284,6 +284,14 @@ class StudyManager:
             uid = self.number_map.get(study_number)
             return self._sidecars.get(uid) if uid is not None else None
 
+    def all_sidecars(self) -> list[StudySidecar]:
+        """Every known study's live sidecar (a list copy, so a study added
+        meanwhile can't break iteration). Authoritative: every sidecar write
+        goes through :meth:`_save`, and startup loads all of them, archived
+        and purged included — so callers needn't re-read ``*.state.json``."""
+        with self.lock:
+            return list(self._sidecars.values())
+
     def get_sidecar_by_uid(self, original_study_uid: str) -> Optional[StudySidecar]:
         with self.lock:
             return self._sidecars.get(original_study_uid)

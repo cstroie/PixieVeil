@@ -343,6 +343,24 @@ class TestReconcile:
         assert sm.get_counter("export", "rhythm_images") == 2
         assert sm.get_counter("cleanup", "studies") == 1
 
+    def test_completion_loop_steps_use_in_memory_sidecars(self, tmp_path, monkeypatch):
+        from pixieveil.storage.study_sidecar import StudySidecar
+        sm = _manager(tmp_path, retain_days=7)
+        sm.rhythm_storage = FakeRhythm(
+            job_result=RhythmUploadResult(ok=True, status="COMPLETE"))
+        self._study_with_pending_job(sm)
+
+        def no_disk_scan(*a, **k):
+            raise AssertionError("completion loop must not re-read every sidecar")
+        monkeypatch.setattr(StudySidecar, "load_all", classmethod(no_disk_scan))
+
+        asyncio.run(sm.reconcile_rhythm_jobs())
+        assert sm.find_sidecar_by_number(1).status == "archived"
+        sm.find_sidecar_by_number(1).exported_at = _iso_ago(8 * 86400)
+        sm.enforce_retention_purge_sync()
+        assert sm.find_sidecar_by_number(1).purged_at is not None
+        asyncio.run(sm.prepare_ready_exports())
+
     def test_retry_started_during_poll_is_not_overwritten(self, tmp_path):
         """The operator retries while the old job's poll is awaiting: the old
         job's FAILED must not land on the new attempt (it would look

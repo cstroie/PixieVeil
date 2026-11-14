@@ -1246,7 +1246,7 @@ class StorageManager:
             cutoff = datetime.now(timezone.utc).timestamp() - (retain_days * 86400)
         else:
             cutoff = float("inf")  # retention off: everything exported is due
-        for sc in StudySidecar.load_all(self.base_path).values():
+        for sc in self.study_manager.all_sidecars():
             # No exported_at → never purge: either a RHYTHM job that hasn't
             # confirmed COMPLETE (keep the retry source), or a study archived
             # before this field existed (its dir, if any, stays put).
@@ -2176,7 +2176,7 @@ class StorageManager:
         for any that no longer qualify. Self-healing — covers studies made
         ready before this existed and edits that changed the manifest."""
         def _run() -> None:
-            for sc in StudySidecar.load_all(self.base_path).values():
+            for sc in self.study_manager.all_sidecars():
                 if (sc.status == "ready"
                         and sc.study_number not in self._manual_actions_in_progress):
                     try:
@@ -2418,7 +2418,7 @@ class StorageManager:
         """
         if not self.rhythm_storage.enabled:
             return
-        for sc in StudySidecar.load_all(self.base_path).values():
+        for sc in self.study_manager.all_sidecars():
             url = getattr(sc, "rhythm_job_status_url", None)
             if sc.rhythm_status == "COMPLETE" and not sc.rhythm_repository_study_id:
                 # Backfill: COMPLETE before this existed, or the lookup
