@@ -23,6 +23,17 @@ from pixieveil.storage.storage_manager import StorageManager
 logger = logging.getLogger(__name__)
 
 
+REQUIRED_UIDS = ("SOPClassUID", "SOPInstanceUID", "StudyInstanceUID", "SeriesInstanceUID")
+
+
+def missing_required_uid(ds: pydicom.Dataset) -> str | None:
+    """The first required UID that is absent or blank, else None."""
+    for keyword in REQUIRED_UIDS:
+        if not str(getattr(ds, keyword, "") or "").strip():
+            return keyword
+    return None
+
+
 class CStoreSCPHandler:
     """
     Handles C-STORE SCP (Service Class Provider) requests from DICOM modalities.
@@ -123,8 +134,8 @@ class CStoreSCPHandler:
         Returns:
             bool: True if the DICOM dataset is valid, False otherwise
         """
-        # Basic validation
-        if not hasattr(ds, "SOPClassUID") or not hasattr(ds, "SOPInstanceUID"):
-            return False
-
-        return True
+        # Must match StorageManager.validate_dicom: anything that passes here
+        # is acknowledged to the modality with 0x0000, so an image the
+        # pipeline would then drop for a missing/blank UID must be refused
+        # now, while the sender can still see the failure and retry.
+        return missing_required_uid(ds) is None

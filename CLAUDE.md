@@ -75,7 +75,7 @@ heavy conversion steps stubbed at the instance level), and `dicom_server`
 (`CStoreSCPHandler.validate_dicom`/`handle_c_store` against a small fake
 StorageManager that records calls and can be told to raise, plus one
 integration test wiring up the real `StorageManager` to catch signature
-drift; `DicomServer`'s config, the C-ECHO/C-STORE event adapters, the
+drift; `tests/test_dicom_server_loopback.py` sends real C-STOREs over 127.0.0.1 into `DicomServer.handle_c_store` → real `StorageManager`; `DicomServer`'s config, the C-ECHO/C-STORE event adapters, the
 port-already-bound guard in `start()` via a real socket bind, and `stop()`'s
 shutdown bookkeeping via a fake `AE`), `ZipManager` (pure filesystem/zip
 logic — arcname layout, `_pre_deface` exclusion, the default-vs-explicit

@@ -56,6 +56,8 @@ def make_dataset(with_uids: bool = True) -> pydicom.Dataset:
     if with_uids:
         ds.SOPClassUID = "1.2.840.10008.5.1.4.1.1.7"
         ds.SOPInstanceUID = "1.2.840.99999.1"
+        ds.StudyInstanceUID = "1.2.840.99999.2"
+        ds.SeriesInstanceUID = "1.2.840.99999.3"
     return ds
 
 
@@ -83,6 +85,31 @@ class TestValidateDicom:
     def test_invalid_when_both_missing(self):
         handler = make_handler()
         assert handler.validate_dicom(pydicom.Dataset()) is False
+
+
+class TestValidateMatchesPipeline:
+    """The handler acknowledges what it validates, so it must refuse
+    everything StorageManager.validate_dicom would later drop."""
+
+    @pytest.mark.parametrize("keyword", ["StudyInstanceUID", "SeriesInstanceUID",
+                                         "SOPInstanceUID", "SOPClassUID"])
+    @pytest.mark.parametrize("value", [None, "", "   "])
+    def test_missing_or_blank_uid_rejected_by_both(self, tmp_path, keyword, value):
+        from pixieveil.storage.storage_manager import StorageManager
+        ds = make_dataset()
+        if value is None:
+            delattr(ds, keyword)
+        else:
+            setattr(ds, keyword, value)
+        assert make_handler().validate_dicom(ds) is False
+        if keyword != "SOPClassUID":
+            assert StorageManager(make_settings(tmp_path)).validate_dicom(ds) is False
+
+    def test_full_dataset_accepted_by_both(self, tmp_path):
+        from pixieveil.storage.storage_manager import StorageManager
+        ds = make_dataset()
+        assert make_handler().validate_dicom(ds) is True
+        assert StorageManager(make_settings(tmp_path)).validate_dicom(ds) is True
 
 
 class TestHandleCStore:

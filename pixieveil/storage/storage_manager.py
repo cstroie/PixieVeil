@@ -834,11 +834,11 @@ class StorageManager:
         """
         logger.debug("Validating DICOM dataset")
         # Basic validation
-        required_fields = ["StudyInstanceUID", "SeriesInstanceUID", "SOPInstanceUID"]
-        for field in required_fields:
-            if not hasattr(ds, field):
-                logger.warning(f"Missing required field: {field}")
-                return False
+        from pixieveil.dicom_server.handlers import missing_required_uid
+        missing = missing_required_uid(ds)
+        if missing is not None:
+            logger.warning(f"Missing required field: {missing}")
+            return False
 
         logger.debug("DICOM validation passed")
         return True
