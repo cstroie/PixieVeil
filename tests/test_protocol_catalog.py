@@ -572,7 +572,7 @@ class TestProtocolsApi:
         d = _dash_with_catalog(tmp_path)
         pages = ("/", "/studies", "/about", "/users", "/protocols")
         for page, (_, html) in zip(pages, _calls(d, *[("GET", p, {}) for p in pages])):
-            nav = html[html.index('<nav class="nav">'):html.index("</nav>")]
+            nav = html[html.index('<nav class="nav"'):html.index("</nav>")]
             order = [nav.index(f'href="/{p}"') for p in ("studies", "protocols", "about")]
             assert order == sorted(order), page
 

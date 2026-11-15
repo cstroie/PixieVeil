@@ -11,14 +11,14 @@ Classes:
 
 import yaml
 from pathlib import Path
-from typing import Dict, Any, Optional, Union
+from typing import Dict, Any, Optional
 from pydantic import BaseModel, Field, PrivateAttr
 
 
 class AnonymizationProfile(BaseModel):
     """
     Configuration for a single anonymization profile.
-    
+
     This class defines how specific DICOM fields should be handled during anonymization.
     Field values can be:
     - null: clear the field (set to empty string)
@@ -27,7 +27,7 @@ class AnonymizationProfile(BaseModel):
     - "KEEP": retain the original value without modification
     - "CLEAR": set to empty string (same as null)
     - string literal: replace with the specified string (e.g., "ANON", "DEID_CENTER")
-    
+
     Attributes:
         PatientName: How to handle patient name
         PatientID: How to handle patient ID
@@ -79,11 +79,11 @@ class AnonymizationProfile(BaseModel):
 class Settings(BaseModel):
     """
     Main configuration class that manages all application settings.
-    
+
     This class provides centralized configuration management for the PixieVeil application.
     It uses Pydantic for data validation and type checking, ensuring that all configuration
     values are properly validated against expected types and constraints.
-    
+
     The configuration includes settings for:
     - DICOM server configuration (port, AE title, etc.)
     - Anonymization rules and preferences
@@ -92,7 +92,7 @@ class Settings(BaseModel):
     - Study completion timeout settings
     - Series filtering criteria
     - Logging configuration
-    
+
     Attributes:
         dicom_server (Dict[str, Any]): Configuration for DICOM server settings
         anonymization (Dict[str, Any]): Configuration for DICOM anonymization rules
@@ -101,13 +101,13 @@ class Settings(BaseModel):
         study (Dict[str, Any]): Configuration for study completion settings
         series_filter (Dict[str, Any]): Configuration for series filtering criteria
         logging (Dict[str, Any]): Configuration for logging settings
-        
+
     Note:
         All configuration sections use default empty dictionaries to ensure
         the application can start even if specific sections are not defined
         in the configuration file.
     """
-    
+
     dicom_server: Dict[str, Any] = Field(default_factory=dict)
     anonymization: Dict[str, Any] = Field(default_factory=dict)
     storage: Dict[str, Any] = Field(default_factory=dict)
@@ -128,28 +128,28 @@ class Settings(BaseModel):
     def load(cls, config_path: Optional[Path] = None) -> "Settings":
         """
         Load application settings from a YAML configuration file.
-        
+
         This class method loads and validates application settings from a YAML file.
         It provides intelligent fallback behavior to ensure the application can
         start even if the primary configuration file is missing.
-        
+
         The method follows this priority order for configuration file loading:
         1. Custom config_path if provided
         2. config/settings.yaml if it exists
         3. config/settings.example.yaml as fallback
-        
+
         Args:
             config_path (Path, optional): Custom path to configuration file.
                                         If None, uses default locations.
-                
+
         Returns:
             Settings: A validated Settings instance containing all configuration data
-                
+
         Raises:
             FileNotFoundError: If no configuration file can be found
             yaml.YAMLError: If the configuration file contains invalid YAML
             ValidationError: If the configuration data doesn't match expected schema
-                
+
         Note:
             The method uses Pydantic's validation to ensure all configuration
             values are properly typed and validated before returning the Settings instance.
@@ -169,21 +169,21 @@ class Settings(BaseModel):
         instance = cls(**config_data)
         instance._source_path = config_path
         return instance
-    
+
     def get_anonymization_profile(self, profile_name: Optional[str] = None) -> AnonymizationProfile:
         """
         Get an anonymization profile by name, with fallback to default profile.
-        
+
         Args:
             profile_name (str, optional): Name of the profile to retrieve. If None,
                                         uses the default profile from config.
-                
+
         Returns:
             AnonymizationProfile: The requested or default anonymization profile
-                
+
         Raises:
             ValueError: If the requested profile does not exist
-            
+
         Note:
             If the anonymization section is not configured, returns a default
             research profile for backward compatibility.
@@ -211,19 +211,19 @@ class Settings(BaseModel):
                 PixelBlackout=False,
                 RetainStudyDate=True
             )
-        
+
         # Determine which profile to use
         if profile_name is None:
             profile_name = self.anonymization.get("profile", "research")
-        
+
         # Get profiles dict
         profiles = self.anonymization.get("profiles", {})
-        
+
         if profile_name not in profiles:
             raise ValueError(
                 f"Anonymization profile '{profile_name}' not found. "
                 f"Available profiles: {list(profiles.keys())}"
             )
-        
+
         profile_data = profiles[profile_name]
         return AnonymizationProfile(**profile_data)

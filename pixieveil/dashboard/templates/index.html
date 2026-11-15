@@ -1,318 +1,324 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PixieVeil · Status</title>
-    <script>
-        try { document.documentElement.dataset.theme = localStorage.getItem('pixieveil_theme') || 'dark'; }
-        catch (_e) { document.documentElement.dataset.theme = 'dark'; }
-    </script>
-    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='1' y='1' width='30' height='30' rx='8' fill='%23151b22' stroke='%233cc8c0' stroke-width='2'/%3E%3Cg fill='%233cc8c0'%3E%3Crect x='8' y='8' width='4' height='4' rx='1'/%3E%3Crect x='14' y='8' width='4' height='4' rx='1' opacity='.6'/%3E%3Crect x='8' y='14' width='4' height='4' rx='1' opacity='.6'/%3E%3Crect x='20' y='8' width='4' height='4' rx='1' opacity='.3'/%3E%3Crect x='14' y='14' width='4' height='4' rx='1' opacity='.3'/%3E%3Crect x='8' y='20' width='4' height='4' rx='1' opacity='.3'/%3E%3C/g%3E%3C/svg%3E">
-    <link rel="stylesheet" href="/static/theme.css">
+    <!--pv:head-->
+    <title>Status – PixieVeil</title>
     <style>
-        .page { max-width: 1180px; margin: 0 auto; padding: 28px 20px 48px; display: flex; flex-direction: column; gap: 20px; }
+        .page { max-width: 1120px; margin: 0 auto; padding: 28px 20px 56px; display: flex; flex-direction: column; gap: 28px; }
 
-        .hero { display: flex; align-items: flex-end; gap: 16px; flex-wrap: wrap; }
-        .hero h1 { font-size: 22px; }
-        .hero .meta { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
-        .hero .spacer { flex: 1; }
+        .page-head { display: flex; align-items: baseline; gap: 12px 20px; flex-wrap: wrap; }
+        .page-head h1 { font-size: 22px; }
+        .page-head .meta { display: flex; gap: 6px 18px; flex-wrap: wrap; color: var(--text-dim); font-size: 13px; }
+        .page-head .meta .on { color: var(--ok); font-weight: 600; }
+        .page-head .meta .off { color: var(--text-faint); }
+        h2.section { font-size: 14px; font-weight: 650; margin-bottom: 10px; }
 
-        /* ------------------------------------------------ pipeline */
-        .pipeline { padding: 26px 22px 22px; }
-        .stages { display: grid; grid-template-columns: 1fr 56px 1fr 56px 1fr 56px 1fr; align-items: start; }
-        .stage {
-            display: flex; flex-direction: column; align-items: center; text-align: center; gap: 4px;
-            padding: 6px 4px; border-radius: var(--radius); color: inherit;
-        }
-        a.stage:hover { background: var(--hover); color: inherit; }
-        .stage-ring {
-            position: relative; width: 52px; height: 52px; margin-bottom: 8px;
-            display: grid; place-items: center; border-radius: 50%;
-            border: 1.5px solid var(--border-strong); background: var(--raised); color: var(--text-dim);
-            transition: border-color 0.3s, color 0.3s, background 0.3s;
-        }
-        .stage-ring svg { width: 22px; height: 22px; }
-        .stage.is-active .stage-ring { border-color: var(--busy); color: var(--busy); background: var(--busy-soft); }
-        .stage.is-active .stage-ring::after {
-            content: ""; position: absolute; inset: -6px; border-radius: 50%;
-            border: 1.5px solid var(--busy); opacity: 0; animation: ripple 1.8s ease-out infinite;
-        }
-        .stage.tone-ok .stage-ring { border-color: var(--ok); color: var(--ok); background: var(--ok-soft); }
-        @keyframes ripple { 0% { opacity: 0.7; transform: scale(0.9); } 100% { opacity: 0; transform: scale(1.35); } }
-        .stage-ring { order: 0; } .stage-count { order: 1; } .stage-text { order: 2; } .stage-extra { order: 3; }
-        .stage-count { font-size: 30px; font-weight: 650; line-height: 1.1; letter-spacing: -0.02em; }
+        /* ------------------------------------------------ the strip
+           One column per pipeline stage, one slice per study. A slice is a
+           link to that study, coloured by what it is waiting on. */
+        .strip { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+        .stage { padding: 18px 20px 16px; border-left: 1px solid var(--border); min-width: 0; }
+        .stage:first-child { border-left: 0; }
+        .stage-name { font-weight: 600; color: var(--text-dim); display: flex; align-items: center; gap: 8px; }
+        .stage-name .now { font-size: 12px; font-weight: 600; color: var(--busy); }
+        .stage-count { font-size: 40px; font-weight: 600; line-height: 1.15; letter-spacing: -0.02em; margin-top: 2px; }
         .stage-count.zero { color: var(--text-faint); }
-        .stage-label { font-weight: 600; }
-        .stage-sub { font-size: 12px; color: var(--text-faint); min-height: 18px; }
-        .stage-state { font-size: 11.5px; font-weight: 600; color: var(--busy); min-height: 18px; }
-        .stage-extra { margin-top: 6px; min-height: 22px; }
+        .stage-note { font-size: 12.5px; color: var(--text-faint); min-height: 19px; }
+        .stage-note a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
+        .stage-note a:hover { color: var(--text); }
 
-        .flow { position: relative; height: 2px; margin-top: 26px; background: var(--border-strong); border-radius: 2px; overflow: hidden; }
-        .flow.is-active {
-            background: repeating-linear-gradient(90deg, var(--busy) 0 8px, transparent 8px 14px);
-            background-size: 28px 2px; animation: flow 0.8s linear infinite;
+        .slices { display: flex; flex-wrap: wrap; gap: 3px; margin: 14px 0 12px; min-height: 30px; align-content: flex-start; }
+        .slice {
+            width: 9px; height: 30px; border-radius: 1px; flex: none;
+            background: var(--border-strong);
         }
-        @keyframes flow { to { background-position: 28px 0; } }
+        a.slice:hover, a.slice:focus-visible { outline: 2px solid var(--text); outline-offset: 1px; }
+        .slice.ok { background: var(--ok); }
+        .slice.warn { background: var(--warn); }
+        .slice.bad { background: var(--bad); }
+        .slice.busy { background: var(--busy); animation: breathe 1.6s ease-in-out infinite; }
+        .slice.done { background: var(--border-strong); }
+        .slices .more { align-self: center; margin-left: 4px; font-size: 12px; color: var(--text-faint); }
+        .slices .none { align-self: center; font-size: 12.5px; color: var(--text-faint); }
+        @keyframes breathe { 50% { opacity: 0.4; } }
 
-        /* ------------------------------------------------ callouts */
-        .callouts { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
-        .callouts:empty { display: none; }
-        a.callout { color: var(--text-dim); transition: transform 0.12s, border-color 0.12s; }
-        a.callout:hover { transform: translateY(-1px); border-color: var(--border-strong); color: var(--text-dim); }
-        .callout .go { margin-left: auto; align-self: center; opacity: 0.6; }
-        .callout.ok svg { color: var(--ok); }
+        .legend { display: flex; gap: 6px 18px; flex-wrap: wrap; padding: 10px 20px; border-top: 1px solid var(--border); font-size: 12px; color: var(--text-dim); }
+        .legend span { display: inline-flex; align-items: center; gap: 6px; }
+        .legend i { width: 7px; height: 12px; border-radius: 1px; background: var(--border-strong); }
+        .legend .ok { background: var(--ok); } .legend .warn { background: var(--warn); }
+        .legend .bad { background: var(--bad); } .legend .busy { background: var(--busy); }
 
-        /* ------------------------------------------------ KPIs */
-        .kpis { display: grid; gap: 12px; grid-template-columns: repeat(5, minmax(0, 1fr)); }
-        .kpi { padding: 16px 18px; }
-        .kpi .k-label { font-size: 12px; font-weight: 600; color: var(--text-dim); }
-        .kpi .k-value { font-size: 26px; font-weight: 650; letter-spacing: -0.02em; margin: 6px 0 2px; }
-        .kpi .k-sub { font-size: 12px; color: var(--text-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        .kpi.alert .k-value { color: var(--bad); }
+        /* ------------------------------------------------ to do */
+        .todo { list-style: none; margin: 0; padding: 0; }
+        .todo li { border-top: 1px solid var(--border); }
+        .todo li:first-child { border-top: 0; }
+        .todo .item { display: grid; grid-template-columns: 4px minmax(0, 1fr) auto; gap: 14px; align-items: center; padding: 12px 18px 12px 0; color: inherit; }
+        .todo a.item:hover { background: var(--raised); color: inherit; }
+        .todo .bar { align-self: stretch; background: var(--border-strong); }
+        .todo .warn .bar { background: var(--warn); } .todo .bad .bar { background: var(--bad); }
+        .todo .ok .bar { background: var(--ok); } .todo .info .bar { background: var(--busy); }
+        .todo strong { display: block; font-weight: 600; }
+        .todo .why { color: var(--text-dim); font-size: 13px; }
+        .todo .go { color: var(--accent); font-weight: 550; white-space: nowrap; }
 
-        /* ------------------------------------------------ counters drawer */
+        /* ------------------------------------------------ figures */
+        .figures { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); }
+        .figure { padding: 14px 18px; border-left: 1px solid var(--border); min-width: 0; }
+        .figure:first-child { border-left: 0; }
+        .figure .f-label { font-size: 12.5px; color: var(--text-dim); }
+        .figure .f-value { font-size: 22px; font-weight: 600; letter-spacing: -0.01em; margin: 2px 0; }
+        .figure .f-sub { font-size: 12px; color: var(--text-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .figure.alert .f-value { color: var(--bad); }
+
         details.drawer > summary {
-            list-style: none; cursor: pointer; display: flex; align-items: center; gap: 10px;
-            padding: 14px 18px; font-weight: 600; color: var(--text-dim);
+            list-style: none; cursor: pointer; display: flex; align-items: center; gap: 8px;
+            padding: 12px 18px; font-weight: 550; color: var(--text-dim); border-top: 1px solid var(--border);
         }
         details.drawer > summary::-webkit-details-marker { display: none; }
-        details.drawer > summary svg { width: 16px; height: 16px; transition: transform 0.15s; }
+        details.drawer > summary svg { width: 15px; height: 15px; transition: transform 0.15s; }
         details.drawer[open] > summary svg { transform: rotate(90deg); }
         details.drawer > summary:hover { color: var(--text); }
-        .details-grid {
-            display: grid; gap: 22px 28px; padding: 4px 18px 20px;
-            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-        }
-        .details-grid h4 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-faint); margin-bottom: 6px; }
-        .kv { display: flex; justify-content: space-between; gap: 12px; padding: 5px 0; border-bottom: 1px dashed var(--border); font-size: 13px; }
-        .kv:last-child { border-bottom: 0; }
-        .kv span:first-child { color: var(--text-dim); }
+        .details-grid { display: grid; gap: 20px 32px; padding: 6px 18px 18px; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); }
+        .details-grid h3 { font-size: 13px; font-weight: 650; margin-bottom: 2px; }
+        .details-grid .facts { font-size: 13px; }
 
-        @media (max-width: 900px) {
-            .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-            .stages { grid-template-columns: 1fr; gap: 6px; }
-            .stage { flex-direction: row; text-align: left; gap: 14px; flex-wrap: wrap; }
-            .stage-ring { margin: 0; }
-            .stage-count { order: 3; margin-left: auto; }
-            .flow { width: 2px; height: 16px; margin: 0 0 0 31px; }
-            .flow.is-active { background: repeating-linear-gradient(180deg, var(--busy) 0 6px, transparent 6px 10px); background-size: 2px 20px; animation: none; }
-            .stage-text { display: flex; flex-direction: column; }
+        @media (max-width: 860px) {
+            .strip { grid-template-columns: 1fr 1fr; }
+            .stage:nth-child(3) { border-left: 0; }
+            .stage:nth-child(n+3) { border-top: 1px solid var(--border); }
+            .figures { grid-template-columns: 1fr 1fr; }
+            .figure { border-left: 0; border-top: 1px solid var(--border); }
+            .figure:nth-child(-n+2) { border-top: 0; }
+            .figure:nth-child(even) { border-left: 1px solid var(--border); }
         }
-        @media (max-width: 560px) {
-            .topbar .brand small, .conn .label { display: none; }
-            .topbar { gap: 12px; }
+        @media (max-width: 520px) {
+            .page { padding: 20px 16px 40px; }
+            .strip { grid-template-columns: 1fr; }
+            .stage { border-left: 0; border-top: 1px solid var(--border); }
+            .stage:first-child { border-top: 0; }
+            .todo .item { grid-template-columns: 4px minmax(0, 1fr); }
+            .todo .go { grid-column: 2; }
+            .todo .bar { grid-row: 1 / span 2; }
         }
     </style>
 </head>
 <body>
-    <header class="topbar">
-        <a class="brand" href="/">
-            <svg viewBox="0 0 32 32" aria-hidden="true"><rect x="1.5" y="1.5" width="29" height="29" rx="8" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.5"/><g fill="var(--accent)"><rect x="8" y="8" width="4" height="4" rx="1"/><rect x="14" y="8" width="4" height="4" rx="1" opacity=".6"/><rect x="8" y="14" width="4" height="4" rx="1" opacity=".6"/><rect x="20" y="8" width="4" height="4" rx="1" opacity=".3"/><rect x="14" y="14" width="4" height="4" rx="1" opacity=".3"/><rect x="8" y="20" width="4" height="4" rx="1" opacity=".3"/></g><path d="M8 25.5C14 24 21 18 25 8" stroke="var(--accent)" stroke-width="1.6" fill="none" stroke-linecap="round"/></svg>
-            <span>PixieVeil <small>DICOM anonymizer</small></span>
-        </a>
-        <nav class="nav">
-            <a href="/" aria-current="page">Status</a>
-            <a href="/studies">Studies<span class="count" id="nav-needs" hidden></span></a>
-            <a href="/protocols">Protocols</a>
-            <a href="/about">About</a>
-        </nav>
-        <div class="spacer"></div>
-        <span class="conn" id="conn"><span class="dot"></span><span class="label">Connecting…</span></span>
-        <button type="button" class="btn btn-ghost btn-icon" data-theme-toggle></button>
-    </header>
+    <!--pv:topbar-->
 
     <main class="page">
-        <section class="hero">
-            <div>
-                <h1>Pipeline</h1>
-                <div class="meta" id="meta"><span class="skeleton" style="width:220px"></span></div>
+        <header class="page-head">
+            <h1>Status</h1>
+            <div class="meta" id="meta"><span class="skeleton" style="width:240px"></span></div>
+        </header>
+
+        <section aria-labelledby="h-pipeline">
+            <h2 class="section" id="h-pipeline">Studies in the pipeline</h2>
+            <div class="card">
+                <div class="strip">
+                    <div class="stage" id="st-receive">
+                        <div class="stage-name">Receiving <span class="now"></span></div>
+                        <div class="stage-count num">–</div>
+                        <div class="slices"></div>
+                        <div class="stage-note">Arriving by C-STORE, anonymized on receipt</div>
+                    </div>
+                    <div class="stage" id="st-process">
+                        <div class="stage-name">Processing <span class="now"></span></div>
+                        <div class="stage-count num">–</div>
+                        <div class="slices"></div>
+                        <div class="stage-note"></div>
+                    </div>
+                    <div class="stage" id="st-ready">
+                        <div class="stage-name">Ready to export <span class="now"></span></div>
+                        <div class="stage-count num">–</div>
+                        <div class="slices"></div>
+                        <div class="stage-note">Nothing is sent until you send it</div>
+                    </div>
+                    <div class="stage" id="st-exported">
+                        <div class="stage-name">Exported <span class="now"></span></div>
+                        <div class="stage-count num">–</div>
+                        <div class="slices"></div>
+                        <div class="stage-note"></div>
+                    </div>
+                </div>
+                <div class="legend" aria-hidden="true">
+                    <span><i class="busy"></i>In progress</span>
+                    <span><i class="warn"></i>Needs data entry</span>
+                    <span><i class="ok"></i>Complete, ready to send</span>
+                    <span><i class="bad"></i>Blocked</span>
+                    <span><i></i>Exported</span>
+                </div>
             </div>
         </section>
 
-        <section class="card pipeline" aria-label="Processing pipeline">
-            <div class="stages">
-                <a class="stage" id="st-receive" href="/studies?filter=progress">
-                    <div class="stage-ring" data-icon="inbox"></div>
-                    <div class="stage-text">
-                        <div class="stage-label">Receive</div>
-                        <div class="stage-sub">C-STORE · anonymize</div>
-                        <div class="stage-state"></div>
-                    </div>
-                    <div class="stage-count num">–</div>
-                </a>
-                <div class="flow" id="fl-1"></div>
-                <a class="stage" id="st-process" href="/studies?filter=progress">
-                    <div class="stage-ring" data-icon="redo"></div>
-                    <div class="stage-text">
-                        <div class="stage-label">Process</div>
-                        <div class="stage-sub">extract · deface</div>
-                        <div class="stage-state"></div>
-                    </div>
-                    <div class="stage-count num">–</div>
-                    <div class="stage-extra"></div>
-                </a>
-                <div class="flow" id="fl-2"></div>
-                <a class="stage" id="st-ready" href="/studies?filter=ready">
-                    <div class="stage-ring" data-icon="check"></div>
-                    <div class="stage-text">
-                        <div class="stage-label">Ready</div>
-                        <div class="stage-sub">awaiting manual export</div>
-                        <div class="stage-state"></div>
-                    </div>
-                    <div class="stage-count num">–</div>
-                </a>
-                <div class="flow" id="fl-3"></div>
-                <a class="stage" id="st-exported" href="/studies?filter=exported">
-                    <div class="stage-ring" data-icon="send"></div>
-                    <div class="stage-text">
-                        <div class="stage-label">Exported</div>
-                        <div class="stage-sub">&nbsp;</div>
-                        <div class="stage-state"></div>
-                    </div>
-                    <div class="stage-count num">–</div>
-                </a>
-            </div>
+        <section aria-labelledby="h-todo">
+            <h2 class="section" id="h-todo">Waiting on you</h2>
+            <div class="card"><ul class="todo" id="todo" aria-live="polite">
+                <li><div class="item"><span class="bar"></span><span class="skeleton" style="width:260px"></span></div></li>
+            </ul></div>
         </section>
 
-        <section class="callouts" id="callouts" aria-live="polite"></section>
-
-        <section class="kpis" id="kpis"></section>
-
-        <details class="card drawer" id="drawer">
-            <summary><span data-icon="chevron"></span>All counters</summary>
-            <div class="details-grid" id="details"></div>
-        </details>
+        <section aria-labelledby="h-figures">
+            <h2 class="section" id="h-figures">Since the server started</h2>
+            <div class="card">
+                <div class="figures" id="figures"></div>
+                <details class="drawer" id="drawer">
+                    <summary><span data-icon="chevron"></span>All counters</summary>
+                    <div class="details-grid" id="details"></div>
+                </details>
+            </div>
+        </section>
     </main>
 
     <script src="/static/common.js"></script>
     <script>
         'use strict';
-        const { esc, fmtInt, icon } = PV;
+        const { esc, fmtInt, icon, pad4 } = PV;
         let tick = 0;
         let live = null;   // PV.live() handle, set below
         let studies = null;
+        let lastStats = null;
 
         document.querySelectorAll('[data-icon]').forEach(el => { el.innerHTML = icon(el.dataset.icon); });
 
-        function setStage(id, { count, active, sub, state, tone, extra }) {
+        // Which column a study sits in, and the tone of its slice.
+        const IN_PROGRESS = ['complete', 'defacing'];
+        const BLOCKED = ['defacing_failed', 'defacing_disabled'];
+        function place(s) {
+            if (s.status === 'receiving') return ['st-receive', 'busy'];
+            if (IN_PROGRESS.includes(s.status)) return ['st-process', 'busy'];
+            if (BLOCKED.includes(s.status)) return ['st-process', 'bad'];
+            if (s.status === 'archived') return ['st-exported', 'done'];
+            return ['st-ready', PV.needsInput(s) ? 'warn' : 'ok'];
+        }
+        function sliceTitle(s) {
+            const label = (PV.STATUS[s.status] || { label: s.status }).label;
+            const missing = PV.missingLabels((s.exam_summary || {}).missing_fields);
+            const tail = s.status === 'ready' && missing.length ? `, missing ${missing.join(', ')}` : '';
+            return `Study ${pad4(s.study_number)}: ${label}${tail}`;
+        }
+
+        const MAX_SLICES = 48;
+        function renderStage(id, list, { count, active, now, note }) {
             const el = document.getElementById(id);
-            el.classList.toggle('is-active', !!active);
-            el.classList.toggle('tone-ok', tone === 'ok' && !active);
             const c = el.querySelector('.stage-count');
             c.textContent = fmtInt(count);
             c.classList.toggle('zero', !count);
-            if (sub !== undefined) el.querySelector('.stage-sub').textContent = sub;
-            el.querySelector('.stage-state').textContent = active ? (state || 'working…') : '';
-            const ex = el.querySelector('.stage-extra');
-            if (ex) ex.innerHTML = extra || '';
+            el.querySelector('.now').textContent = active ? (now || 'working') : '';
+            if (note !== undefined) el.querySelector('.stage-note').innerHTML = note;
+            const host = el.querySelector('.slices');
+            if (!list) return;               // study list not loaded yet
+            // Newest first; an overflowing column keeps the newest ones.
+            const shown = list.slice(-MAX_SLICES).reverse();
+            host.innerHTML = shown.map(([s, tone]) =>
+                `<a class="slice ${tone}" href="/studies#${s.study_number}" title="${esc(sliceTitle(s))}"
+                    aria-label="${esc(sliceTitle(s))}"></a>`).join('')
+                + (list.length > shown.length
+                    ? `<span class="more">+${fmtInt(list.length - shown.length)} earlier</span>` : '')
+                || '<span class="none">None</span>';
         }
 
         function renderPipeline(data) {
             const a = data.pipeline.active || {};
             const sc = data.pipeline.status_counts || {};
             const caps = data.capabilities || {};
-            setStage('st-receive', { count: sc.receiving, active: a.receiving, state: 'receiving images' });
-            setStage('st-process', {
-                count: (sc.complete || 0) + (sc.defacing || 0),
-                active: a.waiting || a.defacing,
-                state: a.defacing ? 'defacing' : 'extracting',
-                sub: data.defacing_enabled ? 'extract · deface' : 'extract · defacing off',
-                extra: (sc.defacing_failed
-                    ? `<span class="pill bad">${sc.defacing_failed} deface failed</span>` : '')
-                    + (sc.defacing_disabled
-                    ? `<span class="pill bad">${sc.defacing_disabled} defacing disabled</span>` : ''),
-            });
-            setStage('st-ready', { count: sc.ready, tone: sc.ready ? 'ok' : '' });
-            const targets = [caps.dicom && 'DICOM', caps.http && 'HTTP', caps.rhythm && 'RHYTHM'].filter(Boolean);
-            setStage('st-exported', {
-                count: sc.archived, active: a.exporting, state: 'sending',
-                sub: targets.length ? `via ${targets.join(' · ')}` : 'no export target set',
-            });
-            document.getElementById('fl-1').classList.toggle('is-active', !!a.receiving);
-            document.getElementById('fl-2').classList.toggle('is-active', !!(a.waiting || a.defacing));
-            document.getElementById('fl-3').classList.toggle('is-active', !!a.exporting);
+            const cols = studies ? { 'st-receive': [], 'st-process': [], 'st-ready': [], 'st-exported': [] } : null;
+            if (cols) for (const s of studies) { const [col, tone] = place(s); cols[col].push([s, tone]); }
+            const col = id => (cols ? cols[id] : null);
 
-            const meta = document.getElementById('meta');
-            meta.innerHTML = [
-                `<span class="pill ok">Running · up ${esc(PV.fmtDuration(data.uptime_s))}</span>`,
-                data.defacing_enabled
-                    ? '<span class="pill plain">Defacing on</span>'
-                    : '<span class="pill plain dim">Defacing off</span>',
-                caps.dicom ? '<span class="pill plain">DICOM export</span>' : '',
-                caps.http ? '<span class="pill plain">HTTP export</span>' : '',
-                caps.rhythm ? '<span class="pill plain">RHYTHM export</span>' : '',
+            const blocked = (sc.defacing_failed || 0) + (sc.defacing_disabled || 0);
+            renderStage('st-receive', col('st-receive'),
+                { count: sc.receiving, active: a.receiving, now: 'receiving images' });
+            renderStage('st-process', col('st-process'), {
+                count: (sc.complete || 0) + (sc.defacing || 0) + blocked,
+                active: a.waiting || a.defacing, now: a.defacing ? 'defacing' : 'extracting',
+                note: blocked
+                    ? `<a href="/studies?filter=failed">${blocked} blocked on defacing</a>`
+                    : (data.defacing_enabled ? 'Exam data extracted, head scans defaced'
+                                             : 'Exam data extracted; defacing is off'),
+            });
+            renderStage('st-ready', col('st-ready'), { count: sc.ready });
+            const targets = [caps.dicom && 'DICOM', caps.http && 'HTTP', caps.rhythm && 'RHYTHM'].filter(Boolean);
+            renderStage('st-exported', col('st-exported'), {
+                count: sc.archived, active: a.exporting, now: 'sending',
+                note: targets.length ? `Targets: ${esc(targets.join(', '))}` : 'No export target set',
+            });
+
+            document.getElementById('meta').innerHTML = [
+                `<span class="on">Running</span>`,
+                `<span>Up ${esc(PV.fmtDuration(data.uptime_s))}</span>`,
+                data.defacing_enabled ? '<span>Defacing on</span>' : '<span class="off">Defacing off</span>',
             ].join('');
         }
 
-        function renderKpis(kpis) {
-            document.getElementById('kpis').innerHTML = kpis.map(k => `
-                <div class="card kpi ${k.alert ? 'alert' : ''}">
-                    <div class="k-label">${esc(k.label)}</div>
-                    <div class="k-value num">${esc(fmtInt(k.value))}</div>
-                    <div class="k-sub" title="${esc(k.sub)}">${esc(k.sub)}</div>
+        function renderFigures(kpis) {
+            document.getElementById('figures').innerHTML = kpis.map(k => `
+                <div class="figure ${k.alert ? 'alert' : ''}">
+                    <div class="f-label">${esc(k.label)}</div>
+                    <div class="f-value num">${esc(fmtInt(k.value))}</div>
+                    <div class="f-sub" title="${esc(k.sub)}">${esc(k.sub)}</div>
                 </div>`).join('');
         }
 
         function renderDetails(groups) {
             document.getElementById('details').innerHTML = groups.map(g => `
                 <div>
-                    <h4>${esc(g.title)}</h4>
-                    ${g.rows.map(([label, value]) =>
-                        `<div class="kv"><span>${esc(label)}</span><span class="num">${esc(fmtInt(value))}</span></div>`
-                    ).join('')}
+                    <h3>${esc(g.title)}</h3>
+                    <dl class="facts">${g.rows.map(([label, value]) =>
+                        `<dt>${esc(label)}</dt><dd>${esc(fmtInt(value))}</dd>`).join('')}</dl>
                 </div>`).join('');
         }
 
-        function renderCallouts(stats) {
-            const host = document.getElementById('callouts');
-            const sc = (stats && stats.pipeline.status_counts) || {};
+        const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+        function renderTodo(stats) {
+            if (!studies) return;            // keep the skeleton until both are in
+            const sc = stats.pipeline.status_counts || {};
+            const caps = stats.capabilities || {};
             const items = [];
-            if (studies) {
-                const needs = studies.filter(PV.needsInput).length;
-                const nav = document.getElementById('nav-needs');
-                nav.hidden = !needs;
-                nav.textContent = needs;
-                if (needs) {
-                    items.push({ tone: 'warn', icon: 'edit', href: '/studies?filter=needs',
-                        html: `<strong>${needs} ${needs === 1 ? 'study needs' : 'studies need'} data entry</strong><br>
-                               Image quality, weight, indication or scanner ID still missing.` });
-                }
-            }
+            const needs = studies.filter(PV.needsInput).length;
+            const nav = document.getElementById('nav-needs');
+            if (nav) { nav.hidden = !needs; nav.textContent = needs; }
             if (sc.defacing_failed) {
-                items.push({ tone: 'bad', icon: 'alert', href: '/studies?filter=failed',
-                    html: `<strong>${sc.defacing_failed} defacing failed</strong><br>
-                           Export is blocked; a restart retries the undefaced series.` });
+                items.push({ tone: 'bad', href: '/studies?filter=failed', go: 'Show them',
+                    title: `Defacing failed on ${plural(sc.defacing_failed, 'study', 'studies')}`,
+                    why: 'They cannot be exported. Restart the server to retry the series that are still undefaced.' });
             }
             if (sc.defacing_disabled) {
-                items.push({ tone: 'bad', icon: 'alert', href: '/studies?filter=failed',
-                    html: `<strong>${sc.defacing_disabled} head ${sc.defacing_disabled === 1 ? 'study' : 'studies'} not defaced (defacing disabled)</strong><br>
-                           Export is blocked; enable defacing and restart to process them.` });
+                items.push({ tone: 'bad', href: '/studies?filter=failed', go: 'Show them',
+                    title: `${plural(sc.defacing_disabled, 'head study is', 'head studies are')} not defaced`,
+                    why: 'Defacing is switched off, so they cannot be exported. Enable it in Settings and restart.' });
             }
-            if (sc.ready) {
-                items.push({ tone: '', icon: 'send', href: '/studies?filter=ready',
-                    html: `<strong>${sc.ready} ready to export</strong><br>Nothing is sent automatically — review and send from Studies.` });
+            if (needs) {
+                items.push({ tone: 'warn', href: '/studies?filter=needs', go: 'Enter data',
+                    title: `${plural(needs, 'study needs', 'studies need')} data entry`,
+                    why: 'Image quality, weight, indication, contrast or the RHYTHM protocol is still missing.' });
             }
-            if (stats && !stats.capabilities.dicom && !stats.capabilities.http && !stats.capabilities.rhythm) {
-                items.push({ tone: 'info', icon: 'info', href: null,
-                    html: '<strong>No export target configured</strong><br>Set <span class="mono">remote_storage.dicom</span> or <span class="mono">.http</span> in settings.yaml.' });
+            const sendable = studies.filter(s => s.status === 'ready' && !PV.needsInput(s)).length;
+            if (sendable) {
+                items.push({ tone: 'ok', href: '/studies?filter=ready', go: 'Review and send',
+                    title: `${plural(sendable, 'study is', 'studies are')} complete and ready to send`,
+                    why: 'Nothing leaves this server until you send it from Studies.' });
             }
-            if (!items.length && studies) {
-                items.push({ tone: 'ok', icon: 'check', href: null,
-                    html: '<strong>All clear</strong><br>No studies waiting on you.' });
+            if (!caps.dicom && !caps.http && !caps.rhythm) {
+                items.push({ tone: 'info', href: '/settings', go: 'Open Settings',
+                    title: 'No export target is configured',
+                    why: 'Add a DICOM node, an HTTP endpoint or RHYTHM before studies can be sent.' });
             }
-            host.innerHTML = items.map(it => {
-                const tag = it.href ? 'a' : 'div';
-                const href = it.href ? ` href="${it.href}"` : '';
-                const go = it.href ? `<span class="go">${icon('chevron')}</span>` : '';
-                return `<${tag} class="callout ${it.tone}"${href}>${icon(it.icon)}<div>${it.html}</div>${go}</${tag}>`;
+            if (!items.length) {
+                items.push({ tone: 'ok', title: 'Nothing is waiting on you',
+                    why: 'New studies show up here when they need data entry or are ready to send.' });
+            }
+            document.getElementById('todo').innerHTML = items.map(it => {
+                const inner = `<span class="bar"></span>
+                    <span><strong>${esc(it.title)}</strong><span class="why">${esc(it.why)}</span></span>
+                    ${it.href ? `<span class="go">${esc(it.go)}</span>` : ''}`;
+                return `<li class="${it.tone}">${it.href
+                    ? `<a class="item" href="${it.href}">${inner}</a>`
+                    : `<div class="item">${inner}</div>`}</li>`;
             }).join('');
         }
 
-        let lastStats = null;
-        // withStudies: also refetch the study list. It reads every exam
-        // sidecar, so plain polls only do it every third tick; live
-        // study/exam events always do.
+        // withStudies: also refetch the study list. Plain polls only do it
+        // every third tick; live study/exam events always do.
         async function refresh(withStudies) {
             try {
                 const [stats, list] = await Promise.all([
@@ -326,9 +332,9 @@
                 // claims "connected" when there's no live stream at all.
                 if (!live) PV.setConn(true);
                 renderPipeline(stats);
-                renderKpis(stats.kpis);
+                renderFigures(stats.kpis);
                 renderDetails(stats.details);
-                renderCallouts(stats);
+                renderTodo(stats);
             } catch (err) {
                 console.error(err);
                 PV.setConn(false);

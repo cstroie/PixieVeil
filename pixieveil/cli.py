@@ -28,7 +28,7 @@ from pixieveil.dicom_server.server import DicomServer
 from pixieveil.dashboard.server import Dashboard
 from pixieveil.storage.storage_manager import StorageManager
 
-# Configure logging
+
 def setup_logging(settings: Settings) -> None:
     """
     Configure the root logger according to the ``logging`` section of the
@@ -166,6 +166,7 @@ async def main() -> None:
             await asyncio.wait_for(storage_manager.stop(), timeout=5.0)
         except asyncio.TimeoutError:
             logger.error("Storage manager did not stop within 5 second timeout")
+
 
 def run() -> None:
     """Sync entry point for the ``pixieveil`` console script."""

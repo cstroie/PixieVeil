@@ -10,8 +10,7 @@ Classes:
 
 import logging
 import re
-from pathlib import Path
-from typing import Dict, Any, List, Tuple
+from typing import Dict, List, Tuple
 
 import pydicom
 
@@ -23,26 +22,26 @@ logger = logging.getLogger(__name__)
 class SeriesFilter:
     """
     Handles DICOM series filtering operations.
-    
+
     This class provides functionality to filter DICOM series based on
     configurable criteria. It can exclude specific modalities and
     filter based on series characteristics.
-    
+
     The filtering process includes:
     - Modality-based filtering (exclude specific modalities)
     - Series type filtering (original vs. reconstructed series)
     - Configurable filtering rules
-    
+
     Attributes:
         settings (Settings): Application configuration settings
         exclude_modalities (List[str]): List of modalities to exclude
         only_original_series (bool): Whether to keep only original series
     """
-    
+
     def __init__(self, settings: Settings):
         """
         Initialize the SeriesFilter with application settings.
-        
+
         Args:
             settings: Application configuration settings containing series filter
                       configuration including excluded modalities and series
@@ -72,21 +71,21 @@ class SeriesFilter:
     def should_filter(self, ds: pydicom.Dataset) -> bool:
         """
         Determine if a DICOM image should be filtered based on series criteria.
-        
+
         This method evaluates a DICOM dataset against configured filtering
         criteria to determine if it should be excluded from processing.
-        
+
         The filtering criteria include:
         - Modality exclusion (if the modality is in the exclude list)
         - Series type filtering (if only original series should be kept)
-        
+
         Args:
             ds (pydicom.Dataset): The DICOM dataset to evaluate for filtering
-            
+
         Returns:
             bool: True if the image should be filtered out, False if it should
                   be processed further
-                  
+
         Note:
             If an error occurs during filtering evaluation, the method will
             log the error and return False (allowing the image to be processed
@@ -124,16 +123,16 @@ class SeriesFilter:
     def is_original_series(self, ds: pydicom.Dataset) -> bool:
         """
         Determine if a series is an original series (not a reconstruction).
-        
+
         This method evaluates whether a DICOM series represents an original
         acquisition rather than a reconstructed or derived series.
-        
+
         Args:
             ds (pydicom.Dataset): The DICOM dataset to evaluate
-            
+
         Returns:
             bool: True if the series is considered original, False otherwise
-            
+
         Note:
             If the ImageType attribute is absent, the series is assumed to be
             original. Series with ImageType starting with 'DERIVED' (e.g.

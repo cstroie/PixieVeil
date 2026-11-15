@@ -10,11 +10,9 @@ Classes:
 
 import logging
 import uuid
-from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 
 import pydicom
-from pydicom.dataset import Dataset
 import pynetdicom
 
 from pixieveil.config.settings import Settings
@@ -37,20 +35,20 @@ def missing_required_uid(ds: pydicom.Dataset) -> str | None:
 class CStoreSCPHandler:
     """
     Handles C-STORE SCP (Service Class Provider) requests from DICOM modalities.
-    
+
     This class processes incoming DICOM images received via C-STORE requests,
     validates them, converts them to proper DICOM format, and forwards them
     to the storage manager for further processing.
-    
+
     Attributes:
         settings (Settings): Application configuration settings
         storage (StorageManager): Storage manager for handling DICOM image processing
     """
-    
+
     def __init__(self, settings: Settings, storage_manager: StorageManager):
         """
         Initialize the CStoreSCPHandler with application settings and storage manager.
-        
+
         Args:
             settings: Application configuration settings
             storage_manager: Storage manager instance for handling image processing
@@ -63,20 +61,20 @@ class CStoreSCPHandler:
                       info: Dict[str, Any]) -> int:
         """
         Handle C-STORE requests from DICOM modalities.
-        
+
         This method processes incoming DICOM images received via C-STORE requests.
         It validates the DICOM data, converts it to proper format, and forwards
         it to the storage manager for processing.
-        
+
         Args:
             assoc: DICOM association object containing connection information
             context: Presentation context for the C-STORE request
             info: Dictionary containing the DICOM dataset and metadata
-            
+
         Returns:
             int: DICOM status code (0x0000 for success, 0xC000 for processing failure,
                  0x0106 for out of resources)
-                 
+
         Note:
             The method generates a unique ID for each received image to ensure
             proper tracking and processing.
@@ -89,7 +87,7 @@ class CStoreSCPHandler:
             if 'dataset' not in info:
                 logger.error("No dataset found in C-STORE request")
                 return 0xC000  # Processing failure
-            
+
             dataset = info['dataset']
             file_meta = info.get('file_meta')
 
@@ -124,13 +122,13 @@ class CStoreSCPHandler:
     def validate_dicom(self, ds: pydicom.Dataset) -> bool:
         """
         Validate the received DICOM image for basic integrity.
-        
+
         This method checks if the DICOM dataset contains the minimum required
         fields for proper processing.
-        
+
         Args:
             ds (pydicom.Dataset): The DICOM dataset to validate
-            
+
         Returns:
             bool: True if the DICOM dataset is valid, False otherwise
         """

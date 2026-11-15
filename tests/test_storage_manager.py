@@ -816,6 +816,44 @@ class TestDefacingDisabled:
             assert "defacing is disabled" in result["message"]
 
 
+    @pytest.mark.parametrize("status", ["receiving", "complete", "defacing"])
+    def test_exports_refuse_a_study_still_in_the_pipeline(self, tmp_path, status):
+        """A study mid-defacing can hold a head series that isn't defaced
+        yet; nothing leaves before it reaches ready."""
+        sm = TestManualExportBlockedOnDefacingFailure()._manager_with_dicom_configured(tmp_path)
+        register_study(sm, 1, status)
+        (sm.base_path / "0001").mkdir(parents=True)
+
+        for action in (sm.manual_send_dicom, sm.manual_upload_http):
+            result = asyncio.run(action(1))
+            assert result["ok"] is False
+            assert "still being processed" in result["message"]
+
+
+class TestCounterThreadSafety:
+    def test_concurrent_increments_are_not_lost(self, storage_manager):
+        import threading
+
+        def bump():
+            for _ in range(2000):
+                storage_manager.inc_counter("defacing", "series_defaced")
+
+        threads = [threading.Thread(target=bump) for _ in range(8)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        assert storage_manager.get_counter("defacing", "series_defaced") == 16000
+
+    def test_mutators_work_while_the_caller_holds_the_lock(self, storage_manager):
+        with storage_manager.lock:
+            storage_manager.inc_counter("export", "errors")
+            storage_manager.set_counter("performance", "average_time", 1.5)
+        assert storage_manager.get_counter("export", "errors") == 1
+        assert storage_manager.get_counter("performance", "average_time") == 1.5
+        assert storage_manager.get_counter("nope", "x", default=7) == 7
+
+
 class TestStatusCountsAndExamSummary:
     def test_status_counts_report_every_status(self, storage_manager):
         register_study(storage_manager, 1, "ready")

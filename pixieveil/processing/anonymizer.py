@@ -16,7 +16,7 @@ import hashlib
 import pydicom
 from pydicom.uid import generate_uid
 
-from pixieveil.config import Settings, AnonymizationProfile
+from pixieveil.config import Settings
 
 logger = logging.getLogger(__name__)
 
@@ -31,14 +31,14 @@ _DatasetT = TypeVar("_DatasetT", bound=pydicom.Dataset)
 class Anonymizer:
     """
     Handles DICOM dataset anonymization operations using profile-based configuration.
-    
+
     This class provides comprehensive DICOM field anonymization compliant with
     DICOM PS3.15 standards. It removes or replaces sensitive patient information
     while maintaining the integrity of the medical imaging data.
 
     Anonymization behavior is driven by profiles defined in the configuration.
     Each profile specifies how individual DICOM fields should be handled.
-    
+
     The anonymization process includes:
     - Patient information replacement/removal per profile
     - Study/Series information anonymization per profile
@@ -48,74 +48,74 @@ class Anonymizer:
     - Private tag removal (optional per profile)
     - Overlay data removal
     - Pixel data blackout (optional per profile)
-    
+
     Attributes:
         settings (Settings): Application configuration settings
         profile (AnonymizationProfile): The active anonymization profile
     """
-    
+
     def __init__(self, settings: Settings, profile_name: Optional[str] = None):
         """
         Initialize the Anonymizer with application settings and profile.
-        
+
         Args:
             settings: Application configuration settings
             profile_name (str, optional): Name of the profile to use. If None,
                                         uses the default profile from settings.
-                                        
+
         Raises:
             ValueError: If the specified profile does not exist
         """
         self.settings = settings
         self.profile = settings.get_anonymization_profile(profile_name)
-        
+
         # Mappings to ensure consistency across studies and series
         self._pseudonym_map: Dict[str, str] = {}  # original value -> pseudonym for "PSEUDO"
         self._study_uid_map: Dict[str, str] = {}  # original StudyInstanceUID -> anonymized UID
         self._series_uid_map: Dict[str, str] = {}  # original SeriesInstanceUID -> anonymized UID
-        
+
         logger.info(f"Anonymizer initialized with profile: {profile_name or settings.anonymization.get('profile', 'research')}")
-        
+
     def current_date(self) -> str:
         """
         Get current date in DICOM format (YYYYMMDD).
-        
+
         Returns:
             str: Current date formatted as YYYYMMDD
         """
         return datetime.now().strftime("%Y%m%d")
-    
+
     def current_time(self) -> str:
         """
         Get current time in DICOM format (HHMMSS).
-        
+
         Returns:
             str: Current time formatted as HHMMSS
         """
         return datetime.now().strftime("%H%M%S")
-    
+
     def generate_new_uid(self, prefix: str = "2.25.") -> str:
         """
         Generate a new DICOM UID with the specified prefix.
-        
+
         Args:
             prefix (str): Prefix for the generated UID (default: "2.25.")
-            
+
         Returns:
             str: Newly generated DICOM UID
         """
         return generate_uid(prefix=prefix)
-    
+
     def generate_pseudonym(self, original_value: str) -> str:
         """
         Generate a consistent pseudonym from an original value using deterministic hashing.
-        
+
         This ensures that the same original value always maps to the same pseudonym,
         which is critical for maintaining consistency across multiple files.
-        
+
         Args:
             original_value (str): The original value to pseudonymize
-            
+
         Returns:
             str: A deterministic pseudonym based on the original value
         """
@@ -126,14 +126,14 @@ class Anonymizer:
             hash_hex = hash_obj.hexdigest()[:8].upper()
             self._pseudonym_map[original_str] = hash_hex
         return self._pseudonym_map[original_str]
-    
+
     def generate_pseudonym_uid(self, original_uid: str) -> str:
         """
         Generate a consistent pseudonym UID from an original UID.
-        
+
         Args:
             original_uid (str): The original UID to pseudonymize
-            
+
         Returns:
             str: A deterministic pseudonym UID
         """
@@ -144,12 +144,12 @@ class Anonymizer:
             hash_int = int(hash_obj.hexdigest()[:15], 16)
             self._pseudonym_map[original_str] = f"2.25.{hash_int}"
         return self._pseudonym_map[original_str]
-    
-    def apply_field_value_strategy(self, original_value: Any, strategy: Optional[str], 
+
+    def apply_field_value_strategy(self, original_value: Any, strategy: Optional[str],
                                    field_name: str = "") -> Optional[str]:
         """
         Apply a field value strategy to transform an original value.
-        
+
         Strategies:
         - None: return None (field should be cleared)
         - "PSEUDO": return deterministic pseudonym
@@ -157,12 +157,12 @@ class Anonymizer:
         - "KEEP": return original value unchanged
         - "CLEAR": return empty string
         - string literal: return the strategy string as-is
-        
+
         Args:
             original_value: The original DICOM field value
             strategy: The strategy to apply (see above)
             field_name: Name of field for logging (optional)
-            
+
         Returns:
             Optional[str]: The transformed value, or None to clear the field
         """
@@ -181,11 +181,11 @@ class Anonymizer:
         else:
             # Literal string value
             return str(strategy)
-    
+
     def set_field(self, ds: pydicom.Dataset, field_name: str, value: Optional[str]) -> None:
         """
         Set a DICOM field to a value, or clear it if value is None.
-        
+
         Args:
             ds: The DICOM dataset
             field_name: Name of the field to set
@@ -193,22 +193,22 @@ class Anonymizer:
         """
         if field_name not in ds:
             return
-        
+
         if value is None:
             setattr(ds, field_name, "")
         else:
             setattr(ds, field_name, value)
-    
-    def apply_uid_mapping(self, original_uid: str, mapping_dict: Dict[str, str], 
+
+    def apply_uid_mapping(self, original_uid: str, mapping_dict: Dict[str, str],
                           strategy: Optional[str]) -> str:
         """
         Apply UID mapping strategy with proper consistency handling.
-        
+
         Args:
             original_uid: The original UID
             mapping_dict: Dictionary to store mappings for consistency
             strategy: Strategy to apply
-            
+
         Returns:
             str: The mapped/generated UID
         """
@@ -220,7 +220,7 @@ class Anonymizer:
     def anonymize(self, ds: _DatasetT) -> _DatasetT:
         """
         Comprehensive DICOM field anonymization using the active profile.
-        
+
         This method performs anonymization of a DICOM dataset according to the
         active profile configuration, removing or replacing sensitive information
         while maintaining data integrity for medical imaging purposes.
@@ -235,13 +235,13 @@ class Anonymizer:
         - Overlay data removal
         - Pixel data blackout (if configured)
         - Burned-in annotation handling
-        
+
         Args:
             ds (pydicom.Dataset): The DICOM dataset to anonymize
-            
+
         Returns:
             pydicom.Dataset: The anonymized DICOM dataset
-            
+
         Note:
             This method modifies the dataset in-place and also returns it
             for method chaining convenience.
@@ -259,16 +259,16 @@ class Anonymizer:
         # Runs last so it wins over anonymize_dates()'s date substitution —
         # the rhythm profile needs StudyDate/etc. *absent*, not replaced.
         self.strip_tags(ds)
-        
+
         # Burned In Annotation
         if "BurnedInAnnotation" in ds:
             ds.BurnedInAnnotation = "NO"
         elif (0x0028, 0x0301) in ds:
             ds[0x0028, 0x0301].value = "NO"
-        
+
         logger.debug(f"Successfully anonymized image using profile with PixelBlackout={self.profile.PixelBlackout}")
         return ds
-    
+
     def anonymize_patient_fields(self, ds: pydicom.Dataset) -> None:
         """
         Apply profile strategy to patient information fields.
@@ -284,13 +284,13 @@ class Anonymizer:
             if new_value and str(new_value).strip():
                 new_value = f"ANON-{new_value}"
             self.set_field(ds, "PatientName", new_value)
-        
+
         # PatientID
         if "PatientID" in ds:
             original_id = str(ds.PatientID)
             new_value = self.apply_field_value_strategy(original_id, self.profile.PatientID)
             self.set_field(ds, "PatientID", new_value)
-        
+
         # PatientBirthDate
         if "PatientBirthDate" in ds:
             new_value = self.apply_field_value_strategy(ds.PatientBirthDate, self.profile.PatientBirthDate)
@@ -300,43 +300,43 @@ class Anonymizer:
         if "PatientAge" in ds:
             new_value = self.apply_field_value_strategy(ds.PatientAge, self.profile.PatientAge)
             self.set_field(ds, "PatientAge", new_value)
-        
+
         # PatientSex
         if "PatientSex" in ds:
             new_value = self.apply_field_value_strategy(ds.PatientSex, self.profile.PatientSex)
             self.set_field(ds, "PatientSex", new_value)
-        
+
         # Always clear other patient identifiers
         if "OtherPatientIDs" in ds:
             ds.OtherPatientIDs = ""
         if "PatientAddress" in ds:
             ds.PatientAddress = ""
-    
+
     def anonymize_study_series_fields(self, ds: pydicom.Dataset) -> None:
         """Apply profile strategy to study and series information fields."""
         # StudyInstanceUID with mapping
         if "StudyInstanceUID" in ds:
             original_uid = str(ds.StudyInstanceUID)
-            new_uid = self.apply_uid_mapping(original_uid, self._study_uid_map, 
+            new_uid = self.apply_uid_mapping(original_uid, self._study_uid_map,
                                               self.profile.StudyInstanceUID)
             ds.StudyInstanceUID = new_uid
-        
+
         # SeriesInstanceUID with mapping
         if "SeriesInstanceUID" in ds:
             original_uid = str(ds.SeriesInstanceUID)
-            new_uid = self.apply_uid_mapping(original_uid, self._series_uid_map, 
+            new_uid = self.apply_uid_mapping(original_uid, self._series_uid_map,
                                               self.profile.SeriesInstanceUID)
             ds.SeriesInstanceUID = new_uid
-        
+
         # FrameOfReferenceUID
         if "FrameOfReferenceUID" in ds:
-            new_value = self.apply_field_value_strategy(ds.FrameOfReferenceUID, 
+            new_value = self.apply_field_value_strategy(ds.FrameOfReferenceUID,
                                                          self.profile.FrameOfReferenceUID)
             if new_value:
                 ds.FrameOfReferenceUID = new_value
             else:
                 del ds.FrameOfReferenceUID
-        
+
         # SOPInstanceUID - always generate new, and keep the file-meta copy
         # in sync (pydicom's save_as does not; otherwise the saved file's
         # MediaStorageSOPInstanceUID leaks the original SOP Instance UID).
@@ -345,18 +345,18 @@ class Anonymizer:
             file_meta = getattr(ds, "file_meta", None)
             if file_meta is not None and "MediaStorageSOPInstanceUID" in file_meta:
                 file_meta.MediaStorageSOPInstanceUID = ds.SOPInstanceUID
-        
+
         # StudyID
         if "StudyID" in ds:
             new_value = self.apply_field_value_strategy(ds.StudyID, self.profile.StudyID)
             self.set_field(ds, "StudyID", new_value)
-        
+
         # AccessionNumber
         if "AccessionNumber" in ds:
-            new_value = self.apply_field_value_strategy(ds.AccessionNumber, 
+            new_value = self.apply_field_value_strategy(ds.AccessionNumber,
                                                          self.profile.AccessionNumber)
             self.set_field(ds, "AccessionNumber", new_value)
-        
+
         # StudyDescription
         if "StudyDescription" in ds:
             new_value = self.apply_field_value_strategy(ds.StudyDescription,
@@ -373,54 +373,54 @@ class Anonymizer:
         """Apply profile strategy to institution and physician information fields."""
         # InstitutionName
         if "InstitutionName" in ds:
-            new_value = self.apply_field_value_strategy(ds.InstitutionName, 
+            new_value = self.apply_field_value_strategy(ds.InstitutionName,
                                                          self.profile.InstitutionName)
             self.set_field(ds, "InstitutionName", new_value)
-        
+
         # ReferringPhysicianName
         if "ReferringPhysicianName" in ds:
-            new_value = self.apply_field_value_strategy(ds.ReferringPhysicianName, 
+            new_value = self.apply_field_value_strategy(ds.ReferringPhysicianName,
                                                          self.profile.ReferringPhysicianName)
             self.set_field(ds, "ReferringPhysicianName", new_value)
-        
+
         # OperatorsName
         if "OperatorsName" in ds:
-            new_value = self.apply_field_value_strategy(ds.OperatorsName, 
+            new_value = self.apply_field_value_strategy(ds.OperatorsName,
                                                          self.profile.OperatorsName)
             self.set_field(ds, "OperatorsName", new_value)
-        
+
         # PerformingPhysicianName
         if "PerformingPhysicianName" in ds:
-            new_value = self.apply_field_value_strategy(ds.PerformingPhysicianName, 
+            new_value = self.apply_field_value_strategy(ds.PerformingPhysicianName,
                                                          self.profile.PerformingPhysicianName)
             self.set_field(ds, "PerformingPhysicianName", new_value)
-        
+
         # InstitutionAddress - always clear
         if "InstitutionAddress" in ds:
             ds.InstitutionAddress = ""
-    
+
     def anonymize_dates(self, ds: pydicom.Dataset) -> None:
         """Apply profile strategy to date/time fields."""
         current_date = self.current_date()
         current_time = self.current_time()
-        
+
         # Instance creation dates - always anonymize
         if "InstanceCreationDate" in ds:
             ds.InstanceCreationDate = current_date
         if "InstanceCreationTime" in ds:
             ds.InstanceCreationTime = current_time
-        
+
         # Content dates - always anonymize
         if "ContentDate" in ds:
             ds.ContentDate = current_date
-        
+
         # Study dates - configurable per profile
         if not self.profile.RetainStudyDate:
             if "StudyDate" in ds:
                 ds.StudyDate = current_date
             if "StudyTime" in ds:
                 ds.StudyTime = current_time
-        
+
         # Acquisition dates - always anonymize (only kept if RetainStudyDate is true)
         if not self.profile.RetainStudyDate:
             if "AcquisitionDate" in ds:
@@ -429,7 +429,7 @@ class Anonymizer:
                 ds.AcquisitionDateTime = current_date + current_time
             if "SeriesTime" in ds:
                 ds.SeriesTime = current_time
-    
+
     def remove_sensitive_tags(self, ds: pydicom.Dataset) -> None:
         """Remove highly sensitive DICOM tags."""
         tags_to_remove = [
@@ -439,12 +439,12 @@ class Anonymizer:
         for tag in tags_to_remove:
             if tag in ds:
                 del ds[tag]
-    
+
     def handle_private_tags(self, ds: pydicom.Dataset) -> None:
         """Remove private tags if configured."""
         if not self.profile.KeepPrivateTags:
             ds.remove_private_tags()
-    
+
     def remove_overlays(self, ds: pydicom.Dataset) -> None:
         """Remove overlay (60xx), curve (50xx) and waveform/audio (54xx) group
         data.
@@ -476,7 +476,7 @@ class Anonymizer:
             # cleanly here instead of spamming a pydicom warning per file.
             if hasattr(ds, keyword):
                 delattr(ds, keyword)
-    
+
     def handle_pixel_blackout(self, ds: pydicom.Dataset) -> None:
         """Blackout pixel data if configured.
 
@@ -489,39 +489,39 @@ class Anonymizer:
         if self.profile.PixelBlackout and "PixelData" in ds:
             ds.pixel_array[:] = 0
             ds.PixelData = ds.pixel_array.tobytes()
-    
+
     def get_patient_id_mapping(self, original_patient_id: str) -> Optional[str]:
         """
         Get the anonymized Patient ID for an original Patient ID (if using PSEUDO).
-        
+
         Args:
             original_patient_id (str): The original patient ID
-            
+
         Returns:
             Optional[str]: The anonymized patient ID if mapped, None otherwise
         """
         original_str = str(original_patient_id)
         return self._pseudonym_map.get(original_str)
-    
+
     def get_study_uid_mapping(self, original_study_uid: str) -> Optional[str]:
         """
         Get the anonymized Study Instance UID mapping.
-        
+
         Args:
             original_study_uid (str): The original Study Instance UID
-            
+
         Returns:
             Optional[str]: The anonymized Study Instance UID if mapped, None otherwise
         """
         return self._study_uid_map.get(str(original_study_uid))
-    
+
     def get_series_uid_mapping(self, original_series_uid: str) -> Optional[str]:
         """
         Get the anonymized Series Instance UID mapping.
-        
+
         Args:
             original_series_uid (str): The original Series Instance UID
-            
+
         Returns:
             Optional[str]: The anonymized Series Instance UID if mapped, None otherwise
         """

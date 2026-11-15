@@ -23,20 +23,20 @@ logger = logging.getLogger(__name__)
 class ZipManager:
     """
     Handles ZIP archive creation for DICOM studies.
-    
+
     This class provides functionality to create compressed ZIP archives of
     DICOM study directories. It recursively includes all files in the study
     directory and maintains the directory structure within the archive.
-    
+
     Attributes:
         settings (Settings): Application configuration settings containing
                             storage path configuration
     """
-    
+
     def __init__(self, settings: Settings):
         """
         Initialize the ZipManager with application settings.
-        
+
         Args:
             settings: Application configuration settings containing storage
                       path configuration for finding study directories

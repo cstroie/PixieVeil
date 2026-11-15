@@ -41,6 +41,9 @@ PixieVeil/
     │   └── dicom_storage.py        # DICOM C-STORE export to a remote PACS/node via pynetdicom
     │
     └── dashboard/
-        ├── server.py               # aiohttp web server: /, /stats, /health
-        └── templates/
-            └── index.html          # Dashboard HTML (polls /stats via JS)
+        ├── server.py               # aiohttp web server: pages, JSON API, SSE (login-gated)
+        ├── shell.py                # shared page head + top bar, filled into every template
+        ├── setup.py                # first-run wizard
+        ├── options.py              # form vocabularies for /api/options
+        ├── static/                 # theme.css, common.js, protocol_draft.js (self-hosted)
+        └── templates/              # one HTML page per route; shell markers, no pasted chrome

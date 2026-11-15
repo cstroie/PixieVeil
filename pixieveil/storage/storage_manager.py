@@ -90,7 +90,7 @@ def _tree_bytes(root: Path) -> int:
 class StorageManager:
     """
     Manages DICOM image storage and processing workflow.
-    
+
     This class handles the complete lifecycle of DICOM images from temporary storage
     through processing, anonymization, organization, and eventual archiving.
     It coordinates with multiple specialized managers:
@@ -99,7 +99,7 @@ class StorageManager:
     - SeriesFilter: Filters series based on criteria
     - ZipManager: Creates study archives
     - RemoteStorage: Uploads to remote systems
-    
+
     Attributes:
         settings (Settings): Application configuration settings
         base_path (Path): Base directory for storing organized DICOM studies
@@ -116,11 +116,11 @@ class StorageManager:
         _stop_event (Optional[asyncio.Event]): Event to signal background task to stop
         _shutting_down (bool): Flag indicating shutdown in progress
     """
-    
+
     def __init__(self, settings: Settings):
         """
         Initialize the StorageManager with application settings.
-        
+
         Args:
             settings: Application configuration settings containing storage paths
                       and other configuration options
@@ -166,9 +166,11 @@ class StorageManager:
         # extraction and the dashboard's /protocols page.
         self.protocol_catalog = self.rhythm_storage.protocol_map
         self.exam_extractor = ExamExtractor(catalog=self.protocol_catalog)
-        
-        # Thread safety
-        self.lock = threading.Lock()
+
+        # Thread safety. Re-entrant: inc_counter/set_counter take it
+        # themselves, and many callers already hold it around a group of
+        # counter updates.
+        self.lock = threading.RLock()
 
         # Per-study accumulated byte counts for new studies received this session.
         # Existing studies (loaded from disk on startup) are not tracked here.
@@ -182,7 +184,7 @@ class StorageManager:
         # still resolve the scanner/indication after the study completes even
         # under the 'rhythm' profile. "first non-empty wins" per field.
         self._exam_hints: Dict[str, Dict[str, Any]] = {}
-        
+
         # Statistics counters. Dict[str, Any], not something more precise
         # like Dict[str, Dict[str, Any]] or a TypedDict per category —
         # get_counter/set_counter/inc_counter (and a few call sites that
@@ -266,6 +268,8 @@ class StorageManager:
         self._shutting_down = False
         # UIDs of studies currently being processed (defaced/zipped/uploaded)
         self._processing_studies: set = set()
+        # Strong references to the running _process_study tasks.
+        self._study_tasks: set[asyncio.Task] = set()
         # Study numbers with a manual dashboard action (send/upload/re-extract/
         # save) in progress. Separate from _processing_studies (keyed by
         # study_uid, driven by the automated pipeline) to avoid either set
@@ -386,46 +390,16 @@ class StorageManager:
 
     def get_counter(self, category: str, subcategory: Optional[str] = None,
                     default: Any = 0) -> Any:
-        """
-        Get a counter value from the hierarchical counters structure.
-        
-        This method provides a safe way to access nested counter values
-        without repetitive nested dictionary access patterns.
-        
-        Args:
-            category (str): Top-level category name (e.g., 'reception', 'processing')
-            subcategory (str, optional): Subcategory name (e.g., 'images', 'errors')
-            default (Any, optional): Default value to return if counter not found
-            
-        Returns:
-            Any: The counter value or default if not found
-            
-        Example:
-            # Get reception images count
-            images = self.get_counter('reception', 'images')
-            
-            # Get validation errors
-            validation_errors = self.get_counter('processing', 'errors', 'validation')
-            
-            # Get top-level counter
-            total_errors = self.get_counter('errors', 'total')
-        """
+        """``counters[category][subcategory]`` (the whole category when
+        *subcategory* is None), or *default* if absent."""
         with self.lock:
             if category not in self.counters:
                 return default
-            
+
             if subcategory is None:
                 return self.counters[category]
-            
-            if subcategory in self.counters[category]:
-                return self.counters[category][subcategory]
-            
-            # If subcategory is not found but we're looking for nested errors
-            if subcategory == 'errors' and 'errors' in self.counters[category]:
-                if isinstance(self.counters[category]['errors'], dict):
-                    return self.counters[category]['errors']
-            
-            return default
+
+            return self.counters[category].get(subcategory, default)
 
     def get_pipeline_status(self) -> dict:
         """Return which pipeline stages are currently active."""
@@ -443,80 +417,33 @@ class StorageManager:
 
     def set_counter(self, category: str, subcategory: Optional[str] = None,
                     value: Any = 0) -> None:
-        """
-        Set a counter to a specific value in the hierarchical counters structure.
-        
-        This method provides a thread-safe way to set counter values at any level
-        of the counters hierarchy. It will create intermediate dictionaries if needed.
-        
-        Args:
-            category (str): Top-level category name (e.g., 'reception', 'processing')
-            subcategory (str, optional): Subcategory name (e.g., 'images', 'errors')
-            value (Any, optional): Value to set the counter to (default: 0)
-            
-        Example:
-            # Set reception images count
-            storage_manager.set_counter('reception', 'images', 100)
-            
-            # Set a top-level counter
-            storage_manager.set_counter('errors', 'total', 5)
-            
-            # Set a nested error counter
-            storage_manager.set_counter('processing', 'errors', 'validation', 3)
-        """
-        if category not in self.counters:
-            self.counters[category] = {}
-        
-        if subcategory is None:
-            # Set the entire category to the value (usually a dict)
-            self.counters[category] = value
-        else:
-            # Ensure the category is a dictionary
-            if not isinstance(self.counters[category], dict):
+        """Set ``counters[category][subcategory]`` (or the whole category
+        when *subcategory* is None) to *value*, creating it if needed.
+        Thread-safe: takes ``self.lock`` (re-entrant)."""
+        with self.lock:
+            if subcategory is None:
+                self.counters[category] = value
+                return
+            if not isinstance(self.counters.get(category), dict):
                 self.counters[category] = {}
-            
             self.counters[category][subcategory] = value
 
     def inc_counter(self, category: str, subcategory: Optional[str] = None,
                     increment: float = 1) -> None:
-        """
-        Increment a counter by a specified value in the hierarchical counters structure.
-        
-        This method provides a thread-safe way to increment counter values. If the
-        counter or any intermediate structure doesn't exist, it will be created with
-        an initial value of 0 before incrementing.
-        
-        Args:
-            category (str): Top-level category name (e.g., 'reception', 'processing')
-            subcategory (str, optional): Subcategory name (e.g., 'images', 'errors')
-            increment (int, optional): Value to add to the counter (default: 1)
-            
-        Example:
-            # Increment reception images count by 1
-            storage_manager.inc_counter('reception', 'images')
-            
-            # Increment by a specific amount
-            storage_manager.inc_counter('processing', 'images', 5)
-            
-            # Increment a nested error counter
-            storage_manager.inc_counter('processing', 'errors', 'validation', 1)
-        """
-        if category not in self.counters:
-            self.counters[category] = {}
-        
-        if subcategory is None:
-            # Increment the category itself (should be a number)
-            if not isinstance(self.counters[category], (int, float)):
-                self.counters[category] = 0
-            self.counters[category] += increment
-        else:
-            # Ensure the category is a dictionary
-            if not isinstance(self.counters[category], dict):
-                self.counters[category] = {}
-            
-            if subcategory not in self.counters[category]:
-                self.counters[category][subcategory] = 0
-            self.counters[category][subcategory] += increment
+        """Add *increment* to ``counters[category][subcategory]`` (or to a
+        bare numeric category when *subcategory* is None), starting from 0 if
+        it doesn't exist. Thread-safe: takes ``self.lock`` (re-entrant) —
+        defacing and export workers call this from ``asyncio.to_thread``."""
+        with self.lock:
+            if subcategory is None:
+                if not isinstance(self.counters.get(category), (int, float)):
+                    self.counters[category] = 0
+                self.counters[category] += increment
+            else:
+                if not isinstance(self.counters.get(category), dict):
+                    self.counters[category] = {}
+                bucket = self.counters[category]
+                bucket[subcategory] = bucket.get(subcategory, 0) + increment
         events = getattr(self, "events", None)  # inc_counter may run mid-__init__
         if events is not None:
             events.counters()
@@ -552,17 +479,17 @@ class StorageManager:
     def save_temp_image(self, ds: pydicom.Dataset, image_id: str) -> Path:
         """
         Save a received DICOM image to temporary storage.
-        
+
         This method saves incoming DICOM data to a temporary file for later processing.
         The image is saved with a unique ID to prevent conflicts.
-        
+
         Args:
             ds (pydicom.Dataset): The DICOM dataset to save
             image_id (str): Unique identifier for this DICOM image
-            
+
         Returns:
             Path: Path to the saved temporary DICOM file
-            
+
         Raises:
             OSError: If the file cannot be written to temporary storage
         """
@@ -575,22 +502,22 @@ class StorageManager:
         with self.lock:
             self.inc_counter('reception', 'images')
             self.inc_counter('reception', 'bytes', temp_file.stat().st_size)
-            
+
             # Check if this is the first image for a new study
             # Note: We can't determine study UID until we read the DICOM file
             # This will be updated in process_image method
 
         return temp_file
 
-    def log_anonymization_mapping(self, original_study_uid: str, original_series_uid: str, 
-                                  original_patient_id: str, image_id: str, 
+    def log_anonymization_mapping(self, original_study_uid: str, original_series_uid: str,
+                                  original_patient_id: str, image_id: str,
                                   anonymized_study_number: int, anonymized_series_number: int):
         """
         Log the anonymization mapping to audit trail file.
-        
+
         Writes a JSON line for each anonymized image containing the mapping information.
         This is useful for tracing back anonymized data to original records if needed.
-        
+
         Args:
             original_study_uid (str): Original Study Instance UID
             original_series_uid (str): Original Series Instance UID
@@ -604,7 +531,7 @@ class StorageManager:
             anon_study_uid = self.anonymizer.get_study_uid_mapping(original_study_uid)
             anon_series_uid = self.anonymizer.get_series_uid_mapping(original_series_uid)
             anon_patient_id = self.anonymizer.get_patient_id_mapping(original_patient_id)
-            
+
             mapping_record = {
                 'timestamp': datetime.now().isoformat(),
                 'image_id': image_id,
@@ -621,7 +548,7 @@ class StorageManager:
                     'series_number': str(anonymized_series_number).zfill(4)
                 }
             }
-            
+
             # Append to JSONL file (JSON Lines format - one JSON object per line)
             with self.lock:
                 # Owner-only: the trail maps pseudonyms back to real identities.
@@ -629,7 +556,7 @@ class StorageManager:
                              os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
                 with os.fdopen(fd, 'a') as f:
                     f.write(json.dumps(mapping_record) + '\n')
-            
+
             logger.debug(f"Logged anonymization mapping for image {image_id}")
         except Exception as e:
             logger.error(f"Failed to log anonymization mapping for image {image_id}: {e}", exc_info=True)
@@ -637,7 +564,7 @@ class StorageManager:
     def process_image(self, image_path: Path, image_id: str):
         """
         Process a received DICOM image through the complete pipeline.
-        
+
         This method handles the complete processing of a DICOM image:
         1. Reads and validates the DICOM dataset
         2. Anonymizes the DICOM data
@@ -645,11 +572,11 @@ class StorageManager:
         4. Assigns numeric identifiers and filenames
         5. Moves the image to its final organized location
         6. Updates study tracking and counters
-        
+
         Args:
             image_path (Path): Path to the temporary DICOM file to process
             image_id (str): Unique identifier for this DICOM image
-            
+
         Raises:
             Exception: If any step in the processing pipeline fails
         """
@@ -666,7 +593,7 @@ class StorageManager:
         logger.debug(f"Starting processing of image {image_id} from {image_path}")
         start_time = time.time()
         study_uid = None
-        
+
         try:
             # Force reading the DICOM image even with missing meta headers
             logger.debug(f"Reading DICOM file: {image_path}")
@@ -686,7 +613,7 @@ class StorageManager:
             series_uid = str(ds.SeriesInstanceUID)
             patient_id = str(ds.PatientID) if "PatientID" in ds else "UNKNOWN"
             logger.debug(f"Image {image_id} belongs to study {study_uid}, series {series_uid}, patient {patient_id}")
-            
+
             # Check if image should be filtered based on series criteria
             if self.series_filter.should_filter(ds):
                 logger.info(f"Filtering out image {image_id} based on series criteria")
@@ -694,7 +621,7 @@ class StorageManager:
                 with self.lock:
                     self.inc_counter('processing', 'filtered_images')
                 return
-            
+
             # Update reception counters for new studies; start tracking their size
             image_size = image_path.stat().st_size
             study_number = self.study_manager.get_study_number(study_uid)
@@ -827,7 +754,7 @@ class StorageManager:
             with self.lock:
                 self.inc_counter('performance', 'total_time', processing_time)
                 self.inc_counter('performance', 'count_time')
-                self.set_counter('performance', 'average_time', 
+                self.set_counter('performance', 'average_time',
                     self.counters['performance']['total_time'] / self.counters['performance']['count_time']
                 )
             logger.debug(f"Image {image_id} processed in {processing_time:.3f}s")
@@ -856,13 +783,13 @@ class StorageManager:
     def validate_dicom(self, ds: pydicom.Dataset) -> bool:
         """
         Validate the DICOM image for required fields and basic integrity.
-        
+
         This method checks if the DICOM dataset contains all required fields
         for proper processing and storage.
-        
+
         Args:
             ds (pydicom.Dataset): The DICOM dataset to validate
-            
+
         Returns:
             bool: True if the DICOM dataset is valid, False otherwise
         """
@@ -893,8 +820,13 @@ class StorageManager:
                 logger.debug("Study %s already being processed — skipping", study_uid)
                 continue
             self._processing_studies.add(study_uid)
-            self._active_waiting += 1
-            asyncio.create_task(self._process_study(study_uid))
+            with self.lock:
+                self._active_waiting += 1
+            # The loop only holds a weak reference to a task: keep our own
+            # or a long defacing run can be garbage-collected mid-flight.
+            task = asyncio.create_task(self._process_study(study_uid))
+            self._study_tasks.add(task)
+            task.add_done_callback(self._study_tasks.discard)
 
     async def _process_study(self, study_uid: str) -> None:
         """
@@ -959,13 +891,7 @@ class StorageManager:
                     self._deface_study, study_uid, study_number, study_dir, classify_only=True
                 )
 
-            # Count images (blocking glob — run in thread)
-            image_count = await asyncio.to_thread(
-                lambda: sum(
-                    1 for f in study_dir.rglob("*.dcm")
-                    if not any(part.endswith("_pre_deface") for part in f.parts)
-                )
-            )
+            image_count = await asyncio.to_thread(self._count_images_sync, study_dir)
             logger.debug("Study %04d contains %d images", study_number, image_count)
 
             with self.lock:
@@ -1015,6 +941,17 @@ class StorageManager:
             self._processing_studies.discard(study_uid)
             # The .exam_hints.json on disk is the record from here on.
             self._exam_hints.pop(study_uid, None)
+
+    @staticmethod
+    def _count_images_sync(study_dir: Path, excluded_series: frozenset | set = frozenset()) -> int:
+        """Number of ``.dcm`` files under *study_dir*, leaving out the
+        ``_pre_deface`` backups and any series folder named in
+        *excluded_series*."""
+        return sum(
+            1 for f in study_dir.rglob("*.dcm")
+            if f.parent.name not in excluded_series
+            and not any(part.endswith("_pre_deface") for part in f.parts)
+        )
 
     def _write_exam_sidecar(self, study_uid: str, study_number: int, study_dir: Path) -> None:
         """
@@ -1564,7 +1501,6 @@ class StorageManager:
                 "age_years": patient.get("age_years"),
                 "weight_kg": patient.get("weight_kg"),
             },
-            "image_quality": exam_data.get("image_quality"),
             "total_dlp_mgy_cm": rdsr.get("total_dlp_mgy_cm"),
             "has_manual_edits": bool(manual.get("fields")),
             "missing_fields": missing,
@@ -1737,12 +1673,7 @@ class StorageManager:
                     study_number, "dicom", done, total),
             )
             if success:
-                image_count = await asyncio.to_thread(
-                    lambda: sum(
-                        1 for f in study_dir.rglob("*.dcm")
-                        if not any(part.endswith("_pre_deface") for part in f.parts)
-                    )
-                )
+                image_count = await asyncio.to_thread(self._count_images_sync, study_dir)
                 with self.lock:
                     self.inc_counter('export', 'dicom_studies')
                     self.inc_counter('export', 'dicom_images', image_count)
@@ -1768,9 +1699,15 @@ class StorageManager:
             with self.lock:
                 self._active_exporting -= 1
 
-    @staticmethod
-    def _deface_export_block(sc) -> str | None:
-        """Reason a study must not be exported for defacing reasons, or None."""
+    # The only statuses a study may be exported in. Everything else is
+    # still moving through the pipeline (a ``defacing`` study can hold a
+    # head series that hasn't been defaced yet) or is blocked on defacing.
+    _EXPORTABLE_STATUSES = frozenset({"ready", "archived"})
+
+    @classmethod
+    def _deface_export_block(cls, sc) -> str | None:
+        """Reason a study must not be exported right now, or None. Shared by
+        every export path (DICOM, HTTP, RHYTHM) so they can't drift."""
         if sc is None:
             return None
         if sc.status == "defacing_failed":
@@ -1779,6 +1716,9 @@ class StorageManager:
         if sc.status == "defacing_disabled":
             return ("this study contains a head-scan series but defacing is disabled — "
                     "enable defacing and restart to deface it before export")
+        if sc.status not in cls._EXPORTABLE_STATUSES:
+            return (f"study is still being processed (status '{sc.status}') — "
+                    f"it can be exported once it is ready")
         return None
 
     async def manual_upload_http(self, study_number: int) -> dict:
@@ -1833,12 +1773,7 @@ class StorageManager:
                 )
 
             if success:
-                image_count = await asyncio.to_thread(
-                    lambda: sum(
-                        1 for f in study_dir.rglob("*.dcm")
-                        if not any(part.endswith("_pre_deface") for part in f.parts)
-                    )
-                )
+                image_count = await asyncio.to_thread(self._count_images_sync, study_dir)
                 with self.lock:
                     self.inc_counter('export', 'http_studies')
                     self.inc_counter('export', 'http_images', image_count)
@@ -2228,8 +2163,9 @@ class StorageManager:
         One study is one manifest item; *batch* groups sibling items from the
         same dashboard action and is generated here when not supplied.
         Refuses (does not raise) when RHYTHM export is unconfigured, the
-        study is ``defacing_failed``, the anonymization profile is not
-        ``gdpr``, the exam sidecar is missing/unreadable, a RHYTHM-required
+        study is not exportable (still processing, ``defacing_failed`` or
+        ``defacing_disabled``), the anonymization profile is not
+        ``rhythm``, the exam sidecar is missing/unreadable, a RHYTHM-required
         field is still unset (notably ``image_quality``), or the study holds
         no CT image series. The first successful export also does the
         retain-or-delete + ``mark_study_archived(via="rhythm")`` bookkeeping.
@@ -2259,10 +2195,9 @@ class StorageManager:
                         f"than re-exporting a study received under another profile"}
 
             sc = self.find_sidecar_by_number(study_number)
-            if sc is not None and sc.status == "defacing_failed":
-                return {"ok": False, "message":
-                        "defacing did not complete for this study (a head-scan series "
-                        "is still undefaced) — cannot export until that is resolved"}
+            blocked = self._deface_export_block(sc)
+            if blocked:
+                return {"ok": False, "message": blocked}
 
             # Off the loop: loads the exam sidecar and reads a DICOM header
             # per series (the rhythm-anonymization check).
@@ -2454,6 +2389,12 @@ class StorageManager:
             return
         for sc in self.study_manager.all_sidecars():
             url = getattr(sc, "rhythm_job_status_url", None)
+            if (sc.rhythm_status == "COMPLETE" and sc.status == "ready"
+                    and sc.study_number not in self._manual_actions_in_progress):
+                # COMPLETE was persisted but the process stopped before the
+                # archive bookkeeping ran. A terminal status is never polled
+                # again, so without this the study would stay "ready" forever.
+                await self._finalize_rhythm_export(sc)
             if sc.rhythm_status == "COMPLETE" and not sc.rhythm_repository_study_id:
                 # Backfill: COMPLETE before this existed, or the lookup
                 # failed last time. Retried at most once per interval.
@@ -2749,10 +2690,15 @@ class StorageManager:
                     ds.PatientWeight = weight_kg
                 if age_str is not None:
                     ds.PatientAge = age_str
-                ds.save_as(dcm_path)
+                # tmp + rename: a crash mid-write must not leave a
+                # truncated slice in a study that is about to be exported.
+                tmp_path = dcm_path.with_name(dcm_path.name + ".tmp")
+                ds.save_as(tmp_path)
+                tmp_path.replace(dcm_path)
             except Exception:
                 logger.exception("Failed to write back patient fields into %s", dcm_path)
                 failed.append(dcm_path)
+                dcm_path.with_name(dcm_path.name + ".tmp").unlink(missing_ok=True)
         return failed
 
     async def save_exam(self, study_number: int, manual_fields: dict,

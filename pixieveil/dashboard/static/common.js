@@ -108,7 +108,6 @@ const PV = (() => {
         'indication.region': 'Indication',
         'indication.clinical_indication': 'Indication',
         'indication.iv_contrast': 'Contrast',
-        'scanner.rhythm_scanner_id': 'Scanner ID',
         'rhythm.protocol_key': 'RHYTHM protocol',
     };
     function missingLabels(paths) {
@@ -136,6 +135,7 @@ const PV = (() => {
     function setConn(ok, text) {
         const el = document.getElementById('conn');
         if (!el) return;
+        el.hidden = false;
         el.classList.toggle('ok', ok);
         el.classList.toggle('down', !ok);
         el.querySelector('.label').textContent = text || (ok ? 'Live' : 'Server unreachable');
@@ -300,7 +300,7 @@ const PV = (() => {
     // current from their own data; every other page fills it once here.
     async function refreshNavBadge() {
         const badge = document.getElementById('nav-needs');
-        if (!badge || ['/', '/studies', '/login', '/setup'].includes(location.pathname)) return;
+        if (!badge || ['/', '/studies'].includes(location.pathname)) return;
         try {
             const { studies } = await api('/api/studies');
             const needs = (studies || []).filter(PV.needsInput).length;
@@ -309,46 +309,11 @@ const PV = (() => {
         } catch (_e) { /* badge is optional */ }
     }
 
+    // The top bar (navigation, account button and its menu) is rendered by
+    // the server; this only wires the menu up and loads the profile.
     async function initAccount() {
-        const bar = document.querySelector('.topbar');
-        if (!bar || ['/login', '/setup'].includes(location.pathname)) return;
-        try { me = await api('/api/me'); } catch (_e) { return; }
-        if (me.admin) {
-            const nav = bar.querySelector('.nav');
-            if (nav && !nav.querySelector('a[href="/users"]')) {
-                const a = document.createElement('a');
-                a.href = '/users';
-                a.textContent = 'Users';
-                if (location.pathname === '/users') a.setAttribute('aria-current', 'page');
-                // Users sits before About.
-                nav.insertBefore(a, nav.querySelector('a[href="/about"]'));
-            }
-            if (nav && !nav.querySelector('a[href="/settings"]')) {
-                const a = document.createElement('a');
-                a.href = '/settings';
-                a.textContent = 'Settings';
-                if (location.pathname === '/settings') a.setAttribute('aria-current', 'page');
-                // Settings sits between Users and About.
-                nav.insertBefore(a, nav.querySelector('a[href="/about"]'));
-            }
-            if (nav && !nav.querySelector('a[href="/lookup"]')) {
-                const a = document.createElement('a');
-                a.href = '/lookup';
-                a.textContent = 'Lookup';
-                if (location.pathname === '/lookup') a.setAttribute('aria-current', 'page');
-                nav.insertBefore(a, nav.querySelector('a[href="/about"]'));
-            }
-        }
-        const wrap = document.createElement('div');
-        wrap.className = 'account';
-        wrap.innerHTML = `
-            <button type="button" class="btn btn-ghost account-btn" aria-haspopup="true" aria-expanded="false">
-                ${icon('lock')}<span>${esc(me.username)}</span></button>
-            <div class="account-menu" hidden>
-                <button type="button" data-act="password">Change password</button>
-                <button type="button" data-act="tokens">API tokens</button>
-                <button type="button" data-act="logout">Log out</button>
-            </div>`;
+        const wrap = document.querySelector('.topbar .account');
+        if (!wrap) return;
         const btn = wrap.querySelector('.account-btn');
         const menu = wrap.querySelector('.account-menu');
         const setOpen = open => { menu.hidden = !open; btn.setAttribute('aria-expanded', String(open)); };
@@ -362,8 +327,7 @@ const PV = (() => {
             if (act === 'tokens') manageTokens();
             if (act === 'logout') logout();
         });
-        const toggle = bar.querySelector('[data-theme-toggle]');
-        bar.insertBefore(wrap, toggle || null);
+        try { me = await api('/api/me'); } catch (_e) { /* menu still works */ }
     }
 
     // ------------------------------------------------------------ polling

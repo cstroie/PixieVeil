@@ -380,3 +380,54 @@ class TestLookup:
         assert s3 == 400
         assert s4 == 200 and "RHY-1" in csv_body and "original_patient_id" in csv_body
         assert s5 == 200 and "/api/lookup" in page
+
+
+class TestPageShell:
+    """The head block and top bar are filled in by dashboard/shell.py."""
+
+    PAGES = ("/", "/studies", "/protocols", "/about", "/users", "/settings", "/lookup")
+
+    def test_every_page_gets_the_shell_and_no_marker_survives(self, tmp_path):
+        d = _dashboard(tmp_path)
+        for path, (status, body) in zip(
+                self.PAGES, _calls(d, *[("GET", p, {}) for p in self.PAGES])):
+            assert status == 200, path
+            assert "<!--pv:" not in body, path
+            assert '<header class="topbar">' in body, path
+            assert "pixieveil_theme" in body, path          # theme set before first paint
+            nav = body[body.index('<nav class="nav"'):body.index("</nav>")]
+            assert nav.count('aria-current="page"') == 1, path
+            assert f'href="{path}" aria-current="page"' in nav, path
+
+    def test_static_references_carry_a_version(self, tmp_path):
+        import re
+        from pixieveil.dashboard import shell
+        d = _dashboard(tmp_path)
+        [(status, body)] = _calls(d, ("GET", "/studies", {}))
+        refs = re.findall(r'"(/static/[^"]+)"', body)
+        assert refs and all(re.search(r"\?v=\d+$", r) for r in refs), refs
+        # A reference to a file that isn't there is left alone, not broken.
+        assert shell.render('<script src="/static/nope.js">', "/") == \
+            '<script src="/static/nope.js">'
+
+
+class TestShellRender:
+    def test_admin_links_only_for_admins(self):
+        from pixieveil.dashboard import shell
+        plain = shell.topbar("/", username="alice", admin=False)
+        admin = shell.topbar("/", username="root", admin=True)
+        for href in ("/users", "/settings", "/lookup"):
+            assert f'href="{href}"' not in plain
+            assert f'href="{href}"' in admin
+        assert 'href="/studies"' in plain and 'id="nav-needs"' in plain
+
+    def test_signed_out_bar_has_no_navigation_or_account(self):
+        from pixieveil.dashboard import shell
+        bar = shell.topbar("/login")
+        assert "<nav" not in bar and "account" not in bar
+        assert "data-theme-toggle" in bar
+
+    def test_username_is_escaped(self):
+        from pixieveil.dashboard import shell
+        bar = shell.topbar("/", username='<img src=x onerror=1>')
+        assert "<img" not in bar and "&lt;img" in bar

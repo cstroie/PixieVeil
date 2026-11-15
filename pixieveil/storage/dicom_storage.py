@@ -20,13 +20,13 @@ import logging
 from pathlib import Path
 from typing import Callable, Optional
 
-# progress(done, total) — called after each file; must be cheap/thread-safe.
-ProgressFn = Callable[[int, int], None]
-
 import pydicom
 from pynetdicom import AE, StoragePresentationContexts
 
 from pixieveil.config import Settings
+
+# progress(done, total) — called after each file; must be cheap/thread-safe.
+ProgressFn = Callable[[int, int], None]
 
 logger = logging.getLogger(__name__)
 

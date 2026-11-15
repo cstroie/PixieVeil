@@ -11,8 +11,6 @@ Classes:
 import asyncio
 import logging
 import socket
-from pathlib import Path
-from typing import Dict, Any, Optional
 
 import pynetdicom
 from pynetdicom import AE, evt
@@ -27,7 +25,6 @@ from pynetdicom.sop_class import (  # type: ignore[attr-defined]
     SecondaryCaptureImageStorage,
     XRayRadiationDoseSRStorage
 )
-from pydicom.dataset import Dataset
 
 from pixieveil.config.settings import Settings
 from pixieveil.storage.storage_manager import StorageManager
@@ -51,14 +48,14 @@ SUPPORTED_STORAGE_SOP_CLASSES = (
 class DicomServer:
     """
     DICOM server for receiving and processing DICOM images.
-    
+
     This class implements a DICOM server that can receive medical imaging
     data from DICOM-compliant devices. It supports:
     - C-ECHO operations for connection verification
     - C-STORE operations for receiving DICOM images
     - Asynchronous operation to avoid blocking the main event loop
     - Graceful startup and shutdown procedures
-    
+
     Attributes:
         settings (Settings): Application configuration settings
         storage_manager (StorageManager): Storage manager for image processing
@@ -67,11 +64,11 @@ class DicomServer:
         server_task (asyncio.Task): Background task for the server
         c_store_handler (CStoreSCPHandler): Handler for C-STORE requests
     """
-    
+
     def __init__(self, settings: Settings, storage_manager: StorageManager):
         """
         Initialize the DicomServer with application settings and storage manager.
-        
+
         Args:
             settings: Application configuration settings containing DICOM server
                       configuration (port, AE title, etc.)
@@ -87,11 +84,11 @@ class DicomServer:
     async def start(self):
         """
         Start the DICOM server.
-        
+
         This method initializes the DICOM Association Entity, adds supported
         presentation contexts, and starts the server in a background thread
         to avoid blocking the asyncio event loop.
-        
+
         Raises:
             Exception: If the server fails to start
         """
@@ -112,7 +109,7 @@ class DicomServer:
 
         self.ae = AE(ae_title=self.settings.dicom_server["ae_title"])
         self.ae.port = self.ae_port
-        
+
         # Add supported contexts
         self.ae.add_supported_context(Verification)
         for sop_class in SUPPORTED_STORAGE_SOP_CLASSES:
@@ -127,7 +124,7 @@ class DicomServer:
         # Start the server in a separate thread to avoid blocking the event loop
         loop = asyncio.get_running_loop()
         self.server_task = loop.run_in_executor(
-            None, 
+            None,
             self.start_blocking_server,
             handlers  # Pass handlers to server starter
         )
@@ -135,13 +132,13 @@ class DicomServer:
     def start_blocking_server(self, handlers):
         """
         Start the DICOM server (blocking call).
-        
+
         This method starts the DICOM server in a blocking manner. It should
         be called from a thread executor to avoid blocking the main event loop.
-        
+
         Args:
             handlers: List of event handlers for DICOM operations
-            
+
         Raises:
             Exception: If the server fails to start
         """
@@ -156,11 +153,11 @@ class DicomServer:
     async def stop(self):
         """
         Stop the DICOM server gracefully.
-        
+
         This method performs a graceful shutdown of the DICOM server,
         including stopping the background task and shutting down the
         Association Entity.
-        
+
         The shutdown sequence:
         1. Cancel the server task (which is blocked in start_server)
         2. Call ae.shutdown() from within the server thread to unblock start_server
@@ -173,7 +170,7 @@ class DicomServer:
                 # First, request shutdown from within the server thread
                 loop = asyncio.get_running_loop()
                 await loop.run_in_executor(None, self.stop_server)
-                
+
                 # Then wait for the task to complete with timeout
                 try:
                     await asyncio.wait_for(self.server_task, timeout=5.0)
@@ -181,7 +178,7 @@ class DicomServer:
                     logger.warning("DICOM server task did not complete within 5 second timeout")
                 finally:
                     self.server_task = None
-            
+
             if self.ae:
                 self.ae = None
                 logger.info("DICOM server stopped")
@@ -192,7 +189,7 @@ class DicomServer:
     def stop_server(self):
         """
         Stop the DICOM server from within its own thread.
-        
+
         This method is called from the executor thread to properly
         shut down the pynetdicom Association Entity. It must be called
         from the same thread that started the server to avoid deadlocks.
@@ -207,13 +204,13 @@ class DicomServer:
     def handle_echo(self, event: "pynetdicom.events.Event") -> int:
         """
         Handle C-ECHO requests.
-        
+
         This method handles C-ECHO requests, which are used to verify
         that the DICOM server is responsive and available.
-        
+
         Args:
             event: The C-ECHO event object
-            
+
         Returns:
             int: DICOM status code (0x0000 for success)
         """
@@ -223,14 +220,14 @@ class DicomServer:
     def handle_c_store(self, event: "pynetdicom.events.Event") -> int:
         """
         Handle C-STORE requests.
-        
+
         This method handles C-STORE requests, which are used to receive
         DICOM images from medical imaging devices. It delegates the
         actual processing to the CStoreSCPHandler.
-        
+
         Args:
             event: The C-STORE event object containing the DICOM dataset
-            
+
         Returns:
             int: DICOM status code (0x0000 for success, 0x0106 for out of resources)
         """
@@ -238,8 +235,8 @@ class DicomServer:
         try:
             # Use the C-STORE handler to process the request
             return self.c_store_handler.handle_c_store(
-                event.assoc, 
-                event.context, 
+                event.assoc,
+                event.context,
                 {"dataset": event.dataset, "file_meta": event.file_meta}
             )
         except Exception as e:

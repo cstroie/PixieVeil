@@ -343,6 +343,23 @@ class TestReconcile:
         assert sm.get_counter("export", "rhythm_images") == 2
         assert sm.get_counter("cleanup", "studies") == 1
 
+    def test_complete_recorded_before_a_crash_is_finalized_on_the_next_tick(self, tmp_path):
+        """COMPLETE reached the sidecar but the process died before the
+        archive bookkeeping: a terminal status is never polled again, so the
+        loop must finish the job from the recorded state."""
+        sm = _manager(tmp_path)
+        sm.rhythm_storage = FakeRhythm()
+        sc = self._study_with_pending_job(sm)
+        sm.study_manager.set_rhythm_job(sc.original_study_uid, status="COMPLETE")
+
+        asyncio.run(sm.reconcile_rhythm_jobs())
+
+        sc = sm.find_sidecar_by_number(1)
+        assert sc.status == "archived" and sc.archived_via == "rhythm"
+        assert sc.exported_at
+        assert sm.rhythm_storage.job_checks == []  # no re-poll needed
+        assert sm.get_counter("export", "rhythm_studies") == 1
+
     def test_completion_loop_steps_use_in_memory_sidecars(self, tmp_path, monkeypatch):
         from pixieveil.storage.study_sidecar import StudySidecar
         sm = _manager(tmp_path, retain_days=7)
@@ -1186,3 +1203,24 @@ class TestCorrespondenceCsvInjection:
         (row,) = list(_csv.DictReader(_io.StringIO(text)))
         assert row["original_patient_id"] == "PID-123"
         assert row["study_number"] == "1"
+
+
+class TestRhythmRefusesUnexportableStatus:
+    @pytest.mark.parametrize("status, needle", [
+        ("defacing_disabled", "defacing is disabled"),
+        ("defacing_failed", "defacing did not complete"),
+        ("defacing", "still being processed"),
+        ("complete", "still being processed"),
+        ("receiving", "still being processed"),
+    ])
+    def test_upload_refused(self, tmp_path, status, needle):
+        sm = _manager(tmp_path)
+        sm.rhythm_storage = FakeRhythm()
+        _ready_study(sm)
+        sm.find_sidecar_by_number(1).status = status
+
+        result = asyncio.run(sm.manual_upload_rhythm(1))
+
+        assert result["ok"] is False
+        assert needle in result["message"]
+        assert sm.rhythm_storage.calls == []

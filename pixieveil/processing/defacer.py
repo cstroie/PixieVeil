@@ -43,7 +43,6 @@ class DefacingCancelled(Exception):
 _HEAD_BODY_PARTS = {"HEAD", "BRAIN", "NECK", "SKULL"}
 
 
-
 def _safe_uid_stem(uid: str) -> str:
     """A filename stem for a DICOM UID. A conformant UI value is digits and
     dots only, but the value is whatever the sender (or a KEEP profile)
@@ -51,6 +50,7 @@ def _safe_uid_stem(uid: str) -> str:
     components or an absolute path to the NIfTI file name."""
     stem = re.sub(r"[^0-9.]", "_", str(uid or "")).strip(".")
     return stem.replace("..", "_") or "series"
+
 
 class Defacer:
     """DICOM defacing conversion utilities."""
@@ -930,8 +930,10 @@ class Defacer:
                     fwd = np.roll(dilated, 1, axis=ax)
                     bwd = np.roll(dilated, -1, axis=ax)
                     # Zero out wrap-around edges introduced by roll
-                    idx_fwd = [slice(None)] * 3; idx_fwd[ax] = slice(0, 1)
-                    idx_bwd = [slice(None)] * 3; idx_bwd[ax] = slice(-1, None)
+                    idx_fwd = [slice(None)] * 3
+                    idx_fwd[ax] = slice(0, 1)
+                    idx_bwd = [slice(None)] * 3
+                    idx_bwd[ax] = slice(-1, None)
                     fwd[tuple(idx_fwd)] = False
                     bwd[tuple(idx_bwd)] = False
                     dilated = dilated | fwd | bwd
@@ -990,7 +992,6 @@ class Defacer:
 
         if not getattr(ds.file_meta, "TransferSyntaxUID", None):
             ds.file_meta.TransferSyntaxUID = ImplicitVRLittleEndian
-
 
 
 # Convenience functions

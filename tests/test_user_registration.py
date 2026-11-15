@@ -614,7 +614,7 @@ class TestUsersPageNav:
             await _login(client, "root", "root-password")
             return await (await client.get("/users")).text()
         html = _run(d, script)
-        nav = html[html.index('<nav class="nav">'):html.index("</nav>")]
+        nav = html[html.index('<nav class="nav"'):html.index("</nav>")]
         assert 'id="nav-needs"' in nav
         studies, users, about = (nav.index(f'href="/{p}"') for p in ("studies", "users", "about"))
         assert studies < users < about

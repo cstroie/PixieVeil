@@ -33,7 +33,8 @@
     "rhythm_server_assigned_upload_manifest", top-level type/items)
 [x] update the config files (retain_path -> export_path; retention model rewrite)
 [x] retention: study dir + export_path/<NNNN>.{zip,json} kept in base_path
-    for retain_after_export_days after export, then purged (records kept)[ ] Security follow-ups (from the 2026-11-14 dependency audit):
+    for retain_after_export_days after export, then purged (records kept)
+[ ] Security follow-ups (from the 2026-11-14 dependency audit):
     - verify nnU-Net defacing still works on torch 2.14.1 (install.py pins
       it now; never run end-to-end) — reinstall, deface one head study
     - CUDA 11 hosts: newest cu118 torch is 2.7.1, still affected by the

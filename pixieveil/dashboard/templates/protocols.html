@@ -1,15 +1,8 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PixieVeil · Protocols</title>
-    <script>
-        try { document.documentElement.dataset.theme = localStorage.getItem('pixieveil_theme') || 'dark'; }
-        catch (_e) { document.documentElement.dataset.theme = 'dark'; }
-    </script>
-    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='1' y='1' width='30' height='30' rx='8' fill='%23151b22' stroke='%233cc8c0' stroke-width='2'/%3E%3Cg fill='%233cc8c0'%3E%3Crect x='8' y='8' width='4' height='4' rx='1'/%3E%3Crect x='14' y='8' width='4' height='4' rx='1' opacity='.6'/%3E%3Crect x='8' y='14' width='4' height='4' rx='1' opacity='.6'/%3E%3Crect x='20' y='8' width='4' height='4' rx='1' opacity='.3'/%3E%3Crect x='14' y='14' width='4' height='4' rx='1' opacity='.3'/%3E%3Crect x='8' y='20' width='4' height='4' rx='1' opacity='.3'/%3E%3C/g%3E%3C/svg%3E">
-    <link rel="stylesheet" href="/static/theme.css">
+    <!--pv:head-->
+    <title>Protocols – PixieVeil</title>
     <style>
         .page { max-width: 1280px; margin: 0 auto; padding: 28px 16px 96px; display: flex; flex-direction: column; gap: 20px; }
         .page h1 { font-size: 22px; }
@@ -18,13 +11,14 @@
         @media (max-width: 860px) { .layout { grid-template-columns: 1fr; } }
 
         .side { display: flex; flex-direction: column; gap: 4px; padding: 8px; }
-        .side .group-label { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--text-faint); padding: 10px 10px 4px; }
+        .side .group-label { font-size: 12px; font-weight: 600; color: var(--text-faint); padding: 10px 10px 4px; }
         .side button.item {
             all: unset; cursor: pointer; display: flex; align-items: center; gap: 8px;
             padding: 8px 10px; border-radius: var(--radius-sm); color: var(--text); font-size: 13.5px;
         }
         .side button.item:hover { background: var(--hover); }
         .side button.item[aria-current="true"] { background: var(--raised); box-shadow: inset 2px 0 0 var(--accent); }
+        .side .item svg { width: 16px; height: 16px; flex: none; color: var(--text-dim); }
         .side .item .sub { color: var(--text-faint); font-size: 12px; margin-left: auto; }
         .side .item .count { margin-left: auto; }
         .side .add { margin: 8px 4px 2px; }
@@ -65,20 +59,7 @@
     </style>
 </head>
 <body>
-    <header class="topbar">
-        <a class="brand" href="/">
-            <svg viewBox="0 0 32 32" aria-hidden="true"><rect x="1.5" y="1.5" width="29" height="29" rx="8" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.5"/><g fill="var(--accent)"><rect x="8" y="8" width="4" height="4" rx="1"/><rect x="14" y="8" width="4" height="4" rx="1" opacity=".6"/><rect x="8" y="14" width="4" height="4" rx="1" opacity=".6"/><rect x="20" y="8" width="4" height="4" rx="1" opacity=".3"/><rect x="14" y="14" width="4" height="4" rx="1" opacity=".3"/><rect x="8" y="20" width="4" height="4" rx="1" opacity=".3"/></g><path d="M8 25.5C14 24 21 18 25 8" stroke="var(--accent)" stroke-width="1.6" fill="none" stroke-linecap="round"/></svg>
-            <span>PixieVeil <small>DICOM anonymizer</small></span>
-        </a>
-        <nav class="nav">
-            <a href="/">Status</a>
-            <a href="/studies">Studies<span class="count" id="nav-needs" hidden></span></a>
-            <a href="/protocols" aria-current="page">Protocols</a>
-            <a href="/about">About</a>
-        </nav>
-        <div class="spacer"></div>
-        <button type="button" class="btn btn-ghost btn-icon" data-theme-toggle></button>
-    </header>
+    <!--pv:topbar-->
 
     <main class="page">
         <section>

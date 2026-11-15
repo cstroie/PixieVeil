@@ -13,7 +13,7 @@ import asyncio
 
 import aiohttp
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Optional
 
 from pixieveil.config import Settings
 
@@ -23,22 +23,22 @@ logger = logging.getLogger(__name__)
 class RemoteStorage:
     """
     Handles remote storage operations for DICOM study archives.
-    
+
     This class provides functionality to upload DICOM study ZIP archives to
     a remote storage service. It supports configurable endpoints and
     authentication mechanisms.
-    
+
     Attributes:
         settings (Settings): Application configuration settings
         base_url (str): Base URL for the remote storage service
         auth_token (str): Authentication token for remote storage access
         enabled (bool): True when a base_url is configured
     """
-    
+
     def __init__(self, settings: Settings):
         """
         Initialize the RemoteStorage with application settings.
-        
+
         Args:
             settings: Application configuration settings containing remote storage
                       configuration including base URL and authentication token
@@ -54,18 +54,18 @@ class RemoteStorage:
     async def upload_file(self, file_path: Path, remote_path: str) -> Optional[bool]:
         """
         Upload a file to remote storage.
-        
+
         This method uploads a DICOM study ZIP archive to the configured remote storage service.
         It handles authentication and error reporting for the upload operation.
-        
+
         Args:
             file_path (Path): Path to the local file to upload
             remote_path (str): Remote path where the file should be stored
-            
+
         Returns:
             bool: True if upload was successful, False if upload failed,
                   None if remote storage is not configured
-                  
+
         Note:
             If remote storage is not configured (base_url is None), the method
             returns None to indicate that remote storage is disabled.
@@ -79,7 +79,7 @@ class RemoteStorage:
             if not file_path.exists():
                 logger.error(f"File not found for upload: {file_path}")
                 return False
-            
+
             # Off the event loop: export ZIPs run to hundreds of MB.
             file_content = await asyncio.to_thread(file_path.read_bytes)
 
@@ -93,7 +93,7 @@ class RemoteStorage:
                     content_type="application/zip"
                 )
                 form_data.add_field("remote_path", remote_path)
-                
+
                 async with session.post(
                     f"{self.base_url}/upload",
                     data=form_data,

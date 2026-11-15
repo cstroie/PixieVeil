@@ -31,7 +31,7 @@ from pixieveil.auth import user_store as user_store_mod
 from pixieveil.auth.sessions import COOKIE_NAME, SessionSigner, load_or_create_secret
 from pixieveil.auth.user_store import User, UserStore, UserStoreError
 from pixieveil.config import Settings, settings_editor
-from pixieveil.dashboard import options
+from pixieveil.dashboard import options, shell
 from pixieveil.dashboard.setup import SetupRoutes, SetupState
 from pixieveil.dicom_server.server import SUPPORTED_STORAGE_SOP_CLASSES
 from pixieveil.processing import exam_merge, protocol_catalog, protocol_draft, rhythm_import
@@ -427,7 +427,7 @@ class Dashboard:
 
     # ------------------------------------------------------------ protocols catalog
     async def handle_protocols_page(self, request: web.Request) -> web.Response:
-        return await self._serve_template("protocols.html")
+        return await self._serve_template("protocols.html", request)
 
     async def handle_protocols_get(self, request: web.Request) -> web.Response:
         """The scanners & protocols catalog, its version (for PUT), per-protocol
@@ -540,7 +540,7 @@ class Dashboard:
         user = request.get("user")
         if user is None or not user.admin:
             raise web.HTTPFound("/")
-        return await self._serve_template("settings.html")
+        return await self._serve_template("settings.html", request)
 
     async def handle_settings_get(self, request: web.Request) -> web.Response:
         self._require_admin(request)
@@ -1017,13 +1017,13 @@ class Dashboard:
         user = request.get("user")
         if user is None or not user.admin:
             raise web.HTTPFound("/")
-        return await self._serve_template("users.html")
+        return await self._serve_template("users.html", request)
 
     async def handle_lookup_page(self, request: web.Request) -> web.Response:
         user = request.get("user")
         if user is None or not user.admin:
             raise web.HTTPFound("/")
-        return await self._serve_template("lookup.html")
+        return await self._serve_template("lookup.html", request)
 
     async def handle_lookup(self, request: web.Request) -> web.Response:
         """Admin-only patient -> study -> RHYTHM ID correspondence.
@@ -1246,20 +1246,32 @@ class Dashboard:
             bus.unsubscribe(sub)
         return resp
 
-    @staticmethod
-    async def _serve_template(name: str) -> web.Response:
-        """Serve one static HTML page from templates/ (no server-side templating)."""
+    async def _serve_template(self, name: str,
+                              request: Optional[web.Request] = None) -> web.Response:
+        """Serve one HTML page from templates/, with the shared head block
+        and top bar (:mod:`pixieveil.dashboard.shell`) filled in. Without a
+        logged-in user (login page, first-run wizard) the bar has no
+        navigation."""
         template_path = _TEMPLATES_DIR / name
         try:
             html_content = await asyncio.to_thread(template_path.read_text, encoding='utf-8')
         except FileNotFoundError:
             logger.error(f"Template file not found: {template_path}")
             return web.Response(text="Dashboard template not found", status=500)
-        return web.Response(text=html_content, content_type="text/html")
+        user = request.get("user") if request is not None else None
+        path = request.path if request is not None else ""
+        html_content = shell.render(
+            html_content, path,
+            username=user.username if user is not None else None,
+            admin=bool(user is not None and user.admin),
+        )
+        # no-store: the bar is per-user (name, admin links).
+        return web.Response(text=html_content, content_type="text/html",
+                            headers={"Cache-Control": "no-store"})
 
     async def handle_index(self, request: web.Request) -> web.Response:
         """Serve the status page (pipeline, action callouts, KPIs, counters)."""
-        return await self._serve_template("index.html")
+        return await self._serve_template("index.html", request)
 
     async def handle_stats(self, request: web.Request) -> web.Response:
         """
@@ -1283,17 +1295,24 @@ class Dashboard:
         if not isinstance(processing_errors, dict):
             processing_errors = {}
 
-        exported = c('export', 'dicom_studies') + c('export', 'http_studies')
+        exported = (c('export', 'dicom_studies') + c('export', 'http_studies')
+                    + c('export', 'rhythm_studies'))
+        export_parts = [f"{c('export', f'{key}_studies')} {label}"
+                        for key, label in (("dicom", "DICOM"), ("http", "HTTP"),
+                                           ("rhythm", "RHYTHM"))
+                        if c('export', f'{key}_studies') or getattr(
+                            {"dicom": sm.dicom_storage, "http": sm.remote_storage,
+                             "rhythm": sm.rhythm_storage}[key], "enabled", False)]
         kpis = [
             {"key": "received", "label": "Images received", "value": c('reception', 'images'),
-             "sub": f"{c('reception', 'studies')} studies · {mb(c('reception', 'bytes'))} MB"},
+             "sub": f"{c('reception', 'studies')} studies, {mb(c('reception', 'bytes'))} MB"},
             {"key": "anonymized", "label": "Anonymized",
              "value": c('processing', 'anonymized_images'),
              "sub": f"{c('processing', 'filtered_images')} filtered out"},
             {"key": "defaced", "label": "Series defaced", "value": c('defacing', 'series_defaced'),
              "sub": f"{c('defacing', 'series_skipped')} skipped (non-head)"},
             {"key": "exported", "label": "Exports", "value": exported,
-             "sub": f"{c('export', 'dicom_studies')} DICOM · {c('export', 'http_studies')} HTTP"},
+             "sub": ", ".join(export_parts) or "no export target set"},
             {"key": "errors", "label": "Errors", "value": c('errors', 'total'),
              "sub": "since start", "alert": c('errors', 'total') > 0},
         ]
@@ -1315,6 +1334,8 @@ class Dashboard:
                 ["DICOM images", c('export', 'dicom_images')],
                 ["HTTP studies", c('export', 'http_studies')],
                 ["HTTP data", f"{mb(c('export', 'http_bytes'))} MB"],
+                ["RHYTHM studies", c('export', 'rhythm_studies')],
+                ["RHYTHM images", c('export', 'rhythm_images')],
                 ["Cleaned up", f"{c('cleanup', 'studies')} studies"],
             ]},
             {"title": "Defacing", "rows": [
@@ -1365,7 +1386,7 @@ class Dashboard:
 
     async def handle_about_page(self, request: web.Request) -> web.Response:
         """Serve the /about page (software info, this instance, credits)."""
-        return await self._serve_template("about.html")
+        return await self._serve_template("about.html", request)
 
     async def handle_about(self, request: web.Request) -> web.Response:
         """
@@ -1433,7 +1454,7 @@ class Dashboard:
 
     async def handle_studies_page(self, request: web.Request) -> web.Response:
         """Serve the /studies review page."""
-        return await self._serve_template("studies.html")
+        return await self._serve_template("studies.html", request)
 
     @staticmethod
     def _coerce_study_number(request: web.Request) -> int:
@@ -1453,7 +1474,7 @@ class Dashboard:
                 "http": storage_manager.remote_storage.enabled,
                 "rhythm": storage_manager.rhythm_storage.enabled,
                 # so the page can explain a disabled RHYTHM button ("requires
-                # the 'gdpr' profile") rather than just greying it out.
+                # the 'rhythm' profile") rather than just greying it out.
                 "anonymization_profile": storage_manager.settings.anonymization.get(
                     "profile", "research"
                 ),
