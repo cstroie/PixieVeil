@@ -1,13 +1,18 @@
-/* Draft a protocol from a study: local catalog entry + RHYTHM CTProtocol.
- * PV.protocolDraft(studyNumber, { onDone }) — used by /protocols (Unmatched
- * inbox) and /studies (study detail). The server pre-fills everything it can
- * (GET /api/studies/{n}/protocol-draft); Create sends the form back
- * (POST), which creates the protocol on RHYTHM and adds it locally. */
+/* RHYTHM drafting dialogs, two separate steps:
+ *
+ * PV.scannerProfile(localScannerId, { study, onDone }) — create (or link) the
+ * RHYTHM scanner profile for a local catalog scanner and record its id
+ * (GET/POST /api/protocols/scanners/{id}/rhythm-profile). Used by /protocols
+ * and, when a study's scanner has no profile yet, from the protocol dialog.
+ *
+ * PV.protocolDraft(studyNumber, { onDone }) — local catalog entry + RHYTHM
+ * CTProtocol under an existing scanner profile (GET/POST
+ * /api/studies/{n}/protocol-draft). Used by /protocols (Unmatched inbox) and
+ * /studies (study detail). */
 (function () {
     'use strict';
     const { esc, api, toast, icon } = PV;
     const OTHER = 'Other: Please Specify';
-    const NEW = '__new__';   // "create a new RHYTHM scanner profile" in the scanner select
     const FIELDS = [
         ['examination_group', 'Examination group'], ['age_group', 'Age / weight group'],
         ['scan_type', 'Scan type'], ['contrast', 'Contrast'], ['number_of_phases', 'Number of phases'],
@@ -89,14 +94,7 @@
         const form = {
             local: JSON.parse(JSON.stringify(d.local)),
             ptype: d.rhythm.fields.protocol_type.value || '',
-            scanner: res.profile_match || (res.profile_draft ? NEW : ''),
-            newProfile: res.profile_draft ? {
-                manufacturer: res.profile_draft.manufacturer_id || '',
-                scanner_model: res.profile_draft.model_id || '',
-                detector_rows: Object.assign({}, res.profile_draft.detector_rows),
-                year_of_installation: Object.assign({}, res.profile_draft.year_of_installation),
-                note: res.profile_draft.note || '',
-            } : null,
+            scanner: res.profile_match || '',
             fields: {}, mas: Object.assign({}, d.rhythm.fields.mas_inputs.value || {}),
             dose: new Set((d.rhythm.fields.dose_metadata || {}).value || []),
             protocol_name: d.rhythm.protocol_name || '',
@@ -164,41 +162,16 @@
                 ${dm.note ? `<span class="hint">${esc(dm.note)}</span>` : ''}
                 <span class="err" hidden></span></div>`;
         }
-        function profileHtml() {
-            if (form.scanner !== NEW || !form.newProfile) return '';
-            const P = form.newProfile, pd = res.profile_draft;
-            const makers = res.catalogue.manufacturers;
-            const models = res.catalogue.models.filter(m => String(m.manufacturer) === String(P.manufacturer));
-            const opt = (list, v) => list.map(o => `<option value="${esc(o.value)}" ${o.value === v ? 'selected' : ''}>${esc(o.display)}</option>`).join('');
-            const missing = !models.some(m => String(m.id) === String(P.scanner_model)) && pd.missing_model;
-            const sel = (key, label) => {
-                const f = P[key];
-                return `<div class="field" data-field="new_profile.${key}">
-                    <span class="label"><span>${label} *</span>${badge(f.value ? f.source : 'fill')}</span>
-                    <select class="select" data-p="${key}"><option value="">—</option>${opt(ch.options(key), f.value)}</select>
-                    <input class="input other" data-p-other="${key}" placeholder="specify" value="${esc(f.other || '')}" ${f.value === OTHER ? '' : 'hidden'}>
-                    ${f.note ? `<span class="hint">${esc(f.note)}</span>` : ''}<span class="err" hidden></span></div>`;
-            };
-            return `<div class="existing" style="margin-top:12px">
-                <b>New scanner on RHYTHM</b> — for ${esc(pd.study_scanner.manufacturer)} ${esc(pd.study_scanner.model)}
-                ${missing ? `<div class="callout warn" style="margin-top:8px">${icon('alert')}<div>RHYTHM's catalogue has no
-                    matching model. Only the RHYTHM admin can add one — send them the request below, then draft again.
-                    <textarea class="input mono" readonly style="margin-top:6px; min-height:84px">${esc(pd.request_text)}</textarea>
-                    <button type="button" class="btn btn-sm" data-copy-request style="margin-top:4px">Copy request text</button></div></div>` : ''}
-                <div class="grid" style="margin-top:8px">
-                    <div class="field" data-field="new_profile.manufacturer"><span class="label">Manufacturer *</span>
-                        <select class="select" data-p="manufacturer"><option value="">—</option>
-                            ${makers.map(m => `<option value="${esc(m.id)}" ${String(m.id) === String(P.manufacturer) ? 'selected' : ''}>${esc(m.name)}</option>`).join('')}
-                        </select><span class="err" hidden></span></div>
-                    <div class="field" data-field="new_profile.scanner_model"><span class="label"><span>Model *</span>${badge(P.scanner_model ? 'guess' : 'fill')}</span>
-                        <select class="select" data-p="scanner_model"><option value="">—</option>
-                            ${models.map(m => `<option value="${esc(m.id)}" ${String(m.id) === String(P.scanner_model) ? 'selected' : ''}>${esc(m.name)}</option>`).join('')}
-                        </select><span class="err" hidden></span></div>
-                    ${sel('detector_rows', 'Detector rows')}
-                    ${sel('year_of_installation', 'Year of installation')}
-                </div>
-                <div class="field" style="margin-top:8px"><span class="label">Note on RHYTHM</span>
-                    <input class="input" data-p="note" value="${esc(P.note)}"></div></div>`;
+        function noProfileHtml() {
+            // Protocols only go under an existing scanner profile; creating
+            // the scanner is its own step (PV.scannerProfile).
+            if (!res.rhythm_configured || res.profile_match || form.scanner) return '';
+            const action = res.local_scanner_id
+                ? `<button type="button" class="btn btn-sm" data-create-scanner style="margin-top:6px">Create scanner on RHYTHM…</button>`
+                : `Add this scanner on <a href="/protocols">Protocols</a> first, then create it on RHYTHM there.`;
+            return `<div class="callout warn" style="margin-top:12px">${icon('alert')}<div>
+                <strong>This study's scanner has no RHYTHM profile.</strong> Pick an existing one above,
+                or create the scanner on RHYTHM first — this dialog reopens afterwards.<br>${action}</div></div>`;
         }
         function existingHtml() {
             if (!res.existing.length) return '';
@@ -252,7 +225,6 @@
                                 <div class="field" data-field="rhythm.scanner"><span class="label"><span>RHYTHM scanner *</span></span>
                                     <select class="select" data-r="scanner"><option value="">—</option>
                                         ${res.profiles.map(p => `<option value="${esc(p.id)}" ${p.id === form.scanner ? 'selected' : ''}>${esc(p.manufacturer || '')} ${esc(p.model || '')}</option>`).join('')}
-                                        ${form.newProfile ? `<option value="${NEW}" ${form.scanner === NEW ? 'selected' : ''}>+ Create new scanner on RHYTHM…</option>` : ''}
                                     </select>
                                     <span class="err" hidden></span></div>
                                 <div class="field" data-field="rhythm.protocol_type"><span class="label"><span>Protocol type *</span>${badge(form.ptype ? d.rhythm.fields.protocol_type.source : 'fill')}</span>
@@ -265,7 +237,7 @@
                                     <input class="input mono" data-r="protocol_name" value="${esc(form.protocol_name)}"><span class="err" hidden></span></div>
                                 ${rhythmFieldsHtml()}
                             </div>
-                            ${profileHtml()}
+                            ${noProfileHtml()}
                             ${masHtml()}
                             ${doseHtml()}
                             <div class="field" style="margin-top:10px"><span class="label">Notes</span>
@@ -305,17 +277,6 @@
             if (dlg.querySelector('[data-dose]')) {
                 form.dose = new Set([...dlg.querySelectorAll('[data-dose]:checked')].map(el => el.dataset.dose));
             }
-            if (form.newProfile) {
-                const P = form.newProfile;
-                dlg.querySelectorAll('[data-p]').forEach(el => {
-                    const k = el.dataset.p;
-                    if (k === 'detector_rows' || k === 'year_of_installation') {
-                        if (P[k].value !== el.value) P[k].source = 'study';
-                        P[k].value = el.value;
-                    } else P[k] = el.value;
-                });
-                dlg.querySelectorAll('[data-p-other]').forEach(el => { P[el.dataset.pOther].other = el.value.trim(); });
-            }
         }
 
         function showErrors(errors) {
@@ -340,14 +301,7 @@
             else {
                 const fields = {};
                 for (const [k] of FIELDS) fields[k] = { value: form.fields[k].value, other: form.fields[k].other };
-                const isNew = form.scanner === NEW;
-                if (isNew) {
-                    const P = form.newProfile;
-                    body.new_profile = { manufacturer: P.manufacturer, scanner_model: P.scanner_model, note: P.note,
-                        detector_rows: { value: P.detector_rows.value, other: P.detector_rows.other },
-                        year_of_installation: { value: P.year_of_installation.value, other: P.year_of_installation.other } };
-                }
-                body.rhythm = { scanner: isNew ? '' : form.scanner, protocol_type: form.ptype, fields, mas_inputs: form.mas,
+                body.rhythm = { scanner: form.scanner, protocol_type: form.ptype, fields, mas_inputs: form.mas,
                     dose_metadata: [...form.dose],
                     protocol_name: form.protocol_name, anatomical_region: form.local.region || form.region,
                     clinical_indication: form.local.clinical_indication || form.indication, notes: form.notes,
@@ -367,17 +321,6 @@
                 (r.warnings || []).forEach(w => toast(w, 'bad', 15000));
                 if (opts.onDone) opts.onDone(r);
             } catch (e) {
-                if (e.data && e.data.profile_id) {
-                    // The scanner exists on RHYTHM now: use it, so a retry doesn't create another.
-                    if (!res.profiles.some(p => p.id === e.data.profile_id)) {
-                        const P = form.newProfile || {};
-                        const m = res.catalogue.models.find(x => String(x.id) === String(P.scanner_model)) || {};
-                        res.profiles.push({ id: e.data.profile_id, manufacturer: '', model: m.name || 'new scanner' });
-                    }
-                    form.scanner = e.data.profile_id;
-                    render();
-                    toast('The scanner was created on RHYTHM; the protocol was not. Fix the fields and try again — the new scanner is selected.', 'bad', 12000);
-                }
                 if (e.data && e.data.errors && Object.keys(e.data.errors).length) showErrors(e.data.errors);
                 else toast(e.message, 'bad', 10000);
             } finally { if (dlg.open) btn.disabled = !res.rhythm_configured; }
@@ -385,15 +328,10 @@
 
         dlg.addEventListener('change', e => {
             const t = e.target;
-            if (t.dataset.r === 'scanner' || t.dataset.p === 'manufacturer') {
+            if (t.dataset.r === 'scanner') {
                 collect();
-                if (t.dataset.p === 'manufacturer' && form.newProfile) form.newProfile.scanner_model = '';
                 render();
                 return;
-            }
-            if (t.dataset.p === 'detector_rows' || t.dataset.p === 'year_of_installation') {
-                const o = dlg.querySelector(`[data-p-other="${t.dataset.p}"]`);
-                if (o) o.hidden = t.value !== OTHER;
             }
             if (t.dataset.r === 'ptype' || t.dataset.k === 'auto_ma_modulation') {
                 collect();
@@ -430,10 +368,12 @@
         dlg.addEventListener('click', e => {
             if (e.target.closest('[data-cancel]')) { dlg.close(); return; }
             if (e.target.closest('[data-create]')) { submit(null); return; }
-            if (e.target.closest('[data-copy-request]')) {
-                const text = res.profile_draft.request_text;
-                (navigator.clipboard ? navigator.clipboard.writeText(text) : Promise.reject())
-                    .then(() => toast('Request text copied', 'ok'), () => toast('Select the text and copy it', 'info'));
+            if (e.target.closest('[data-create-scanner]')) {
+                dlg.close();
+                scannerProfile(res.local_scanner_id, {
+                    study: n,
+                    onDone: () => protocolDraft(n, opts),   // reopen, now with the profile
+                });
                 return;
             }
             const use = e.target.closest('[data-use]');
@@ -443,5 +383,148 @@
         dlg.showModal();
     }
 
+    async function scannerProfile(sid, opts) {
+        opts = opts || {};
+        addStyle();
+        let res;
+        const q = opts.study != null ? `?study=${encodeURIComponent(opts.study)}` : '';
+        try { res = await api(`/api/protocols/scanners/${encodeURIComponent(sid)}/rhythm-profile${q}`); }
+        catch (e) { toast(e.message, 'bad', 8000); return; }
+        const pd = res.profile_draft;
+        const ch = choiceApi(res.choices, '');
+        const P = {
+            manufacturer: pd.manufacturer_id || '', scanner_model: pd.model_id || '',
+            detector_rows: Object.assign({}, pd.detector_rows),
+            year_of_installation: Object.assign({}, pd.year_of_installation),
+            note: pd.note || '',
+        };
+        const dlg = document.createElement('dialog');
+        dlg.className = 'modal draft';
+        dlg.style.width = 'min(720px, 97vw)';
+        document.body.appendChild(dlg);
+        dlg.addEventListener('close', () => dlg.remove());
+        const badge = src => {
+            const [tone, text] = BADGE[src] || BADGE.fill;
+            return `<span class="badge-s ${tone}">${text}</span>`;
+        };
+
+        function render() {
+            const makers = res.catalogue.manufacturers;
+            const models = res.catalogue.models.filter(m => String(m.manufacturer) === String(P.manufacturer));
+            const opt = (list, v) => list.map(o => `<option value="${esc(o.value)}" ${o.value === v ? 'selected' : ''}>${esc(o.display)}</option>`).join('');
+            const missing = !models.some(m => String(m.id) === String(P.scanner_model)) && pd.missing_model;
+            const sel = (key, label) => {
+                const f = P[key];
+                return `<div class="field" data-field="profile.${key}">
+                    <span class="label"><span>${label} *</span>${badge(f.value ? f.source : 'fill')}</span>
+                    <select class="select" data-p="${key}"><option value="">—</option>${opt(ch.options(key), f.value)}</select>
+                    <input class="input other" data-p-other="${key}" placeholder="specify" value="${esc(f.other || '')}" ${f.value === OTHER ? '' : 'hidden'}>
+                    ${f.note ? `<span class="hint">${esc(f.note)}</span>` : ''}<span class="err" hidden></span></div>`;
+            };
+            const sc = res.scanner;
+            const from = res.study != null
+                ? `values read from study ${String(res.study).padStart(4, '0')}`
+                : 'no study on disk for this scanner — fill in the detector rows yourself';
+            dlg.innerHTML = `<form method="dialog" novalidate><div class="modal-body">
+                <h2>Create scanner on RHYTHM</h2>
+                <p class="hint" style="font-size:12.5px">Local scanner <b>${esc(sc.name || `${sc.manufacturer} ${sc.model}`)}</b> · ${esc(from)}
+                    ${sc.rhythm_scanner_id ? `<br>Currently linked to RHYTHM profile <span class="mono">${esc(sc.rhythm_scanner_id)}</span>.` : ''}</p>
+                ${res.rhythm_error ? `<div class="callout warn">${icon('alert')}<div>${esc(res.rhythm_error)}</div></div>` : ''}
+                <div class="callout bad" data-errors hidden></div>
+                ${res.existing.length ? `<div class="existing" style="margin:0 0 12px"><b>Your site already has a matching profile</b> — link it instead of creating another:
+                    <ul>${res.existing.map(p => `<li>${esc(p.manufacturer || '')} ${esc(p.model || '')}
+                        ${p.detector_rows ? `· ${esc(p.detector_rows)}` : ''} <span class="mono faint">${esc(p.id)}</span>
+                        <button type="button" class="btn btn-sm" data-link="${esc(p.id)}">Link this one</button></li>`).join('')}</ul></div>` : ''}
+                ${missing ? `<div class="callout warn">${icon('alert')}<div>RHYTHM's catalogue has no matching model.
+                    Only the RHYTHM admin can add one — send them this request, then come back.
+                    <textarea class="input mono" readonly style="margin-top:6px; min-height:84px">${esc(pd.request_text)}</textarea>
+                    <button type="button" class="btn btn-sm" data-copy-request style="margin-top:4px">Copy request text</button></div></div>` : ''}
+                <div class="grid">
+                    <div class="field" data-field="profile.manufacturer"><span class="label">Manufacturer *</span>
+                        <select class="select" data-p="manufacturer"><option value="">—</option>
+                            ${makers.map(m => `<option value="${esc(m.id)}" ${String(m.id) === String(P.manufacturer) ? 'selected' : ''}>${esc(m.name)}</option>`).join('')}
+                        </select><span class="err" hidden></span></div>
+                    <div class="field" data-field="profile.scanner_model"><span class="label"><span>Model *</span>${badge(P.scanner_model ? 'guess' : 'fill')}</span>
+                        <select class="select" data-p="scanner_model"><option value="">—</option>
+                            ${models.map(m => `<option value="${esc(m.id)}" ${String(m.id) === String(P.scanner_model) ? 'selected' : ''}>${esc(m.name)}</option>`).join('')}
+                        </select><span class="err" hidden></span></div>
+                    ${sel('detector_rows', 'Detector rows')}
+                    ${sel('year_of_installation', 'Year of installation')}
+                </div>
+                <div class="field" style="margin-top:10px"><span class="label">Note on RHYTHM</span>
+                    <input class="input" data-p="note" value="${esc(P.note)}"></div>
+                </div>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-ghost" data-cancel>Cancel</button>
+                    <button type="button" class="btn btn-primary" data-create>Create scanner on RHYTHM</button>
+                </div></form>`;
+        }
+        function collect() {
+            dlg.querySelectorAll('[data-p]').forEach(el => {
+                const k = el.dataset.p;
+                if (k === 'detector_rows' || k === 'year_of_installation') {
+                    if (P[k].value !== el.value) P[k].source = 'study';   // operator's choice now
+                    P[k].value = el.value;
+                } else P[k] = el.value;
+            });
+            dlg.querySelectorAll('[data-p-other]').forEach(el => { P[el.dataset.pOther].other = el.value.trim(); });
+        }
+        function showErrors(errors) {
+            dlg.querySelectorAll('.field.has-error').forEach(e => e.classList.remove('has-error'));
+            dlg.querySelectorAll('.field .err').forEach(e => { e.hidden = true; });
+            const loose = [];
+            for (const [k, msg] of Object.entries(errors || {})) {
+                const host = dlg.querySelector(`[data-field="${CSS.escape(k)}"]`);
+                if (host) { host.classList.add('has-error'); const e = host.querySelector('.err'); e.textContent = msg; e.hidden = false; }
+                else loose.push(`${k}: ${msg}`);
+            }
+            const box = dlg.querySelector('[data-errors]');
+            box.innerHTML = `${icon('alert')}<div><strong>Not created.</strong> Fix the highlighted fields.${loose.length ? '<br>' + loose.map(esc).join('<br>') : ''}</div>`;
+            box.hidden = false;
+        }
+        async function submit(link) {
+            collect();
+            const body = link ? { link } : { profile: {
+                manufacturer: P.manufacturer, scanner_model: P.scanner_model, note: P.note,
+                detector_rows: { value: P.detector_rows.value, other: P.detector_rows.other },
+                year_of_installation: { value: P.year_of_installation.value, other: P.year_of_installation.other } } };
+            const btn = dlg.querySelector('[data-create]');
+            btn.disabled = true;
+            try {
+                const r = await api(`/api/protocols/scanners/${encodeURIComponent(sid)}/rhythm-profile`,
+                    { method: 'POST', body });
+                if (!r.ok) { toast(r.error, 'bad', 15000); return; }
+                dlg.close();
+                toast(r.created ? `Scanner created on RHYTHM (${r.profile_id}) and linked.`
+                    : `Linked to the existing RHYTHM scanner (${r.profile_id}).`, 'ok', 10000);
+                if (opts.onDone) opts.onDone(r);
+            } catch (e) {
+                if (e.data && e.data.errors && Object.keys(e.data.errors).length) showErrors(e.data.errors);
+                else toast(e.message, 'bad', 10000);
+            } finally { if (dlg.open) btn.disabled = false; }
+        }
+        dlg.addEventListener('change', e => {
+            const t = e.target;
+            if (t.dataset.p === 'manufacturer') { collect(); P.scanner_model = ''; render(); return; }
+            if (t.dataset.p === 'detector_rows' || t.dataset.p === 'year_of_installation') {
+                const o = dlg.querySelector(`[data-p-other="${t.dataset.p}"]`);
+                if (o) o.hidden = t.value !== OTHER;
+            }
+        });
+        dlg.addEventListener('click', e => {
+            if (e.target.closest('[data-cancel]')) { dlg.close(); return; }
+            if (e.target.closest('[data-create]')) { submit(null); return; }
+            const link = e.target.closest('[data-link]');
+            if (link) { submit(link.dataset.link); return; }
+            if (e.target.closest('[data-copy-request]')) {
+                (navigator.clipboard ? navigator.clipboard.writeText(pd.request_text) : Promise.reject())
+                    .then(() => toast('Request text copied', 'ok'), () => toast('Select the text and copy it', 'info'));
+            }
+        });
+        render();
+        dlg.showModal();
+    }
+
     PV.protocolDraft = protocolDraft;   // PV is common.js's global const
+    PV.scannerProfile = scannerProfile;
 })();

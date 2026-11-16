@@ -1659,6 +1659,23 @@ class StorageManager:
                    "ReconstructionDiameter", "ContrastBolusAgent", "ConvolutionKernel",
                    "SliceThickness", "SpiralPitchFactor", "XRayTubeCurrent", "SoftwareVersions")
 
+    def latest_study_for_scanner_sync(self, scanner_id: str) -> Optional[int]:
+        """Newest study whose exam matched local catalog scanner *scanner_id*
+        and whose files are still on disk (so its headers can be read) —
+        the evidence for drafting that scanner's RHYTHM profile."""
+        for sc in sorted(self.study_manager.all_sidecars(),
+                         key=lambda s: s.study_number, reverse=True):
+            exam_path = ExamSidecar.path_for(self.base_path, sc.study_number)
+            try:
+                exam = ExamSidecar.load(exam_path).data
+            except (OSError, ValueError, KeyError):
+                continue
+            if (exam.get("scanner") or {}).get("catalog_id") != scanner_id:
+                continue
+            if self.resolve_study_dir(sc.study_number)[0] is not None:
+                return sc.study_number
+        return None
+
     def protocol_draft_inputs_sync(self, study_number: int) -> Optional[tuple[dict, dict]]:
         """(effective exam, headers) for drafting a protocol from a study.
 

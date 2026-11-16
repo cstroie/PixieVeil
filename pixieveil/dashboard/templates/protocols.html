@@ -226,6 +226,9 @@
         }).join('');
         return `<div class="card" data-scanner="${esc(s.id)}">
             <div class="card-head"><h3>${esc(scannerLabel(s))}</h3><div class="spacer"></div>
+                ${ro || wild ? '' : `<button class="btn btn-sm" data-act="rhythm-profile"
+                    title="Create this scanner on RHYTHM (or link an existing site profile) and record its ID">
+                    ${s.rhythm_scanner_id ? 'RHYTHM profile…' : 'Create on RHYTHM'}</button>`}
                 ${ro ? '' : '<button class="btn btn-ghost btn-sm btn-danger" data-act="del-scanner">Delete scanner</button>'}</div>
             <div class="card-body">
                 ${wild ? '<p class="muted-note" style="margin-top:0">Blank manufacturer and model: these protocols match studies from <strong>any</strong> scanner, after the scanner\'s own protocols.</p>' : ''}
@@ -424,6 +427,13 @@
         if (btn.dataset.act === 'draft') {
             if (dirty()) { toast('Save or discard your changes first, then draft.', 'bad', 6000); return; }
             PV.protocolDraft(+btn.dataset.n, { onDone: () => load() });
+            return;
+        }
+        if (btn.dataset.act === 'rhythm-profile') {
+            // The server works on the saved catalog (it records the new
+            // profile's id there), so the scanner must be saved first.
+            if (dirty()) { toast('Save or discard your changes first, then create the scanner on RHYTHM.', 'bad', 6000); return; }
+            PV.scannerProfile(sc.id, { onDone: () => load() });
             return;
         }
         switch (btn.dataset.act) {

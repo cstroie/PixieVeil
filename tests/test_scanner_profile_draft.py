@@ -1,7 +1,7 @@
-"""Create the RHYTHM scanner profile from the protocol draft: profile
-pre-fill from the study (catalogue model match, detector rows from the
-collimation), validation, and the POST order profile → protocol → local
-catalog against a scripted fake RHYTHM (no network)."""
+"""RHYTHM scanner profiles: pre-fill from a study (catalogue model match,
+detector rows from the collimation), validation, and the separate
+/api/protocols/scanners/{id}/rhythm-profile create/link routes against a
+scripted fake RHYTHM (no network). Protocol drafts no longer create them."""
 import asyncio
 import json
 import logging
@@ -196,66 +196,141 @@ def _catalog(d):
     return yaml.safe_load(path.read_text()) if path.exists() else None
 
 
-class TestRoutes:
-    def test_get_offers_profile_when_unpaired(self, tmp_path, monkeypatch):
-        d = _dashboard(tmp_path, monkeypatch, FakeRhythm())
+def _seed_scanner(d, rhythm_scanner_id=None):
+    """Local catalog scanner 'emotion' (what /protocols would have saved)."""
+    cat = d.app["storage_manager"].protocol_catalog
+    cat.replace({"scanners": [{"id": "emotion", "name": "Emotion 16", "manufacturer": "SIEMENS",
+                               "model": "Emotion 16", "rhythm_scanner_id": rhythm_scanner_id,
+                               "protocols": []}]}, expected_version=cat.version)
 
-        async def script(c):
-            r = await c.get("/api/studies/54/protocol-draft",
+
+def _req(d, method, path, body=None):
+    async def script(c):
+        r = await c.request(method, path, json=body,
                             headers={"Authorization": f"Bearer {d._admin_token}"})
-            return await r.json()
-        body = _run(d, script)
-        assert body["profile_match"] is None
+        return r.status, await r.text()
+    status, text = _run(d, script)
+    return status, json.loads(text), text
+
+
+PROFILE_URL = "/api/protocols/scanners/emotion/rhythm-profile"
+PROFILE_FORM = {"manufacturer": "m-siemens", "scanner_model": "mod-emotion",
+                "detector_rows": {"value": "16 rows"},
+                "year_of_installation": {"value": "2013"}, "note": "n"}
+
+
+class TestScannerProfileRoutes:
+    """Creating the scanner on RHYTHM is its own step (/protocols), separate
+    from creating a protocol."""
+
+    def test_get_drafts_from_a_study(self, tmp_path, monkeypatch):
+        d = _dashboard(tmp_path, monkeypatch, FakeRhythm())
+        _seed_scanner(d)
+        status, body, _ = _req(d, "GET", PROFILE_URL + "?study=54")
+        assert status == 200, body
+        assert body["study"] == 54 and body["existing"] == []
         assert body["profile_draft"]["model_id"] == "mod-emotion"
+        assert body["profile_draft"]["detector_rows"]["value"] == "16 rows"
         assert len(body["catalogue"]["models"]) == 3
 
-    def test_profile_then_protocol_then_local(self, tmp_path, monkeypatch, caplog):
+    def test_get_without_study_uses_catalog_scanner(self, tmp_path, monkeypatch):
+        d = _dashboard(tmp_path, monkeypatch, FakeRhythm())
+        _seed_scanner(d)
+        status, body, _ = _req(d, "GET", PROFILE_URL)
+        assert status == 200 and body["study"] is None
+        assert body["profile_draft"]["model_id"] == "mod-emotion"
+        assert body["profile_draft"]["detector_rows"]["value"] is None
+
+    def test_get_lists_paired_site_profile(self, tmp_path, monkeypatch):
+        fake = FakeRhythm(profiles=[{"id": NEW_PROFILE, "scanner_model": "mod-emotion",
+                                     "manufacturer_name": "Siemens Healthineers",
+                                     "scanner_model_name": "Siemens SOMATOM Emotion 16"}])
+        d = _dashboard(tmp_path, monkeypatch, fake)
+        _seed_scanner(d)
+        _s, body, _ = _req(d, "GET", PROFILE_URL)
+        assert [p["id"] for p in body["existing"]] == [NEW_PROFILE]
+
+    def test_unknown_scanner_404(self, tmp_path, monkeypatch):
+        d = _dashboard(tmp_path, monkeypatch, FakeRhythm())
+        status, _b, _ = _req(d, "GET", "/api/protocols/scanners/nope/rhythm-profile")
+        assert status == 404
+
+    def test_create_records_id_and_only_creates_the_profile(self, tmp_path, monkeypatch,
+                                                            caplog):
         fake = FakeRhythm()
         d = _dashboard(tmp_path, monkeypatch, fake)
+        _seed_scanner(d)
         with caplog.at_level(logging.INFO):
-            status, body, text = _post(d, _new_profile_body())
-        assert status == 200 and body["ok"] and body["profile_created"]
+            status, body, text = _req(d, "POST", PROFILE_URL, {"profile": PROFILE_FORM})
+        assert status == 200 and body["ok"] and body["created"]
         assert body["profile_id"] == NEW_PROFILE
-        assert [p[0] for p in fake.posts] == ["scanner-profiles/", "protocols-api/"]
+        assert [p[0] for p in fake.posts] == ["scanner-profiles/"]     # no protocol
         assert fake.posts[0][1]["detector_rows"] == "16 rows"
-        assert fake.posts[1][1]["scanner"] == NEW_PROFILE
-        sc = _catalog(d)["scanners"][0]
-        assert sc["rhythm_scanner_id"] == NEW_PROFILE
-        assert sc["protocols"][0]["rhythm_uuid"] == RID
+        assert _catalog(d)["scanners"][0]["rhythm_scanner_id"] == NEW_PROFILE
         assert "action=rhythm_scanner_profile_created" in caplog.text
         assert TOKEN not in text and TOKEN not in caplog.text
 
-    def test_profile_rejected_stops_everything(self, tmp_path, monkeypatch):
+    def test_create_reuses_site_profile_for_same_model(self, tmp_path, monkeypatch):
+        fake = FakeRhythm(profiles=[{"id": NEW_PROFILE, "scanner_model": "mod-emotion"}])
+        d = _dashboard(tmp_path, monkeypatch, fake)
+        _seed_scanner(d)
+        status, body, _ = _req(d, "POST", PROFILE_URL, {"profile": PROFILE_FORM})
+        assert status == 200 and not body["created"] and body["linked_existing"]
+        assert fake.posts == []
+        assert _catalog(d)["scanners"][0]["rhythm_scanner_id"] == NEW_PROFILE
+
+    def test_link_existing(self, tmp_path, monkeypatch):
+        fake = FakeRhythm(profiles=[{"id": NEW_PROFILE}])
+        d = _dashboard(tmp_path, monkeypatch, fake)
+        _seed_scanner(d)
+        status, body, _ = _req(d, "POST", PROFILE_URL, {"link": NEW_PROFILE})
+        assert status == 200 and body["profile_id"] == NEW_PROFILE and fake.posts == []
+
+    def test_link_must_be_a_site_profile(self, tmp_path, monkeypatch):
+        d = _dashboard(tmp_path, monkeypatch, FakeRhythm(profiles=[{"id": NEW_PROFILE}]))
+        _seed_scanner(d)
+        status, body, _ = _req(d, "POST", PROFILE_URL, {"link": "not-a-site-profile"})
+        assert status == 400 and "link" in body["errors"]
+
+    def test_rejected_profile_changes_nothing(self, tmp_path, monkeypatch):
         fake = FakeRhythm(profile_status=400)
         d = _dashboard(tmp_path, monkeypatch, fake)
-        status, body, _ = _post(d, _new_profile_body())
-        assert status == 400 and body["errors"] == {"new_profile.detector_rows": "bad"}
-        assert [p[0] for p in fake.posts] == ["scanner-profiles/"]
-        assert _catalog(d) is None
-
-    def test_protocol_rejected_keeps_profile_id(self, tmp_path, monkeypatch):
-        fake = FakeRhythm(protocol_status=400)
-        d = _dashboard(tmp_path, monkeypatch, fake)
-        status, body, _ = _post(d, _new_profile_body())
-        assert status == 400 and body["profile_id"] == NEW_PROFILE
-        assert body["errors"] == {"rhythm.kvp": "bad value"}
-        assert _catalog(d) is None
-
-    def test_existing_profile_for_model_reused(self, tmp_path, monkeypatch):
-        fake = FakeRhythm(profiles=[{"id": NEW_PROFILE, "scanner_model": "mod-emotion",
-                                     "manufacturer_name": "Siemens Healthineers",
-                                     "scanner_model_name": "Something else"}])
-        d = _dashboard(tmp_path, monkeypatch, fake)
-        status, body, _ = _post(d, _new_profile_body())
-        assert status == 200 and body["profile_id"] == NEW_PROFILE
-        assert not body["profile_created"]
-        assert [p[0] for p in fake.posts] == ["protocols-api/"]
+        _seed_scanner(d)
+        status, body, _ = _req(d, "POST", PROFILE_URL, {"profile": PROFILE_FORM})
+        assert status == 400 and body["errors"] == {"profile.detector_rows": "bad"}
+        assert _catalog(d)["scanners"][0]["rhythm_scanner_id"] is None
 
     def test_invalid_profile_calls_nothing(self, tmp_path, monkeypatch):
         fake = FakeRhythm()
         d = _dashboard(tmp_path, monkeypatch, fake)
-        body = _new_profile_body()
-        body["new_profile"]["scanner_model"] = "mod-optima"
-        status, out, _ = _post(d, body)
-        assert status == 400 and "new_profile.scanner_model" in out["errors"]
+        _seed_scanner(d)
+        status, body, _ = _req(d, "POST", PROFILE_URL,
+                               {"profile": {**PROFILE_FORM, "scanner_model": "mod-optima"}})
+        assert status == 400 and "profile.scanner_model" in body["errors"]
         assert fake.posts == []
+
+
+class TestProtocolDraftNoLongerCreatesScanners:
+    def test_new_profile_in_protocol_post_is_refused(self, tmp_path, monkeypatch):
+        fake = FakeRhythm()
+        d = _dashboard(tmp_path, monkeypatch, fake)
+        body = _post_body(scanner="")
+        body["new_profile"] = PROFILE_FORM
+        status, out, _ = _post(d, body)
+        assert status == 400 and "new_profile" in out["errors"]
+        assert fake.posts == []
+
+    def test_get_points_to_local_scanner_and_pairs_recorded_profile(self, tmp_path,
+                                                                    monkeypatch):
+        fake = FakeRhythm(profiles=[{"id": NEW_PROFILE, "manufacturer_name": "Other",
+                                     "scanner_model_name": "Renamed"}])
+        d = _dashboard(tmp_path, monkeypatch, fake)
+        _seed_scanner(d, rhythm_scanner_id=NEW_PROFILE)
+        exam = _exam_rows()
+        exam["scanner"]["catalog_id"] = "emotion"
+        ExamSidecar(54, exam).save(d.app["storage_manager"].base_path)
+        status, body, _ = _req(d, "GET", "/api/studies/54/protocol-draft")
+        assert status == 200
+        assert body["local_scanner_id"] == "emotion"
+        assert body["profile_match"] == NEW_PROFILE       # recorded id, not name match
+        assert "profile_draft" not in body
