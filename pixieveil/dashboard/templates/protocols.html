@@ -416,7 +416,7 @@
     });
 
     const main = document.getElementById('main');
-    main.addEventListener('click', e => {
+    main.addEventListener('click', async e => {
         const btn = e.target.closest('[data-act], [data-rm-name]');
         if (!btn || !state.editable) return;
         const card = e.target.closest('[data-scanner]');
@@ -438,10 +438,36 @@
         }
         switch (btn.dataset.act) {
         case 'add-protocol': newProtocol(sc, ''); render(); break;
-        case 'del-protocol': sc.protocols.splice(+row.dataset.j, 1); render(); break;
-        case 'del-scanner':
+        case 'del-protocol': {
+            const used = state.usage[p.key] || 0;
+            const ok = await modal({
+                title: 'Delete protocol',
+                body: `<p>Delete protocol <strong>${esc(p.label || p.key)}</strong>
+                    <span class="mono faint">(${esc(p.key)})</span> from ${esc(scannerLabel(sc))}?</p>
+                    ${used ? `<div class="callout warn">${icon('alert')}<div>${used} study(ies) use it now; they become
+                        unmatched and can't be exported to RHYTHM until they match another protocol.</div></div>` : ''}
+                    <p class="dim">Nothing is removed from RHYTHM. The change is saved only when you click <b>Save changes</b>.</p>`,
+                confirm: 'Delete protocol', tone: 'danger',
+            });
+            if (!ok) return;
+            sc.protocols.splice(sc.protocols.indexOf(p), 1); render(); break;
+        }
+        case 'del-scanner': {
+            const used = sc.protocols.reduce((n, x) => n + (state.usage[x.key] || 0), 0);
+            const ok = await modal({
+                title: 'Delete scanner',
+                body: `<p>Delete scanner <strong>${esc(scannerLabel(sc))}</strong> and its
+                    ${sc.protocols.length} protocol(s)?</p>
+                    ${used ? `<div class="callout warn">${icon('alert')}<div>${used} study(ies) use these protocols now;
+                        they become unmatched and can't be exported to RHYTHM until they match again.</div></div>` : ''}
+                    <p class="dim">Nothing is removed from RHYTHM${sc.rhythm_scanner_id ? ' (its scanner profile stays there)' : ''}.
+                        The change is saved only when you click <b>Save changes</b>.</p>`,
+                confirm: 'Delete scanner', tone: 'danger',
+            });
+            if (!ok) return;
             state.doc.scanners = state.doc.scanners.filter(s => s !== sc);
             state.sel = 'inbox'; render(); break;
+        }
         case 'new-scanner': {
             const g = state.unmatched[+btn.dataset.i];
             const s = newScanner(g.manufacturer, g.model);

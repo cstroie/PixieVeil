@@ -3,8 +3,11 @@
    a hospital LAN with no internet access.
 
    The chrome is a neutral graphite ramp with no colour cast, the way a
-   DICOM viewer's is, so the only chroma on a page is meaning: teal for
-   what you can act on, green / amber / red / blue for study state.
+   DICOM viewer's is, so the only chroma on a page is meaning: green /
+   amber / red / blue for study state. What you can act on is marked by
+   contrast, not hue — the "accent" is the ink itself: primary buttons are
+   inverted, links underlined, focus rings and selection bars in text
+   colour. Live progress uses --busy (blue = in progress).
    Dark by default (control-room friendly), light via [data-theme=light].
 
    Shape: 3px on controls, 6px on panels. Panels are flat and separated by
@@ -24,10 +27,11 @@
     --text-dim: #a5a59e;
     --text-faint: #777973;
 
-    --accent: #38c6b4;
-    --accent-strong: #62dccb;
-    --accent-ink: #04211d;
-    --accent-soft: rgba(56, 198, 180, 0.13);
+    /* Neutral ink, not a hue (see header). */
+    --accent: #e9e7e2;
+    --accent-strong: #ffffff;
+    --accent-ink: #121314;
+    --accent-soft: rgba(233, 231, 226, 0.09);
 
     --ok: #5cbb7d;
     --ok-soft: rgba(92, 187, 125, 0.14);
@@ -64,10 +68,10 @@
     --text-dim: #55574f;
     --text-faint: #85877f;
 
-    --accent: #0b7f76;
-    --accent-strong: #08655e;
+    --accent: #1b1c1c;
+    --accent-strong: #000000;
     --accent-ink: #ffffff;
-    --accent-soft: rgba(11, 127, 118, 0.10);
+    --accent-soft: rgba(27, 28, 28, 0.07);
 
     --ok: #1d7f45;
     --ok-soft: rgba(29, 127, 69, 0.10);
@@ -99,8 +103,15 @@ body {
     min-height: 100vh;
 }
 
-a { color: var(--accent); text-decoration: none; }
-a:hover { color: var(--accent-strong); }
+a { color: var(--text); text-decoration: none; }
+/* Links in running text: underlined, since they share the text colour.
+   Anchors styled as components (.btn, .brand, .item, .slice, nav) carry a
+   class or are reset below. */
+a:not([class]) {
+    text-decoration: underline; text-decoration-color: var(--border-strong);
+    text-decoration-thickness: 1px; text-underline-offset: 3px;
+}
+a:not([class]):hover { text-decoration-color: currentColor; }
 
 h1, h2, h3, h4 { margin: 0; font-weight: 600; letter-spacing: -0.01em; }
 
@@ -141,7 +152,7 @@ h1, h2, h3, h4 { margin: 0; font-weight: 600; letter-spacing: -0.01em; }
 .nav { display: flex; align-self: stretch; gap: 2px; min-width: 0; overflow-x: auto; scrollbar-width: none; }
 .nav::-webkit-scrollbar { display: none; }
 .nav a {
-    display: inline-flex; align-items: center; flex: none;
+    display: inline-flex; align-items: center; flex: none; text-decoration: none;
     padding: 0 11px; color: var(--text-dim); font-weight: 500;
     border-bottom: 2px solid transparent; margin-bottom: -1px;
 }

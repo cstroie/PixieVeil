@@ -58,7 +58,7 @@
         .row-side .edited { color: var(--accent); }
         .live-prog { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-dim); white-space: nowrap; }
         .live-prog .bar { width: 56px; height: 4px; border-radius: 99px; background: var(--bg-sunken); overflow: hidden; }
-        .live-prog .bar i { display: block; height: 100%; background: var(--accent); transition: width 0.3s; }
+        .live-prog .bar i { display: block; height: 100%; background: var(--busy); transition: width 0.3s; }
         .row-side .edited svg { width: 14px; height: 14px; }
 
         .ring { width: 34px; height: 34px; position: relative; display: grid; place-items: center; }
@@ -948,7 +948,7 @@
                         <p>A short record is kept, so the number <span class="mono">${pad4(n)}</span> is never reused and
                         Lookup still finds the patient. Nothing is removed from RHYTHM or the anonymization log.
                         This cannot be undone. The study can only come back by being sent again.</p>`,
-                    confirm: 'Delete study',
+                    confirm: 'Delete study', tone: 'danger',
                 });
                 if (!ok) return;
             } else if (action === 'reopen') {
