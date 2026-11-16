@@ -128,9 +128,14 @@
                 const f = form.fields[k];
                 const list = ch.options(k, form.ptype);
                 const src = f.value ? f.source : 'fill';
+                // Pitch is a free decimal on RHYTHM's form, not an option list.
+                const control = k === 'pitch'
+                    ? `<input class="input" type="number" min="0" max="3" step="0.01" data-k="pitch"
+                        value="${esc(f.value)}" placeholder="e.g. 0.98">`
+                    : selectHtml(k, list, f.value);
                 return `<div class="field" data-field="rhythm.${k}">
                     <span class="label"><span>${esc(label)}${REQUIRED.has(k) ? ' *' : ''}</span>${badge(src)}</span>
-                    ${selectHtml(k, list, f.value)}
+                    ${control}
                     <input class="input other" data-other="${k}" placeholder="specify" value="${esc(f.other)}" ${f.value === OTHER ? '' : 'hidden'}>
                     ${f.note ? `<span class="hint">${esc(f.note)}</span>` : ''}
                     <span class="err" hidden></span></div>`;

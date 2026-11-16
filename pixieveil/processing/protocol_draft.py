@@ -45,6 +45,17 @@ RHYTHM_MANUFACTURER = {"siemens": "Siemens Healthineers", "ge": "GE HealthCare",
                        "fujifilm": "Fujifilm / Hitachi"}
 
 
+# RHYTHM's protocol form (and its edit page, protocol_forms.CTProtocolForm)
+# does not use protocol-choices for every field, and a value the edit page
+# can't find shows as blank there:
+# - contrast is the region/indication row's IV contrast (not the
+#   "contrast" category), same vocabulary as dashboard.options.IV_CONTRAST;
+# - pitch is a free decimal (e.g. 0.98), not the range buckets;
+# - age_group / examination_group are stored as the option's *display* text.
+CONTRAST_OPTIONS = ("Non-contrast", "Contrast-enhanced")
+PITCH_MAX = 3.0
+
+
 # ------------------------------------------------------------------ choices
 class Choices:
     """RHYTHM option lists, with the vendor-specific auto kV / mA lists and
@@ -53,6 +64,13 @@ class Choices:
     def __init__(self, categories: list[dict], manufacturer_field_options: dict | None = None,
                  ma_modulation_inputs: dict | None = None):
         self.cats = {c.get("key"): c for c in categories if isinstance(c, dict)}
+        # What RHYTHM's own form offers for contrast (see CONTRAST_OPTIONS).
+        self.cats["contrast"] = {
+            "key": "contrast", "label": "Contrast",
+            "options": [{"value": v, "display": v, "applicable_protocol_types": []}
+                        for v in CONTRAST_OPTIONS]}
+        # Pitch is a number on RHYTHM's form; no option list.
+        self.cats.pop("pitch", None)
         self.vendor = manufacturer_field_options or {}
         self.ma_inputs = ma_modulation_inputs or {}
 
@@ -124,20 +142,6 @@ def _nearest_option(choices: Choices, key: str, x: float | None, tol: float,
     if best is not None and dist is not None and dist <= tol:
         return best, ""
     return (OTHER if OTHER in choices.values(key, **kw) else None), _fmt(x)
-
-
-def _range_option(choices: Choices, key: str, x: float | None) -> str | None:
-    """Options like '0.5-0.8' / '>1.5' / '<5 kg' for a number."""
-    if x is None:
-        return None
-    for v in choices.values(key):
-        m = re.fullmatch(r"\s*([\d.]+)\s*[-–]\s*([\d.]+)\s*", v)
-        if m and float(m.group(1)) <= x < float(m.group(2)) + 1e-9:
-            return v
-        m = re.fullmatch(r"\s*>\s*([\d.]+)\s*", v)
-        if m and x > float(m.group(1)):
-            return v
-    return None
 
 
 def _diagnostic_series(exam: dict) -> dict | None:
@@ -387,9 +391,8 @@ def draft_from_exam(exam: dict, headers: dict, choices: Choices, catalog_doc: di
         st = None
     f["scan_type"] = _field(st, STUDY)
 
-    contrast = ("IV contrast only" if str(iv or "").casefold().startswith("contrast")
-                else "No contrast" if iv else None)
-    f["contrast"] = _field(choices.match("contrast", contrast), STUDY)
+    f["contrast"] = _field(choices.match("contrast", iv), STUDY,
+                           "IV contrast, as on RHYTHM's protocol form")
 
     n_events = len(acqs)
     phases = (choices.match("number_of_phases", str(n_events)) if 0 < n_events <= 5
@@ -414,10 +417,10 @@ def draft_from_exam(exam: dict, headers: dict, choices: Choices, catalog_doc: di
 
     pitch = _mode([_num(a.get("pitch")) for a in acqs]) or _num(series.get("spiral_pitch_factor"))
     if st and "sequential" in st.casefold():
-        f["pitch"] = _field(choices.match("pitch", "N/A sequential"), STUDY)
+        f["pitch"] = _field(None, FILL, "Sequential scan — RHYTHM's form still wants a number")
     else:
-        f["pitch"] = _field(_range_option(choices, "pitch", pitch), STUDY,
-                            f"pitch {_fmt(pitch)}" if pitch else "")
+        f["pitch"] = _field(_fmt(round(pitch, 2)) if pitch else None, STUDY,
+                            "spiral pitch factor" if pitch else "")
 
     rot = _mode([_num(a.get("rotation_time_s")) for a in acqs])
     rot_opt, rot_other = _nearest_option(choices, "rotation_time", rot, 0.011)
@@ -533,9 +536,20 @@ def validate_submission(rhythm: dict, choices: Choices) -> tuple[dict, dict[str,
             if key in REQUIRED:
                 errors[key] = "Required"
             continue
+        if key == "pitch":
+            p = _num(value)
+            if p is None or not 0 < p <= PITCH_MAX:
+                errors[key] = f"A number between 0 and {PITCH_MAX:g}"
+                continue
+            payload[key] = _fmt(round(p, 3))
+            continue
         if key in ("examination_group", "age_group") and ptype in PROTOCOL_TYPES:
             ck = (_GROUP_KEY if key == "examination_group" else _AGE_KEY)[ptype]
             allowed = choices.values(ck, protocol_type=ptype)
+            if value in allowed:
+                # RHYTHM's form stores (and its edit page expects) the display text.
+                payload[key] = choices.display(ck).get(value, value)
+                continue
         else:
             allowed = choices.values(key, protocol_type=ptype, manufacturer=manu)
         if allowed and value not in allowed:

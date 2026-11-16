@@ -772,12 +772,15 @@ class Dashboard:
                         base, token, profile_match, ptype)
                     want = rhythm_import.protocol_key(draft["rhythm"]["protocol_name"])
                     ag = draft["rhythm"]["fields"]["age_group"]["value"]
+                    # RHYTHM stores the age group's display text ("30 kg – 50 kg").
+                    ag_shown = choices.display(protocol_draft._AGE_KEY.get(ptype or "", "")).get(
+                        ag or "", ag)
                     existing = [{"id": p.get("id"), "protocol_name": p.get("protocol_name"),
                                  "protocol_type": p.get("protocol_type"),
                                  "age_group": p.get("age_group")}
                                 for p in found
                                 if rhythm_import.protocol_key(p.get("protocol_name")) == want
-                                or (ag and p.get("age_group") == ag)]
+                                or (ag and p.get("age_group") in (ag, ag_shown))]
             except rhythm_storage_mod.RhythmApiError as e:
                 rhythm_error = e.message
         local_scanner_id = (exam.get("scanner") or {}).get("catalog_id")

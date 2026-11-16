@@ -63,9 +63,9 @@ class TestDraft:
         assert d["local"]["new_scanner"]["model"] == "Emotion 16"
         expect = {"protocol_type": ("PEDIATRIC_HEAD", "guess"), "age_group": ("1y_6y", "study"),
                   "examination_group": ("Group 3 – Early Childhood", "guess"),
-                  "scan_type": ("Helical / spiral", "study"), "contrast": ("No contrast", "study"),
+                  "scan_type": ("Helical / spiral", "study"), "contrast": ("Non-contrast", "study"),
                   "number_of_phases": ("1", "study"), "kvp": ("110", "study"),
-                  "auto_ma_modulation": ("CareDose4D", "guess"), "pitch": ("0.5-0.8", "study"),
+                  "auto_ma_modulation": ("CareDose4D", "guess"), "pitch": ("0.55", "study"),
                   "rotation_time": ("1.5", "study"), "slice_thickness": ("5", "study"),
                   "kernel_class": ("Soft tissue", "guess"),
                   "reconstruction_algorithm": ("Filtered back projection", "guess"),
@@ -117,9 +117,9 @@ class TestDraft:
         d = pd.draft_from_exam(exam, {"KVP": "100", "ExposureModulationType": "XYZ_EC"}, CH,
                                {"scanners": []})
         assert _f(d, "kvp")["value"] == "100"
-        assert _f(d, "pitch")["value"] == "0.5-0.8"            # from the series header
+        assert _f(d, "pitch")["value"] == "0.55"               # from the series header
         assert _f(d, "scan_type")["value"] == "Helical / spiral"
-        assert _f(d, "contrast")["value"] == "IV contrast only"
+        assert _f(d, "contrast")["value"] == "Contrast-enhanced"
         assert _f(d, "reconstruction_algorithm")["value"] == "Model-based iterative reconstruction"
         assert _f(d, "rotation_time")["source"] == "fill"       # nothing without RDSR
 
@@ -174,6 +174,44 @@ def _submission(**over):
               "manufacturer": "Siemens Healthineers"}
     rhythm.update(over)
     return d, rhythm
+
+
+class TestRhythmFormValues:
+    """Values must be what RHYTHM's own protocol form stores, or its edit
+    page shows the field blank (protocol_forms.CTProtocolForm)."""
+
+    def test_groups_sent_as_display_text(self):
+        _d, rhythm = _submission()
+        payload, errors = pd.validate_submission(rhythm, CH)
+        assert not errors, errors
+        assert payload["age_group"] == "1 year – 6 years"          # not "1y_6y"
+        assert payload["examination_group"] == "Group 3 – Early Childhood"
+
+    def test_contrast_is_the_iv_contrast_vocabulary(self):
+        assert CH.values("contrast") == list(pd.CONTRAST_OPTIONS)
+        from pixieveil.dashboard import options
+        assert list(pd.CONTRAST_OPTIONS) == list(options.IV_CONTRAST)
+        _d, rhythm = _submission()
+        rhythm["fields"]["contrast"] = {"value": "IV contrast only"}   # old API vocabulary
+        _p, errors = pd.validate_submission(rhythm, CH)
+        assert "contrast" in errors
+
+    def test_pitch_is_a_number(self):
+        assert CH.values("pitch") == []
+        _d, rhythm = _submission()
+        rhythm["fields"]["pitch"] = {"value": "0.984"}
+        payload, errors = pd.validate_submission(rhythm, CH)
+        assert "pitch" not in errors and payload["pitch"] == "0.984"
+        for bad in ("0.5-0.8", "0", "4"):
+            rhythm["fields"]["pitch"] = {"value": bad}
+            _p, errors = pd.validate_submission(rhythm, CH)
+            assert "pitch" in errors, bad
+
+    def test_sequential_pitch_left_to_fill(self):
+        exam = _exam()
+        exam["rdsr"]["acquisitions"][1]["acquisition_type"] = "Sequenced Acquisition"
+        d = pd.draft_from_exam(exam, {}, CH, {"scanners": []})
+        assert _f(d, "pitch")["value"] is None and _f(d, "pitch")["source"] == "fill"
 
 
 class TestValidate:

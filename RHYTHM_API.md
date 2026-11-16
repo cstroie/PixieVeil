@@ -175,6 +175,14 @@ in the vendored code:
 - the API does **not** check values against the option lists, and does **not**
   check for duplicates (RHYTHM's website does both), so PixieVeil checks both
   before sending;
+- RHYTHM's own protocol form (and its edit page, `CTProtocolForm`) does not
+  store every field as a `protocol-choices` value, and the edit page shows a
+  field **blank** when the stored value isn't in its list. Send what the form
+  stores: `age_group` / `examination_group` as the option's **display** text
+  (`"30 kg – 50 kg"`, not `30_50kg`); `contrast` as the region/indication IV
+  contrast (`Non-contrast` / `Contrast-enhanced`, not `IV contrast only`);
+  `pitch` as a decimal (`0.55`, not the `0.5-0.8` bucket); `auto_kvp_selection`
+  / `auto_ma_modulation` from the scanner manufacturer's list.
 - `examination_group` and `clinical_comments` are **not** part of the API
   serializer. They are set only by RHYTHM's website save (`/protocols/api/save/`,
   which needs a browser session), so set the examination group on RHYTHM's site
