@@ -56,8 +56,12 @@ def _safe_uid_stem(uid: str) -> str:
 class Defacer:
     """DICOM defacing conversion utilities."""
 
-    # One nnUNet inference at a time — class-level so all instances share it.
-    _nnunet_semaphore = threading.Semaphore(1)
+    # One series defaced at a time, end to end (checks, DICOM→NIfTI,
+    # nnU-Net inference, write-back) — class-level so every Defacer instance
+    # in the process shares it. Inference alone saturates the CPU/GPU, and
+    # the conversions around it are heavy too, so nothing overlaps.
+    _deface_slot = threading.Semaphore(1)
+    SLOT_POLL_S = 1.0
     # Shutdown: set by cancel_all(); running nnU-Net child processes are
     # tracked so they can be terminated (a thread can't be interrupted).
     _cancel = threading.Event()
@@ -308,6 +312,32 @@ class Defacer:
     def deface_series(self, series_dir: Path,
                       data_dir: Path | None = None,
                       on_stage: Callable[[str], None] | None = None) -> bool:
+        """Deface one series; at most one series is defaced at a time.
+
+        Waits for the process-wide defacing slot (reporting ``waiting`` via
+        *on_stage*), polling so a shutdown cancels a queued job too, then
+        runs :meth:`_deface_series_locked`. Returns True on success.
+        """
+        if not self.enabled:
+            return False
+        if not self._deface_slot.acquire(blocking=False):
+            logger.info("Defacing of %s waits for the running defacing job to finish",
+                        series_dir)
+            if on_stage is not None:
+                try:
+                    on_stage("waiting")
+                except Exception:
+                    logger.debug("on_stage callback failed", exc_info=True)
+            while not self._deface_slot.acquire(timeout=self.SLOT_POLL_S):
+                self._check_cancelled()
+        try:
+            return self._deface_series_locked(series_dir, data_dir, on_stage)
+        finally:
+            self._deface_slot.release()
+
+    def _deface_series_locked(self, series_dir: Path,
+                              data_dir: Path | None = None,
+                              on_stage: Callable[[str], None] | None = None) -> bool:
         """
         Run the full defacing pipeline for one series directory.
 
@@ -588,10 +618,8 @@ class Defacer:
         if use_mirroring:
             cmd.append("--mirroring")
 
-        logger.debug("Waiting for nnUNet semaphore")
-        with self._nnunet_semaphore:
-            logger.debug("nnUNet semaphore acquired")
-            self._run_cancellable(cmd, nifti_out_dir.parent / "nnunet_worker.log")
+        # Serialized by deface_series' _deface_slot (held around the whole series).
+        self._run_cancellable(cmd, nifti_out_dir.parent / "nnunet_worker.log")
 
         logger.info("nnUNet inference complete; output in %s", nifti_out_dir)
 

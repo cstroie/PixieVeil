@@ -576,3 +576,80 @@ class TestDefaceStages:
         def boom(stage):
             raise RuntimeError("ui gone")
         assert d.deface_series(series_dir, on_stage=boom) is True
+
+
+class TestOneDefacingAtATime:
+    """Never two defacing jobs in parallel: the slot covers the whole series
+    (checks, conversion, inference, write-back), across Defacer instances."""
+
+    def _series(self, tmp_path, name):
+        series_dir = tmp_path / name / "0001"
+        series_dir.mkdir(parents=True)
+        (series_dir / "img1.dcm").write_bytes(b"ORIGINAL")
+        return series_dir
+
+    def test_two_studies_never_overlap(self, tmp_path):
+        import threading
+        import time
+        active, peak, lock = [0], [0], threading.Lock()
+
+        def slow_step(*a, **k):
+            with lock:
+                active[0] += 1
+                peak[0] = max(peak[0], active[0])
+            time.sleep(0.05)
+            with lock:
+                active[0] -= 1
+            return str(tmp_path / "x.nii.gz")
+
+        results = []
+
+        def run(name):
+            d = make_defacer(tmp_path)            # separate instances, shared slot
+            TestDefaceSeriesOrchestration()._stub_success(d)
+            d.dicom_to_nifti = slow_step
+            results.append(d.deface_series(self._series(tmp_path, name)))
+
+        threads = [threading.Thread(target=run, args=(f"{i:04d}",)) for i in range(3)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(10)
+        assert results == [True, True, True]
+        assert peak[0] == 1
+
+    def test_queued_job_reports_waiting(self, tmp_path):
+        d = make_defacer(tmp_path)
+        TestDefaceSeriesOrchestration()._stub_success(d)
+        stages = []
+        Defacer._deface_slot.acquire()           # another job is running
+        try:
+            import threading
+            t = threading.Thread(target=lambda: d.deface_series(
+                self._series(tmp_path, "0002"), on_stage=stages.append))
+            t.start()
+            import time
+            for _ in range(100):
+                if stages:
+                    break
+                time.sleep(0.01)
+            assert stages == ["waiting"]
+        finally:
+            Defacer._deface_slot.release()
+        t.join(5)
+        assert stages[:2] == ["waiting", "checking"]
+
+    def test_shutdown_cancels_a_queued_job(self, tmp_path, monkeypatch):
+        from pixieveil.processing.defacer import DefacingCancelled
+        d = make_defacer(tmp_path)
+        monkeypatch.setattr(Defacer, "SLOT_POLL_S", 0.01)
+        series_dir = self._series(tmp_path, "0003")
+        Defacer._deface_slot.acquire()
+        try:
+            Defacer._cancel.set()
+            with pytest.raises(DefacingCancelled):
+                d.deface_series(series_dir)
+        finally:
+            Defacer._deface_slot.release()
+            Defacer._cancel.clear()
+        assert (series_dir / "img1.dcm").read_bytes() == b"ORIGINAL"

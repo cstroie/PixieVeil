@@ -165,7 +165,7 @@ Modality ──C-STORE──► DicomServer (pynetdicom)
                         └─ RhythmStorage.check_job() → on COMPLETE: retain/delete + archive
 ```
 
-Single asyncio event loop. All blocking I/O (nnUNet inference, ZIP, file I/O) uses `asyncio.to_thread`. GPU jobs are serialized via a class-level `threading.Semaphore(1)` on `Defacer`.
+Single asyncio event loop. All blocking I/O (nnUNet inference, ZIP, file I/O) uses `asyncio.to_thread`. Defacing is serialized end to end: `Defacer.deface_series()` holds the class-level `_deface_slot` (`threading.Semaphore(1)`) for the whole series — checks, DICOM→NIfTI, nnU-Net inference, write-back — so two series (of any studies) never deface in parallel; a queued one logs it, reports stage `waiting` (shown as e.g. `Defacing 2/9 · S0002 waiting`), and polls so shutdown cancels it.
 
 ## Module map
 
