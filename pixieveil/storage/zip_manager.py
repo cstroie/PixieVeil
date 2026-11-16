@@ -65,7 +65,8 @@ class ZipManager:
                 # Never ship the internal pre-anonymization extraction hints
                 # (Manufacturer / StationName / descriptions — exactly the
                 # values the rhythm profile strips from the .dcm files).
-                if file_path.name == ".exam_hints.json":
+                # ...nor the re-send ledger (hashed original SOP UIDs).
+                if file_path.name in (".exam_hints.json", ".received_sops"):
                     continue
                 if exclude is not None and exclude(file_path):
                     continue

@@ -342,6 +342,14 @@ class Defacer:
 
         self._check_cancelled()
 
+        # Step 0: the volume can only be mapped back slice-for-slice if every
+        # file is a distinct slice of one series. Checked before inference,
+        # which can take many minutes on CPU.
+        problem = self.series_geometry_problem(series_dir)
+        if problem is not None:
+            logger.error("Cannot deface %s: %s", series_dir, problem)
+            return False
+
         # Step 1: DICOM → NIfTI
         try:
             nifti_path = self.dicom_to_nifti(str(series_dir), str(nifti_in_dir))
@@ -404,6 +412,43 @@ class Defacer:
 
         logger.info("Defacing complete for %s", series_dir)
         return True
+
+    @staticmethod
+    def series_geometry_problem(series_dir: Path) -> str | None:
+        """Why *series_dir* can't be defaced slice-for-slice, or ``None``.
+
+        Flags more than one SeriesInstanceUID, and two or more files at the
+        same position along the slice normal (a series stored twice, or
+        several reconstructions sharing a series UID) — NIfTI conversion
+        would merge those into fewer slices than there are files.
+        """
+        series_uids: set[str] = set()
+        positions: dict[float, int] = {}
+        files = sorted(f for f in series_dir.glob("*.dcm") if f.is_file())
+        for f in files:
+            try:
+                ds = pydicom.dcmread(str(f), stop_before_pixels=True, force=True)
+            except Exception as exc:
+                return f"unreadable file {f.name}: {exc}"
+            series_uids.add(str(getattr(ds, "SeriesInstanceUID", "")))
+            ipp = getattr(ds, "ImagePositionPatient", None)
+            iop = getattr(ds, "ImageOrientationPatient", None)
+            if ipp is None or iop is None or len(ipp) != 3 or len(iop) != 6:
+                continue
+            row, col = [float(v) for v in iop[:3]], [float(v) for v in iop[3:]]
+            normal = (row[1] * col[2] - row[2] * col[1],
+                      row[2] * col[0] - row[0] * col[2],
+                      row[0] * col[1] - row[1] * col[0])
+            pos = round(sum(float(p) * n for p, n in zip(ipp, normal)), 2)
+            positions[pos] = positions.get(pos, 0) + 1
+        if len(series_uids) > 1:
+            return f"{len(series_uids)} SeriesInstanceUIDs in one series directory"
+        duplicated = sum(1 for n in positions.values() if n > 1)
+        if duplicated:
+            return (f"{duplicated} slice position(s) hold more than one image "
+                    f"({len(files)} files, {len(positions)} distinct positions) — "
+                    f"was the series received twice?")
+        return None
 
     # ------------------------------------------------------------------
     # Model management
@@ -677,8 +722,8 @@ class Defacer:
 
         Finds the template series whose slice count best matches the NIfTI volume.
         Only PixelData is replaced; all DICOM metadata is preserved from the template.
-        When NIfTI and template slice counts differ, only the overlapping subset is
-        updated; remaining template slices are copied unchanged.
+        Raises ValueError when no template series has exactly as many slices as
+        the NIfTI volume — a partial write-back would leave slices undefaced.
 
         Args:
             nifti_file: Path to NIfTI file to convert
@@ -721,28 +766,22 @@ class Defacer:
         elif candidates_dim0:
             chosen_dim, chosen_suid, chosen_list = 0, *candidates_dim0[0]
         else:
-            logger.warning("No exact slice count match; choosing closest series.")
-            best = min(
-                groups.items(),
-                key=lambda kv: min(abs(len(kv[1]) - dim0), abs(len(kv[1]) - dim2))
+            # Every defaced slice must land on exactly the DICOM file it came
+            # from. A count mismatch (e.g. a series holding each slice twice,
+            # which the NIfTI conversion collapses) used to be "fixed" by
+            # writing the overlapping subset — leaving the rest of the files
+            # undefaced, and the written ones at the wrong positions, while
+            # the series was still reported as defaced.
+            counts = ", ".join(str(len(lst)) for lst in groups.values())
+            raise ValueError(
+                f"defaced volume has {dim0}/{dim2} slices but the DICOM series has "
+                f"{counts} — refusing a partial write-back"
             )
-            chosen_suid, chosen_list = best
-            n = len(chosen_list)
-            chosen_dim = 0 if abs(n - dim0) <= abs(n - dim2) else 2
 
         logger.info("Using SeriesInstanceUID: %s (%d slices, NIfTI dim %d)",
                     chosen_suid, len(chosen_list), chosen_dim)
 
         arr_slices = arr if chosen_dim == 0 else np.moveaxis(arr, 2, 0)
-
-        n_ref = len(chosen_list)
-        n_nifti = arr_slices.shape[0]
-        if n_nifti != n_ref:
-            logger.warning(
-                "NIfTI slices (%d) != DICOM slices (%d); updating overlapping subset.",
-                n_nifti, n_ref
-            )
-        n_update = min(n_nifti, n_ref)
 
         sample_ds = pydicom.dcmread(chosen_list[0][0])
         if hasattr(sample_ds, "pixel_array"):
@@ -803,9 +842,7 @@ class Defacer:
 
         created_files: list[str] = []
 
-        for (src_path, ds), slice_data in zip(
-            chosen_list[:n_update], arr_slices[:n_update]
-        ):
+        for (src_path, ds), slice_data in zip(chosen_list, arr_slices):
             slice_arr = np.rot90(np.asarray(slice_data), k=best_k)
             if best_flip:
                 slice_arr = np.flip(slice_arr, axis=0)
@@ -820,15 +857,6 @@ class Defacer:
             self._prepare_for_write(ds)
             out_path = output_path / Path(src_path).name
             ds.save_as(str(out_path))
-            created_files.append(str(out_path))
-
-        # chosen_list entries were loaded stop_before_pixels=True; re-read with
-        # full pixel data for slices that were not replaced by the defaced volume.
-        for src_path, _ in chosen_list[n_update:]:
-            ds_full = pydicom.dcmread(src_path, force=True)
-            self._prepare_for_write(ds_full)
-            out_path = output_path / Path(src_path).name
-            ds_full.save_as(str(out_path))
             created_files.append(str(out_path))
 
         logger.info("Wrote %d DICOM slices to %s", len(created_files), output_path)

@@ -199,7 +199,12 @@ class StorageManager:
             'reception': {
                 'studies': 0,
                 'images': 0,
-                'bytes': 0
+                'bytes': 0,
+                # Re-sent images dropped by StudyManager.admit_image():
+                # already held by a study still receiving / for a study
+                # past 'receiving'.
+                'duplicate_images': 0,
+                'finished_images': 0,
             },
             'processing': {
                 'studies': 0,
@@ -593,6 +598,10 @@ class StorageManager:
         logger.debug(f"Starting processing of image {image_id} from {image_path}")
         start_time = time.time()
         study_uid = None
+        # Set once StudyManager.admit_image() reserved this image; cleared
+        # when it is stored. Still set in `finally` → release the reservation
+        # so a later re-send of the same image isn't refused.
+        admitted_sop: Optional[str] = None
 
         try:
             # Force reading the DICOM image even with missing meta headers
@@ -621,6 +630,18 @@ class StorageManager:
                 with self.lock:
                     self.inc_counter('processing', 'filtered_images')
                 return
+
+            # Re-send detection — must run on the *original* SOPInstanceUID,
+            # before anonymize() replaces it: a re-sent image would otherwise
+            # be stored a second time under fresh UIDs.
+            sop_uid = str(ds.SOPInstanceUID)
+            rejected = self.study_manager.admit_image(study_uid, sop_uid)
+            if rejected is not None:
+                logger.debug("Dropping re-sent image %s (%s)", image_id, rejected)
+                image_path.unlink(missing_ok=True)
+                self.inc_counter('reception', f'{rejected}_images')
+                return
+            admitted_sop = sop_uid
 
             # Update reception counters for new studies; start tracking their size
             image_size = image_path.stat().st_size
@@ -737,6 +758,8 @@ class StorageManager:
             image_dest = series_dir / f"{image_number:04d}.dcm"
             logger.debug(f"Moving image from {image_path} to {image_dest}")
             shutil.move(image_path, image_dest)
+            self.study_manager.record_received_image(study_uid, study_number, sop_uid)
+            admitted_sop = None
 
             # Accumulate size for this study's session tracker
             if study_uid in self.study_size_bytes:
@@ -777,6 +800,8 @@ class StorageManager:
             except OSError:
                 logger.error("Could not delete unprocessed image %s", image_path,
                              exc_info=True)
+            if admitted_sop is not None and study_uid is not None:
+                self.study_manager.release_image(study_uid, admitted_sop)
             with self.lock:
                 self._active_receiving -= 1
 
@@ -863,11 +888,20 @@ class StorageManager:
             # behind however long CPU-mode nnU-Net inference takes. Skipped
             # if a sidecar already exists so a re-queued retry never clobbers
             # paper-note data merged in by hand afterward.
-            if not ExamSidecar.path_for(self.base_path, study_number).exists():
+            exam_path = ExamSidecar.path_for(self.base_path, study_number)
+            if not exam_path.exists():
                 try:
                     await asyncio.to_thread(self._write_exam_sidecar, study_uid, study_number, study_dir)
                 except Exception:
                     logger.exception("Failed to extract RHYTHM exam data for study %04d", study_number)
+            elif self._exam_predates_reopen(study_uid, exam_path):
+                # Re-received after 'Allow re-receive': the existing exam
+                # describes the old copy. Re-extract, keeping manual fields.
+                try:
+                    await asyncio.to_thread(self._manual_reextract_sync, study_number, study_dir)
+                except Exception:
+                    logger.exception("Failed to re-extract exam data for re-received study %04d",
+                                     study_number)
 
             # Defacing — skip if this study already finished processing
             # (e.g. re-queued spuriously after reaching "ready"/"archived").
@@ -952,6 +986,16 @@ class StorageManager:
             if f.parent.name not in excluded_series
             and not any(part.endswith("_pre_deface") for part in f.parts)
         )
+
+    def _exam_predates_reopen(self, study_uid: str, exam_path: Path) -> bool:
+        sc = self.study_manager.get_sidecar_by_uid(study_uid)
+        if sc is None or not sc.reopened_at:
+            return False
+        try:
+            reopened = datetime.fromisoformat(sc.reopened_at).timestamp()
+            return exam_path.stat().st_mtime < reopened
+        except (OSError, ValueError):
+            return False
 
     def _write_exam_sidecar(self, study_uid: str, study_number: int, study_dir: Path) -> None:
         """
@@ -1469,6 +1513,7 @@ class StorageManager:
         "received_at", "last_received_at", "anonymized_study_uid",
         "rhythm_batch", "rhythm_job_id", "rhythm_job_status_url", "rhythm_status",
         "exported_at", "exported_by",
+        "resends_dropped", "last_resend_at", "reopened_at",
     )
 
     @classmethod
@@ -2369,6 +2414,45 @@ class StorageManager:
             if warning:
                 result["warning"] = warning
             return result
+        finally:
+            self._manual_actions_in_progress.discard(study_number)
+
+    async def reopen_study(self, study_number: int) -> dict:
+        """'Allow re-receive': delete a finished study's files and return it
+        to ``receiving`` so the next send of it is stored as a fresh copy.
+
+        Re-sent images are otherwise dropped (StudyManager.admit_image), so
+        this is the deliberate path for the documented re-receive cases — a
+        study anonymized under the wrong profile, or one whose files were
+        purged after export. The ``.state.json`` keeps its history (audit,
+        RHYTHM uploads); the ``.exam.json`` and its manual edits are kept and
+        re-extracted onto the new copy once it completes. Refused while the
+        study is still being processed or a RHYTHM upload is in flight."""
+        if study_number in self._manual_actions_in_progress:
+            return {"ok": False, "message": "action already in progress for this study"}
+        self._manual_actions_in_progress.add(study_number)
+        try:
+            sc = self.find_sidecar_by_number(study_number)
+            if sc is None:
+                return {"ok": False, "message": "study not found"}
+            from pixieveil.processing.study_manager import REOPENABLE_STATUSES
+            if sc.status not in REOPENABLE_STATUSES:
+                return {"ok": False, "message":
+                        f"study is '{sc.status}' — cannot re-open it now"}
+            if sc.rhythm_job_id and sc.rhythm_status not in self._RHYTHM_TERMINAL:
+                return {"ok": False, "message":
+                        "a RHYTHM upload is in progress for this study"}
+            study_uid = sc.original_study_uid
+            await asyncio.to_thread(self._purge_study_artifacts_sync, study_number)
+            with self.lock:
+                self.study_size_bytes.pop(study_uid, None)
+                self._recv_counts.pop(study_number, None)
+                self._exam_hints.pop(study_uid, None)
+            error = self.study_manager.reopen_study(study_uid)
+            if error is not None:
+                return {"ok": False, "message": error}
+            return {"ok": True, "status": "receiving",
+                    "message": "Re-opened — send the study again to receive a new copy"}
         finally:
             self._manual_actions_in_progress.discard(study_number)
 

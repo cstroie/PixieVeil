@@ -53,6 +53,7 @@ RHYTHM_LOGIN_TTL_S = 300.0
 
 _VALID_ACTIONS = {
     "send_dicom", "reextract", "upload_http", "upload_rhythm", "mark_exported",
+    "reopen",
 }
 
 _DASHBOARD_DIR = Path(__file__).parent
@@ -1305,7 +1306,10 @@ class Dashboard:
                              "rhythm": sm.rhythm_storage}[key], "enabled", False)]
         kpis = [
             {"key": "received", "label": "Images received", "value": c('reception', 'images'),
-             "sub": f"{c('reception', 'studies')} studies, {mb(c('reception', 'bytes'))} MB"},
+             "sub": f"{c('reception', 'studies')} studies, {mb(c('reception', 'bytes'))} MB"
+                    + (f", {resent} re-sent dropped" if (resent := (
+                        c('reception', 'duplicate_images') or 0)
+                        + (c('reception', 'finished_images') or 0)) else "")},
             {"key": "anonymized", "label": "Anonymized",
              "value": c('processing', 'anonymized_images'),
              "sub": f"{c('processing', 'filtered_images')} filtered out"},
@@ -1533,6 +1537,10 @@ class Dashboard:
 
         storage_manager: StorageManager = request.app['storage_manager']
 
+        if action == "reopen":
+            # Deletes the study's files so the next send is received as a
+            # fresh copy — admin only.
+            self._require_admin(request)
         if action == "mark_exported":
             # Out-of-band export: partner tooling shipped export_path/<n>.zip
             # to RHYTHM itself and calls this so PixieVeil archives the study
@@ -1549,12 +1557,13 @@ class Dashboard:
                     sha256 = body.get("sha256")
             result = await storage_manager.mark_exported(n, via=via, sha256=sha256)
         else:
-            method = {
-                "send_dicom": storage_manager.manual_send_dicom,
-                "reextract": storage_manager.manual_reextract,
-                "upload_http": storage_manager.manual_upload_http,
-                "upload_rhythm": storage_manager.manual_upload_rhythm,
-            }[action]
+            method = getattr(storage_manager, {
+                "send_dicom": "manual_send_dicom",
+                "reextract": "manual_reextract",
+                "upload_http": "manual_upload_http",
+                "upload_rhythm": "manual_upload_rhythm",
+                "reopen": "reopen_study",
+            }[action])
             result = await method(n)
         await asyncio.to_thread(
             storage_manager.record_audit, n, self._actor(request), action,

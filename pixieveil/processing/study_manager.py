@@ -10,6 +10,7 @@ status is ``complete`` or ``defacing`` are re-queued automatically so they are
 processed on the next ``check_study_completions()`` call.
 """
 
+import hashlib
 import logging
 import time
 import threading
@@ -17,9 +18,30 @@ from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
 from pixieveil.config import Settings
-from pixieveil.storage.study_sidecar import StudySidecar
+from pixieveil.storage.study_sidecar import StudySidecar, _now_iso
 
 logger = logging.getLogger(__name__)
+
+# Per-study record of every image accepted while receiving, one hashed
+# original SOPInstanceUID per line, so a duplicate is still recognised after
+# a restart. Hashed because the study directory is what gets exported
+# (ZipManager and DicomStorage skip it anyway).
+RECEIVED_SOPS_FILE = ".received_sops"
+
+# Statuses a study may be re-opened from ("allow re-receive"). Not
+# 'receiving' (nothing to do) nor 'complete'/'defacing' (a _process_study
+# task is working on the directory).
+REOPENABLE_STATUSES = frozenset(
+    {"ready", "archived", "defacing_failed", "defacing_disabled"})
+
+# Throttle for persisting the dropped-re-send counter: a re-sent study can
+# drop hundreds of images a second; flush_resend_counts() saves the rest.
+_RESEND_SAVE_EVERY = 50
+
+
+def sop_key(sop_instance_uid: str) -> str:
+    """Stable, non-reversible key for an original SOPInstanceUID."""
+    return hashlib.sha256(sop_instance_uid.encode()).hexdigest()[:24]
 
 
 class StudyState:
@@ -60,6 +82,12 @@ class StudyManager:
         # Persistent state
         self._base_path: Optional[Path] = None
         self._sidecars: Dict[str, StudySidecar] = {}  # orig_study_uid → sidecar
+
+        # orig_study_uid → sop_key()s accepted so far (lazily re-read from
+        # RECEIVED_SOPS_FILE after a restart), and studies whose
+        # resends_dropped counter changed but isn't saved yet.
+        self._seen_sops: Dict[str, set] = {}
+        self._resend_unsaved: Dict[str, int] = {}
 
         # Studies recovered from disk that need re-processing
         self._recovered_studies: List[str] = []
@@ -207,6 +235,151 @@ class StudyManager:
             return study_number, series_number, image_number, is_new_series
 
     # ------------------------------------------------------------------
+    # Re-send detection
+    #
+    # Anonymization gives every image fresh UIDs, so nothing downstream can
+    # tell a re-sent slice from a new one: a study sent twice used to end up
+    # with every slice stored twice in the same series (which then broke
+    # defacing). The original SOPInstanceUID, checked here before anything
+    # is stored, is the only reliable key.
+
+    def admit_image(self, original_study_uid: str,
+                    original_sop_uid: str) -> Optional[str]:
+        """Decide whether an incoming image may be stored.
+
+        Returns ``None`` to accept (and reserves the image, so a concurrent
+        copy is refused — call :meth:`release_image` if storing then fails,
+        :meth:`record_received_image` once it is on disk), ``"duplicate"`` for
+        an image this study already holds, or ``"finished"`` for any image of
+        a study past ``receiving`` (re-open it with :meth:`reopen_study` to
+        receive it again).
+        """
+        key = sop_key(original_sop_uid)
+        with self.lock:
+            state = self.study_states.get(original_study_uid)
+            sc = self._sidecars.get(original_study_uid)
+            if (state is not None and state.completed) or (
+                    sc is not None and sc.status != "receiving"):
+                self._note_resend_locked(original_study_uid, sc, "finished")
+                return "finished"
+            seen = self._seen_sops_locked(original_study_uid, sc)
+            if key in seen:
+                self._note_resend_locked(original_study_uid, sc, "duplicate")
+                return "duplicate"
+            seen.add(key)
+            return None
+
+    def release_image(self, original_study_uid: str, original_sop_uid: str) -> None:
+        """Undo :meth:`admit_image`'s reservation for an image that was not stored."""
+        with self.lock:
+            seen = self._seen_sops.get(original_study_uid)
+            if seen is not None:
+                seen.discard(sop_key(original_sop_uid))
+
+    def record_received_image(self, original_study_uid: str, study_number: int,
+                              original_sop_uid: str) -> None:
+        """Persist an admitted image's key next to its study's files."""
+        if self._base_path is None:
+            return
+        path = self._base_path / f"{study_number:04d}" / RECEIVED_SOPS_FILE
+        with self.lock:
+            try:
+                with path.open("a") as fh:
+                    fh.write(sop_key(original_sop_uid) + "\n")
+            except OSError:
+                logger.warning("Could not record received image in %s", path,
+                               exc_info=True)
+
+    def _seen_sops_locked(self, original_study_uid: str,
+                          sc: Optional[StudySidecar]) -> set:
+        seen = self._seen_sops.get(original_study_uid)
+        if seen is None:
+            seen = set()
+            if sc is not None and self._base_path is not None:
+                path = self._base_path / f"{sc.study_number:04d}" / RECEIVED_SOPS_FILE
+                try:
+                    seen.update(line.strip() for line in path.read_text().splitlines()
+                                if line.strip())
+                except FileNotFoundError:
+                    pass
+                except OSError:
+                    logger.warning("Could not read %s", path, exc_info=True)
+            self._seen_sops[original_study_uid] = seen
+        return seen
+
+    def _note_resend_locked(self, original_study_uid: str,
+                            sc: Optional[StudySidecar], reason: str) -> None:
+        if sc is None:
+            return
+        first = original_study_uid not in self._resend_unsaved
+        if first:
+            logger.warning(
+                "Study %04d: dropping re-sent image(s) (%s) — %s",
+                sc.study_number, reason,
+                "already received" if reason == "duplicate"
+                else f"study is '{sc.status}'; use 'Allow re-receive' to accept a new copy",
+            )
+        sc.resends_dropped += 1
+        sc.last_resend_at = _now_iso()
+        pending = self._resend_unsaved.get(original_study_uid, 0) + 1
+        if first or pending >= _RESEND_SAVE_EVERY:
+            self._save(sc)
+            pending = 0
+        self._resend_unsaved[original_study_uid] = pending
+
+    def flush_resend_counts(self) -> None:
+        """Save dropped-re-send counters not yet persisted, and end the
+        current burst (so the next re-send logs a warning again)."""
+        with self.lock:
+            for uid, pending in list(self._resend_unsaved.items()):
+                sc = self._sidecars.get(uid)
+                if pending and sc is not None:
+                    self._save(sc)
+            self._resend_unsaved.clear()
+
+    def reopen_study(self, original_study_uid: str) -> Optional[str]:
+        """Return the study to ``receiving`` so the next send is accepted.
+
+        The caller must already have deleted the study's files. Resets
+        everything that described the old copy — defacing flags, export /
+        retention stamps, the current RHYTHM job — but keeps the record's
+        history (``audit``, ``rhythm_uploads``, RHYTHM ids). Returns an error
+        message, or ``None`` on success.
+        """
+        with self.lock:
+            sc = self._sidecars.get(original_study_uid)
+            if sc is None:
+                return "study not found"
+            if sc.status not in REOPENABLE_STATUSES:
+                return f"study is '{sc.status}' — cannot re-open it now"
+            for rec in sc.series.values():
+                rec.is_head = False
+                rec.is_topogram = False
+                rec.defaced = False
+                rec.defaced_at = None
+                self.image_counters[(sc.study_number, rec.series_number)] = 0
+            sc.status = "receiving"
+            sc.archived_via = None
+            sc.exported_at = None
+            sc.purged_at = None
+            sc.exported_by = None
+            for attr in ("rhythm_batch", "rhythm_session_id", "rhythm_job_id",
+                         "rhythm_job_status_url", "rhythm_status",
+                         "rhythm_zip_sha256", "rhythm_zip_size"):
+                setattr(sc, attr, None)
+            sc.reopened_at = _now_iso()
+            self._seen_sops.pop(original_study_uid, None)
+            self._resend_unsaved.pop(original_study_uid, None)
+            # A fresh StudyState arrives with the first re-sent image.
+            self.study_states.pop(original_study_uid, None)
+            self._recovered_studies = [
+                u for u in self._recovered_studies if u != original_study_uid]
+            self._save(sc)
+        logger.info("Study %04d re-opened: the next send will be received as a new copy",
+                    sc.study_number)
+        return None
+
+    # ------------------------------------------------------------------
     # Sidecar writers (called from StorageManager after anonymization)
 
     def record_new_series(self, original_study_uid: str, original_series_uid: str,
@@ -313,6 +486,7 @@ class StudyManager:
         inactivity timeout.  Marks returned studies as ``complete`` in memory
         and updates their sidecar status accordingly.
         """
+        self.flush_resend_counts()
         now = time.time()
         completed: List[str] = []
 

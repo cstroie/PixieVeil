@@ -472,6 +472,18 @@
                 out.push(`<div class="callout info">${icon('info')}<div>Exported study kept in the
                     <strong>retention area</strong>; it is purged automatically when the retention window ends.</div></div>`);
             }
+            if (study.resends_dropped) {
+                const reopenable = ['ready', 'archived', 'defacing_failed', 'defacing_disabled'].includes(study.status);
+                out.push(`<div class="callout warn">${icon('alert')}<div><strong>Re-send ignored.</strong>
+                    ${study.resends_dropped} image(s) sent again were dropped${study.last_resend_at ? ` (last ${esc(fmtDate(study.last_resend_at))})` : ''}
+                    — this study had already been received.
+                    ${reopenable ? (state.admin ? 'To replace it with a new copy, use <em>Allow re-receive</em> and send it again.'
+                        : 'An admin can allow a new copy to be received.') : ''}</div></div>`);
+            }
+            if (study.status === 'receiving' && study.reopened_at) {
+                out.push(`<div class="callout info">${icon('info')}<div>Re-opened ${esc(fmtDate(study.reopened_at))} —
+                    send the study again; it completes once the new copy has arrived.</div></div>`);
+            }
             if (state.detail.corrupt) {
                 out.push(`<div class="callout bad">${icon('alert')}<div><strong>Exam data unreadable.</strong>
                     The exam sidecar exists but could not be parsed. Re-extract to rebuild it.</div></div>`);
@@ -695,6 +707,11 @@
                     title="Pre-fill a local + RHYTHM protocol from this study and create it on RHYTHM">
                     ${icon('edit')} ${mapped ? 'Draft protocol' : 'Draft protocol (unmatched)'}</button>`);
             }
+            if (state.admin && ['ready', 'archived', 'defacing_failed', 'defacing_disabled'].includes(study.status)) {
+                out.push(`<button type="button" class="btn btn-ghost" data-act="reopen"
+                    title="Delete this study's files and accept the next send of it as a new copy">
+                    ${icon('redo')} Allow re-receive</button>`);
+            }
             if (!state.caps.dicom && !state.caps.http && !state.caps.rhythm) {
                 out.push('<span class="faint" style="font-size:12px">No export target configured</span>');
             }
@@ -901,6 +918,16 @@
             const summary = state.studies.find(s => s.study_number === n) || {};
             if (action === 'reextract') {
                 if (!(await confirmDiscard())) return;
+            } else if (action === 'reopen') {
+                const ok = await PV.modal({
+                    title: 'Allow re-receive',
+                    body: `<p>Delete the stored files of study <strong class="mono">${pad4(n)}</strong>
+                        (and its export ZIP) and accept the next send of this study as a new copy?</p>
+                        <p>The study record, its history and your manual exam edits are kept.
+                        The new copy is anonymized, defaced and re-extracted from scratch.</p>`,
+                    confirm: 'Delete files & re-open',
+                });
+                if (!ok) return;
             } else {
                 const missing = PV.missingLabels(summary.exam_summary ? summary.exam_summary.missing_fields : null);
                 const noExam = !summary.exam_summary;

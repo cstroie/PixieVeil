@@ -496,3 +496,60 @@ class TestSafeUidStem:
         assert ".." not in stem and not stem.startswith(".")
         target = (tmp_path / f"{stem}_0000.nii.gz").resolve()
         assert target.parent == tmp_path.resolve()
+
+
+class TestSeriesGeometry:
+    """A series holding each slice twice (sent twice) collapses to half the
+    slices in NIfTI; defacing must refuse it, not write back a subset."""
+
+    def _slice(self, path, z, series_uid):
+        write_minimal_dicom(path, SeriesInstanceUID=series_uid,
+                            ImagePositionPatient=[0.0, 0.0, float(z)],
+                            ImageOrientationPatient=[1, 0, 0, 0, 1, 0])
+
+    def test_distinct_slices_ok(self, tmp_path):
+        suid = "1.2.3"
+        for i in range(3):
+            self._slice(tmp_path / f"{i:04d}.dcm", i * 5, suid)
+        assert Defacer.series_geometry_problem(tmp_path) is None
+
+    def test_duplicated_positions_flagged(self, tmp_path):
+        suid = "1.2.3"
+        for i in range(4):
+            self._slice(tmp_path / f"{i:04d}.dcm", (i % 2) * 5, suid)
+        problem = Defacer.series_geometry_problem(tmp_path)
+        assert problem and "2 slice position(s)" in problem
+
+    def test_mixed_series_uids_flagged(self, tmp_path):
+        self._slice(tmp_path / "0001.dcm", 0, "1.2.3")
+        self._slice(tmp_path / "0002.dcm", 5, "1.2.4")
+        assert "SeriesInstanceUIDs" in Defacer.series_geometry_problem(tmp_path)
+
+    def test_deface_series_refuses_before_inference(self, tmp_path):
+        d = make_defacer(tmp_path)
+        series_dir = tmp_path / "0001" / "0001"
+        for i in range(4):
+            self._slice(series_dir / f"{i:04d}.dcm", (i % 2) * 5, "1.2.3")
+        before = {p.name: p.read_bytes() for p in series_dir.iterdir()}
+        called = []
+        d.dicom_to_nifti = lambda *a, **k: called.append(1)
+
+        assert d.deface_series(series_dir) is False
+        assert not called
+        assert {p.name: p.read_bytes() for p in series_dir.iterdir()} == before
+
+    def test_nifti_to_dicom_refuses_slice_count_mismatch(self, tmp_path):
+        np = pytest.importorskip("numpy")
+        nib = pytest.importorskip("nibabel")
+        d = make_defacer(tmp_path)
+        tmpl = tmp_path / "tmpl"
+        for i in range(4):
+            write_minimal_dicom(tmpl / f"{i:04d}.dcm", SeriesInstanceUID="1.2.3",
+                                InstanceNumber=i + 1, Rows=2, Columns=2,
+                                ImageOrientationPatient=[1, 0, 0, 0, 1, 0])
+        nii = tmp_path / "v.nii.gz"
+        nib.save(nib.Nifti1Image(np.zeros((2, 2, 2), dtype=np.int16), np.eye(4)), str(nii))
+        out = tmp_path / "out"
+        with pytest.raises(ValueError, match="partial write-back"):
+            d.nifti_to_dicom(str(nii), str(tmpl), str(out))
+        assert not list(out.glob("*.dcm"))

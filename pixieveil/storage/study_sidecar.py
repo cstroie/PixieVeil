@@ -164,6 +164,18 @@ class StudySidecar:
     exported_by: Optional[str] = None
     audit: list = field(default_factory=list)
 
+    # Re-sends. Anonymization gives every received image fresh UIDs, so a
+    # modality sending the same study again would otherwise land a second
+    # copy of each slice beside the first. Images already seen in a study
+    # that is still receiving, and any image for a study past 'receiving',
+    # are dropped (see StudyManager.admit_image) and counted here.
+    # ``reopened_at`` is stamped by the deliberate "allow re-receive" action
+    # (StorageManager.reopen_study), which accepts the next send as a
+    # fresh copy.
+    resends_dropped: int = 0
+    last_resend_at: Optional[str] = None
+    reopened_at: Optional[str] = None
+
     # ------------------------------------------------------------------
     # Construction helpers
 
