@@ -91,6 +91,26 @@ class TestDraft:
         assert _f(adult, "age_group")["value"] == "gt_80kg"
         assert _f(adult, "examination_group")["value"].startswith("Group 6")
 
+    def test_young_adult_is_group_6_for_head_and_body(self):
+        # Same rule as exam_extractor._determine_bucket: age >= 18 OR
+        # weight > 80 kg, regardless of region.
+        cases = [(30, 70, "Chest", "Fungal infections"),     # adult, light: was PEDIATRIC_BODY
+                 (14, 85, "Head", "Trauma"),                 # heavy teen head: was PEDIATRIC_HEAD
+                 (25, None, "Head", "Trauma")]
+        for age, weight, region, ci in cases:
+            d = pd.draft_from_exam(_exam(age=age, weight=weight, region=region, ci=ci),
+                                   {}, CH, {"scanners": []})
+            assert _f(d, "protocol_type")["value"] == "YOUNG_ADULT", (age, weight, region)
+            assert _f(d, "age_group")["value"] == "gt_80kg"
+            assert _f(d, "examination_group")["value"].startswith("Group 6")
+
+    def test_groups_pair_by_position(self):
+        for ptype, ag, group in [("PEDIATRIC_HEAD", "lt_3m", "Group 1"),
+                                 ("PEDIATRIC_HEAD", "gt_6y", "Group 4"),
+                                 ("PEDIATRIC_BODY", "5_15kg", "Group 2"),
+                                 ("PEDIATRIC_BODY", "50_80kg", "Group 5")]:
+            assert pd.examination_group_for(CH, ptype, ag).startswith(group)
+
     def test_header_fallbacks_and_iterative_kernel(self):
         exam = _exam(rdsr=False, iv="Contrast-enhanced")
         exam["series"][1]["convolution_kernel"] = "Br40f/3"

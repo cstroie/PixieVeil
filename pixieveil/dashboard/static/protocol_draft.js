@@ -22,6 +22,7 @@
         'slice_thickness', 'kernel_class', 'reconstruction_algorithm']);
     const GROUP_KEY = { PEDIATRIC_HEAD: 'examination_group_pediatric_head',
         PEDIATRIC_BODY: 'examination_group_pediatric_body', YOUNG_ADULT: 'examination_group_young_adult' };
+    const PAIRED = { examination_group: 'age_group', age_group: 'examination_group' };
     const AGE_KEY = { PEDIATRIC_HEAD: 'age_group_pediatric_head',
         PEDIATRIC_BODY: 'age_group_pediatric_body', YOUNG_ADULT: 'age_group_young_adult' };
     const TYPES = [['PEDIATRIC_HEAD', 'Pediatric head'], ['PEDIATRIC_BODY', 'Pediatric body'],
@@ -390,6 +391,15 @@
                 }
                 render();
                 return;
+            }
+            if (PAIRED[t.dataset.k]) {
+                // Examination group and age/weight group are the same band
+                // (RHYTHM lists both in matching order): move the partner too.
+                const mine = ch.options(t.dataset.k, form.ptype);
+                const theirs = ch.options(PAIRED[t.dataset.k], form.ptype);
+                const i = mine.findIndex(o => o.value === t.value);
+                const partner = dlg.querySelector(`[data-k="${PAIRED[t.dataset.k]}"]`);
+                if (partner && i >= 0 && mine.length === theirs.length) partner.value = theirs[i].value;
             }
             if (t.dataset.k) {
                 const o = dlg.querySelector(`[data-other="${t.dataset.k}"]`);

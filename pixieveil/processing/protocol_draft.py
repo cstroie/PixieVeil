@@ -160,17 +160,23 @@ def _mode(values: list) -> Any:
 # ------------------------------------------------------------------ classifiers
 def protocol_type_for(region: str | None, age: float | None,
                       weight: float | None) -> tuple[str | None, str]:
+    """RHYTHM protocol type, by the same rule as the exam extractor
+    (``exam_extractor._determine_bucket``): YOUNG_ADULT — Group 6, shared by
+    head and body — for age >= 18 *or* weight > 80 kg, whatever the region;
+    otherwise PEDIATRIC_HEAD (age-banded) or PEDIATRIC_BODY (weight-banded)."""
+    if (age is not None and age >= 18) or (weight is not None and weight > 80):
+        return "YOUNG_ADULT", ""
     head = any(h in str(region or "").casefold() for h in HEAD_REGIONS)
     if head:
         if age is None:
             return None, "Patient age unknown"
-        return ("PEDIATRIC_HEAD" if age < 18 else "YOUNG_ADULT"), ""
+        return "PEDIATRIC_HEAD", ""
     if not region:
         return None, "Region unknown — choose the protocol type"
     if weight is not None:
-        return ("PEDIATRIC_BODY" if weight <= 80 else "YOUNG_ADULT"), ""
+        return "PEDIATRIC_BODY", ""
     if age is not None:
-        return ("PEDIATRIC_BODY" if age < 18 else "YOUNG_ADULT"), "Weight unknown"
+        return "PEDIATRIC_BODY", "Weight unknown"
     return None, "Patient age and weight unknown"
 
 
