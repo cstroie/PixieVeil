@@ -176,6 +176,11 @@ class StudySidecar:
     last_resend_at: Optional[str] = None
     reopened_at: Optional[str] = None
 
+    # Deleted from the dashboard (StorageManager.delete_study): files, export
+    # pair and exam record are gone; this record stays (status "deleted") so
+    # the study number is never reused and /lookup still resolves it.
+    deleted_at: Optional[str] = None
+
     # ------------------------------------------------------------------
     # Construction helpers
 

@@ -198,7 +198,8 @@
             { key: 'progress', label: 'Active', test: s => ['receiving', 'complete', 'defacing'].includes(s.status) },
             { key: 'failed',   label: 'Failed',      test: s => ['defacing_failed', 'defacing_disabled'].includes(s.status) || s.exam_corrupt },
             { key: 'exported', label: 'Exported',    test: s => s.status === 'archived' },
-            { key: 'all',      label: 'All',         test: () => true },
+            { key: 'deleted',  label: 'Deleted',     test: s => s.status === 'deleted' },
+            { key: 'all',      label: 'All',         test: s => s.status !== 'deleted' },
         ];
         const QUALITY_TONE = { 'Diagnostic': 'ok', 'Suboptimal': 'warn', 'Non-diagnostic': 'bad' };
         const SERIES_FIELDS = [
@@ -471,12 +472,18 @@
                     This study has a head-scan series that was not defaced, so export is blocked.
                     Enable <span class="mono">defacing</span> in settings.yaml and restart PixieVeil to deface it.</div></div>`);
             }
-            if (study.location === 'absent') {
+            if (study.location === 'absent' && study.status !== 'deleted') {
                 out.push(`<div class="callout warn">${icon('alert')}<div><strong>Study files not found.</strong>
                     The DICOM directory is gone from both storage and the retention area — only the exam record remains.</div></div>`);
             } else if (study.location === 'retained') {
                 out.push(`<div class="callout info">${icon('info')}<div>Exported study kept in the
                     <strong>retention area</strong>; it is purged automatically when the retention window ends.</div></div>`);
+            }
+            if (study.status === 'deleted') {
+                out.push(`<div class="callout info">${icon('info')}<div><strong>Deleted${study.deleted_at ? ' ' + esc(fmtDate(study.deleted_at)) : ''}.</strong>
+                    Its files, export and exam record are gone; this record is kept so the study number is never reused
+                    and <a href="/lookup">Lookup</a> still finds it.
+                    ${state.admin ? 'To receive it again, use <em>Allow re-receive</em> and send it from the PACS.' : ''}</div></div>`);
             }
             if (study.resends_dropped) {
                 const reopenable = ['ready', 'archived', 'defacing_failed', 'defacing_disabled'].includes(study.status);
@@ -681,6 +688,10 @@
         }
 
         function actionButtons(study) {
+            if (study.status === 'deleted') {
+                return state.admin ? `<button type="button" class="btn btn-ghost" data-act="reopen"
+                    title="Accept the next send of this study as a new copy">${icon('redo')} Allow re-receive</button>` : '';
+            }
             const absent = study.location === 'absent';
             const failed = study.status === 'defacing_failed';
             const disabled = study.status === 'defacing_disabled';
@@ -713,10 +724,15 @@
                     title="Pre-fill a local + RHYTHM protocol from this study and create it on RHYTHM">
                     ${icon('edit')} ${mapped ? 'Draft protocol' : 'Draft protocol (unmatched)'}</button>`);
             }
-            if (state.admin && ['ready', 'archived', 'defacing_failed', 'defacing_disabled'].includes(study.status)) {
+            if (state.admin && ['ready', 'archived', 'defacing_failed', 'defacing_disabled', 'deleted'].includes(study.status)) {
                 out.push(`<button type="button" class="btn btn-ghost" data-act="reopen"
                     title="Delete this study's files and accept the next send of it as a new copy">
                     ${icon('redo')} Allow re-receive</button>`);
+            }
+            if (state.admin && ['receiving', 'ready', 'archived', 'defacing_failed', 'defacing_disabled'].includes(study.status)) {
+                out.push(`<button type="button" class="btn btn-ghost btn-danger" data-act="delete"
+                    title="Delete this study's files, export and exam record (the record of the study is kept)">
+                    Delete study</button>`);
             }
             if (!state.caps.dicom && !state.caps.http && !state.caps.rhythm) {
                 out.push('<span class="faint" style="font-size:12px">No export target configured</span>');
@@ -924,6 +940,17 @@
             const summary = state.studies.find(s => s.study_number === n) || {};
             if (action === 'reextract') {
                 if (!(await confirmDiscard())) return;
+            } else if (action === 'delete') {
+                const ok = await PV.modal({
+                    title: 'Delete study',
+                    body: `<p>Delete study <strong class="mono">${pad4(n)}</strong>: its DICOM files, export ZIP/manifest
+                        and exam record, including manual edits?</p>
+                        <p>A short record is kept, so the number <span class="mono">${pad4(n)}</span> is never reused and
+                        Lookup still finds the patient. Nothing is removed from RHYTHM or the anonymization log.
+                        This cannot be undone. The study can only come back by being sent again.</p>`,
+                    confirm: 'Delete study',
+                });
+                if (!ok) return;
             } else if (action === 'reopen') {
                 const ok = await PV.modal({
                     title: 'Allow re-receive',

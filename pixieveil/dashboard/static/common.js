@@ -127,6 +127,7 @@ const PV = (() => {
         defacing_disabled: { label: 'Defacing disabled', tone: 'bad' },
         ready:           { label: 'Ready',         tone: 'ok' },
         archived:        { label: 'Exported',      tone: 'done' },
+        deleted:         { label: 'Deleted',       tone: '' },
     };
     function statusPill(status) {
         const s = STATUS[status] || { label: status || 'unknown', tone: '' };
@@ -472,7 +473,7 @@ const PV = (() => {
 // A study "needs input" once it has finished processing (or been exported)
 // and its exam data is absent, unreadable, or missing a required field.
 PV.needsInput = s => {
-    if (['receiving', 'complete', 'defacing'].includes(s.status)) return false;
+    if (['receiving', 'complete', 'defacing', 'deleted'].includes(s.status)) return false;
     if (s.exam_corrupt || !s.exam_summary) return true;
     return (s.exam_summary.missing_fields || []).length > 0;
 };

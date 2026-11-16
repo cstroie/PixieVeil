@@ -53,7 +53,7 @@ RHYTHM_LOGIN_TTL_S = 300.0
 
 _VALID_ACTIONS = {
     "send_dicom", "reextract", "upload_http", "upload_rhythm", "mark_exported",
-    "reopen",
+    "reopen", "delete",
 }
 
 _DASHBOARD_DIR = Path(__file__).parent
@@ -1647,9 +1647,8 @@ class Dashboard:
 
         storage_manager: StorageManager = request.app['storage_manager']
 
-        if action == "reopen":
-            # Deletes the study's files so the next send is received as a
-            # fresh copy — admin only.
+        if action in ("reopen", "delete"):
+            # Both delete the study's files — admin only.
             self._require_admin(request)
         if action == "mark_exported":
             # Out-of-band export: partner tooling shipped export_path/<n>.zip
@@ -1673,6 +1672,7 @@ class Dashboard:
                 "upload_http": "manual_upload_http",
                 "upload_rhythm": "manual_upload_rhythm",
                 "reopen": "reopen_study",
+                "delete": "delete_study",
             }[action])
             result = await method(n)
         await asyncio.to_thread(

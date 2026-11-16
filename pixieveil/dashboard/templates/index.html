@@ -231,7 +231,10 @@
             const sc = data.pipeline.status_counts || {};
             const caps = data.capabilities || {};
             const cols = studies ? { 'st-receive': [], 'st-process': [], 'st-ready': [], 'st-exported': [] } : null;
-            if (cols) for (const s of studies) { const [col, tone] = place(s); cols[col].push([s, tone]); }
+            if (cols) for (const s of studies) {
+                if (s.status === 'deleted') continue;     // a record only — nothing left to show
+                const [col, tone] = place(s); cols[col].push([s, tone]);
+            }
             const col = id => (cols ? cols[id] : null);
 
             const blocked = (sc.defacing_failed || 0) + (sc.defacing_disabled || 0);

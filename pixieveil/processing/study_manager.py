@@ -32,7 +32,18 @@ RECEIVED_SOPS_FILE = ".received_sops"
 # 'receiving' (nothing to do) nor 'complete'/'defacing' (a _process_study
 # task is working on the directory).
 REOPENABLE_STATUSES = frozenset(
-    {"ready", "archived", "defacing_failed", "defacing_disabled"})
+    {"ready", "archived", "defacing_failed", "defacing_disabled", "deleted"})
+
+# Statuses a study may be deleted from: not while a _process_study task
+# works on its directory ('complete' / 'defacing'), and not twice.
+DELETABLE_STATUSES = frozenset(
+    {"receiving", "ready", "archived", "defacing_failed", "defacing_disabled"})
+
+# Highest study number ever allocated, in base_path. Study numbers must never
+# be reused (exports, RHYTHM uploads and /lookup refer to them), even when a
+# study's records were removed by hand; startup takes the max of this and
+# the sidecars.
+LAST_NUMBER_FILE = ".last_study_number"
 
 # Throttle for persisting the dropped-re-send counter: a re-sent study can
 # drop hundreds of images a second; flush_resend_counts() saves the rest.
@@ -126,6 +137,7 @@ class StudyManager:
         Call once at startup, before the first image arrives.
         """
         self._base_path = base_path
+        self.study_counter = max(self.study_counter, self._read_last_number())
 
         if not base_path.exists():
             logger.debug("Base path does not exist yet — starting fresh")
@@ -180,9 +192,38 @@ class StudyManager:
                     )
 
         logger.info(
-            "Loaded %d sidecars from %s; %d studies queued for recovery",
-            len(sidecars), base_path, recovered,
+            "Loaded %d sidecars from %s; %d studies queued for recovery; "
+            "next study number %04d",
+            len(sidecars), base_path, recovered, self.study_counter + 1,
         )
+        # Seed the file on first start after an upgrade.
+        self._write_last_number(self.study_counter)
+
+    def _read_last_number(self) -> int:
+        if self._base_path is None:
+            return 0
+        try:
+            return int((self._base_path / LAST_NUMBER_FILE).read_text().strip() or 0)
+        except FileNotFoundError:
+            return 0
+        except (OSError, ValueError):
+            logger.warning("Unreadable %s — relying on the sidecars", LAST_NUMBER_FILE,
+                           exc_info=True)
+            return 0
+
+    def _write_last_number(self, n: int) -> None:
+        """Atomically record *n* as the highest allocated study number."""
+        if self._base_path is None or n <= 0:
+            return
+        path = self._base_path / LAST_NUMBER_FILE
+        tmp = path.with_suffix(".tmp")
+        try:
+            self._base_path.mkdir(parents=True, exist_ok=True)
+            tmp.write_text(f"{n}\n")
+            tmp.replace(path)
+        except OSError:
+            logger.error("Could not record last study number %d in %s", n, path,
+                         exc_info=True)
 
     # ------------------------------------------------------------------
     # Image ingestion
@@ -200,6 +241,7 @@ class StudyManager:
                 self.study_counter += 1
                 self.study_map[original_study_uid] = self.study_counter
                 self.number_map[self.study_counter] = original_study_uid
+                self._write_last_number(self.study_counter)
                 logger.debug(
                     "New study %d assigned to %s", self.study_counter, original_study_uid
                 )
@@ -337,6 +379,37 @@ class StudyManager:
                     self._save(sc)
             self._resend_unsaved.clear()
 
+    def mark_study_deleted(self, original_study_uid: str) -> Optional[str]:
+        """Status ``deleted``: the caller has removed the files and exam
+        record. The sidecar stays (number never reused, /lookup still
+        works); defacing flags and in-memory receive state are reset, so
+        'Allow re-receive' can bring the study back. Returns an error
+        message, or ``None`` on success."""
+        with self.lock:
+            sc = self._sidecars.get(original_study_uid)
+            if sc is None:
+                return "study not found"
+            if sc.status not in DELETABLE_STATUSES:
+                return f"study is '{sc.status}' — cannot delete it now"
+            for rec in sc.series.values():
+                rec.defaced = False
+                rec.defaced_at = None
+                self.image_counters[(sc.study_number, rec.series_number)] = 0
+            sc.status = "deleted"
+            sc.deleted_at = _now_iso()
+            for attr in ("rhythm_batch", "rhythm_session_id", "rhythm_job_id",
+                         "rhythm_job_status_url", "rhythm_status",
+                         "rhythm_zip_sha256", "rhythm_zip_size"):
+                setattr(sc, attr, None)
+            self.study_states.pop(original_study_uid, None)
+            self._seen_sops.pop(original_study_uid, None)
+            self._resend_unsaved.pop(original_study_uid, None)
+            self._recovered_studies = [
+                u for u in self._recovered_studies if u != original_study_uid]
+            self._save(sc)
+        logger.info("Study %04d deleted (record kept)", sc.study_number)
+        return None
+
     def reopen_study(self, original_study_uid: str) -> Optional[str]:
         """Return the study to ``receiving`` so the next send is accepted.
 
@@ -368,6 +441,7 @@ class StudyManager:
                          "rhythm_zip_sha256", "rhythm_zip_size"):
                 setattr(sc, attr, None)
             sc.reopened_at = _now_iso()
+            sc.deleted_at = None
             self._seen_sops.pop(original_study_uid, None)
             self._resend_unsaved.pop(original_study_uid, None)
             # A fresh StudyState arrives with the first re-sent image.

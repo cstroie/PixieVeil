@@ -188,7 +188,7 @@ class TestStudiesApi:
         assert status == 400
 
     def test_unknown_action_is_400(self, tmp_path):
-        status, body = _request(_dashboard(tmp_path), "POST", "/api/studies/1/actions/delete")
+        status, body = _request(_dashboard(tmp_path), "POST", "/api/studies/1/actions/shred")
         assert status == 400
         assert "unknown action" in body["error"]
 

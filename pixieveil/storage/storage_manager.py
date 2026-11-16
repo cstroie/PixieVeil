@@ -462,6 +462,7 @@ class StorageManager:
         total_series = 0
         total_images = 0
         archived_studies = 0
+        deleted_studies = 0
 
         for study_uid, sc in sidecars.items():
             total_series += len(sc.series)
@@ -470,15 +471,20 @@ class StorageManager:
                 total_images += self.study_manager.image_counters.get(key, 0)
             if sc.status == "archived":
                 archived_studies += 1
+            elif sc.status == "deleted":
+                deleted_studies += 1
 
-        self.counters['storage']['studies'] = len(sidecars)
+        # Deleted studies keep a record but hold nothing on disk.
+        self.counters['storage']['studies'] = len(sidecars) - deleted_studies
         self.counters['storage']['series'] = total_series
         self.counters['storage']['images'] = total_images
         self.counters['archive']['studies'] = archived_studies
 
         logger.info(
-            "Counters restored from sidecars: %d studies, %d series, %d images, %d archived",
-            len(sidecars), total_series, total_images, archived_studies,
+            "Counters restored from sidecars: %d studies, %d series, %d images, %d archived, "
+            "%d deleted",
+            len(sidecars) - deleted_studies, total_series, total_images, archived_studies,
+            deleted_studies,
         )
 
     def save_temp_image(self, ds: pydicom.Dataset, image_id: str) -> Path:
@@ -1521,7 +1527,7 @@ class StorageManager:
         "received_at", "last_received_at", "anonymized_study_uid",
         "rhythm_batch", "rhythm_job_id", "rhythm_job_status_url", "rhythm_status",
         "exported_at", "exported_by",
-        "resends_dropped", "last_resend_at", "reopened_at",
+        "resends_dropped", "last_resend_at", "reopened_at", "deleted_at",
     )
 
     @classmethod
@@ -1564,7 +1570,7 @@ class StorageManager:
     # reports all of them (zero when absent) so callers need no defaults.
     _STUDY_STATUSES = (
         "receiving", "complete", "defacing", "defacing_failed", "defacing_disabled",
-        "ready", "archived",
+        "ready", "archived", "deleted",
     )
 
     def get_status_counts_sync(self) -> dict:
@@ -2449,6 +2455,54 @@ class StorageManager:
         finally:
             self._manual_actions_in_progress.discard(study_number)
             self.events.clear_progress(study_number, "dicom", "rhythm", "zip")
+
+    async def delete_study(self, study_number: int) -> dict:
+        """Delete a study's files, export pair, deface scratch and exam
+        record, keeping its ``.state.json`` as status ``deleted`` — so the
+        number is never reused and the patient → RHYTHM correspondence on
+        /lookup still resolves. 'Allow re-receive' brings it back.
+
+        Refused while images are still arriving, while it is being
+        processed, or while a RHYTHM upload is in flight. Nothing on RHYTHM
+        or the anonymization trail is touched."""
+        from pixieveil.processing.study_manager import DELETABLE_STATUSES
+        if study_number in self._manual_actions_in_progress:
+            return {"ok": False, "message": "action already in progress for this study"}
+        self._manual_actions_in_progress.add(study_number)
+        try:
+            sc = self.find_sidecar_by_number(study_number)
+            if sc is None:
+                return {"ok": False, "message": "study not found"}
+            if sc.status not in DELETABLE_STATUSES:
+                return {"ok": False, "message":
+                        f"study is '{sc.status}' — cannot delete it now"}
+            study_uid = sc.original_study_uid
+            state = self.study_manager.study_states.get(study_uid)
+            if sc.status == "receiving" and state is not None and not state.completed:
+                return {"ok": False, "message":
+                        "images are still arriving for this study — try again once "
+                        "it has completed"}
+            if sc.rhythm_job_id and sc.rhythm_status not in self._RHYTHM_TERMINAL:
+                return {"ok": False, "message":
+                        "a RHYTHM upload is in progress for this study"}
+            await asyncio.to_thread(self._delete_study_files_sync, study_number)
+            with self.lock:
+                self.study_size_bytes.pop(study_uid, None)
+                self._recv_counts.pop(study_number, None)
+                self._exam_hints.pop(study_uid, None)
+            self.events.clear_progress(study_number)
+            error = self.study_manager.mark_study_deleted(study_uid)
+            if error is not None:
+                return {"ok": False, "message": error}
+            self.events.publish("exam", n=study_number)
+            return {"ok": True, "status": "deleted",
+                    "message": f"Study {study_number:04d} deleted (its record is kept)"}
+        finally:
+            self._manual_actions_in_progress.discard(study_number)
+
+    def _delete_study_files_sync(self, study_number: int) -> None:
+        self._purge_study_artifacts_sync(study_number)
+        ExamSidecar.path_for(self.base_path, study_number).unlink(missing_ok=True)
 
     async def reopen_study(self, study_number: int) -> dict:
         """'Allow re-receive': delete a finished study's files and return it

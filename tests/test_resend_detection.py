@@ -188,3 +188,106 @@ class TestReopenRoute:
                              headers={"Authorization": f"Bearer {token}"})
         assert status == 403
         assert (d.app["storage_manager"].base_path / "0001").exists()
+
+
+class TestDeleteStudy:
+    def test_delete_removes_files_keeps_record(self, storage_manager):
+        from pixieveil.storage.exam_sidecar import ExamSidecar
+        sm = storage_manager
+        study, series, sop, sc = TestReopen()._ready_study(sm, status="ready")
+        ExamSidecar(1, {"study_number": 1}).save(sm.base_path)
+        result = asyncio.run(sm.delete_study(1))
+        assert result["ok"], result
+        assert not (sm.base_path / "0001").exists()
+        assert not (sm.export_path / "0001.zip").exists()
+        assert not ExamSidecar.path_for(sm.base_path, 1).exists()
+        on_disk = StudySidecar.load(StudySidecar.path_for(sm.base_path, 1))
+        assert on_disk.status == "deleted" and on_disk.deleted_at
+        assert on_disk.original_patient_id == "REAL-PATIENT-42"   # /lookup still works
+        assert sc.series[series].defaced is False
+        assert sm.get_status_counts_sync()["deleted"] == 1
+
+    def test_resend_of_deleted_study_is_dropped_until_reopened(self, storage_manager):
+        sm = storage_manager
+        study, series, sop, _sc = TestReopen()._ready_study(sm, status="ready")
+        asyncio.run(sm.delete_study(1))
+        sm.process_image(_raw(sm, "b", study, series, sop), "b")
+        assert _stored(sm) == []
+        assert sm.get_counter("reception", "finished_images") == 1
+
+    def test_deleted_study_can_be_reopened(self, tmp_path):
+        from pixieveil.storage.storage_manager import StorageManager
+        sm = StorageManager(make_settings(tmp_path))
+        study, series, sop, sc = TestReopen()._ready_study(sm, status="ready")
+        asyncio.run(sm.delete_study(1))
+        result = asyncio.run(sm.reopen_study(1))
+        assert result["ok"] and sc.status == "receiving" and sc.deleted_at is None
+        sm.process_image(_raw(sm, "c", study, series, sop), "c")
+        assert len(_stored(sm)) == 1
+
+    def test_refused_while_processing_or_receiving(self, storage_manager):
+        sm = storage_manager
+        TestReopen()._ready_study(sm, status="defacing")
+        result = asyncio.run(sm.delete_study(1))
+        assert not result["ok"] and "defacing" in result["message"]
+
+        study, series = generate_uid(), generate_uid()
+        sm.process_image(_raw(sm, "x", study, series, generate_uid()), "x")   # study 2, live
+        result = asyncio.run(sm.delete_study(2))
+        assert not result["ok"] and "still arriving" in result["message"]
+
+    def test_stuck_receiving_study_after_restart_can_be_deleted(self, tmp_path):
+        from pixieveil.storage.storage_manager import StorageManager
+        settings = make_settings(tmp_path)
+        sm = StorageManager(settings)
+        sm.process_image(_raw(sm, "a", generate_uid(), generate_uid(), generate_uid()), "a")
+        sm2 = StorageManager(settings)             # restart: no live receive state
+        result = asyncio.run(sm2.delete_study(1))
+        assert result["ok"], result
+
+
+class TestLastStudyNumber:
+    def test_number_never_reused_after_records_removed_by_hand(self, tmp_path):
+        from pixieveil.storage.storage_manager import StorageManager
+        settings = make_settings(tmp_path)
+        sm = StorageManager(settings)
+        for i in range(2):
+            sm.process_image(_raw(sm, f"s{i}", generate_uid(), generate_uid(),
+                                  generate_uid()), f"s{i}")
+        assert (sm.base_path / ".last_study_number").read_text().strip() == "2"
+        # The newest study is removed by hand, record and all.
+        import shutil
+        shutil.rmtree(sm.base_path / "0002")
+        StudySidecar.path_for(sm.base_path, 2).unlink()
+
+        sm2 = StorageManager(settings)
+        sm2.process_image(_raw(sm2, "n", generate_uid(), generate_uid(), generate_uid()), "n")
+        assert (sm2.base_path / "0003").is_dir() and not (sm2.base_path / "0002").exists()
+
+    def test_seeded_from_sidecars_on_upgrade(self, tmp_path):
+        from pixieveil.storage.storage_manager import StorageManager
+        settings = make_settings(tmp_path)
+        sm = StorageManager(settings)
+        sm.process_image(_raw(sm, "a", generate_uid(), generate_uid(), generate_uid()), "a")
+        (sm.base_path / ".last_study_number").unlink()      # pre-upgrade install
+        sm2 = StorageManager(settings)
+        assert (sm2.base_path / ".last_study_number").read_text().strip() == "1"
+        assert sm2.study_manager.study_counter == 1
+
+
+class TestDeleteRoute:
+    def test_non_admin_forbidden(self, tmp_path):
+        d = make_dashboard(make_settings(tmp_path))
+        TestReopen()._ready_study(d.app["storage_manager"], status="ready")
+        d.user_store.add("bob", "bob-password", admin=False)
+        token, _ = d.user_store.issue_token("bob", "tests")
+        status, _ = _request(d, "POST", "/api/studies/1/actions/delete", auth=False,
+                             headers={"Authorization": f"Bearer {token}"})
+        assert status == 403
+        assert (d.app["storage_manager"].base_path / "0001").exists()
+
+    def test_admin_deletes(self, tmp_path):
+        d = make_dashboard(make_settings(tmp_path))
+        TestReopen()._ready_study(d.app["storage_manager"], status="ready")
+        status, body = _request(d, "POST", "/api/studies/1/actions/delete")
+        assert status == 200 and body["status"] == "deleted", body

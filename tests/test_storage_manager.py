@@ -864,7 +864,7 @@ class TestStatusCountsAndExamSummary:
 
         assert counts == {"receiving": 0, "complete": 0, "defacing": 0,
                           "defacing_failed": 0, "defacing_disabled": 0,
-                          "ready": 2, "archived": 1}
+                          "ready": 2, "archived": 1, "deleted": 0}
 
     def test_status_counts_come_from_memory_not_disk(self, storage_manager, monkeypatch):
         from pixieveil.storage.study_sidecar import StudySidecar
