@@ -142,6 +142,26 @@ class TestDraft:
         assert pd.kernel_class_for(kernel)[0] == cls
 
 
+class TestDoseMetadata:
+    def test_ticked_from_study_evidence(self):
+        d = pd.draft_from_exam(_exam(), {}, CH, {"scanners": []})
+        dm = _f(d, "dose_metadata")
+        assert dm["value"] == ["CTDIvol recorded", "DLP recorded", "Patient weight recorded",
+                               "Localizer available", "RDSR available"]
+        assert dm["source"] == "study" and "RDSR" in dm["note"]
+
+    def test_never_claims_what_pixieveil_cannot_derive(self):
+        d = pd.draft_from_exam(_exam(), {}, CH, {"scanners": []})
+        assert not {"SSDE possible", "Water-equivalent diameter available",
+                    "Patient height recorded"} & set(_f(d, "dose_metadata")["value"])
+
+    def test_without_rdsr_or_weight(self):
+        exam = _exam(rdsr=False, weight=None)
+        exam["series"][1]["ctdi_vol_mgy"] = 20.0
+        d = pd.draft_from_exam(exam, {}, CH, {"scanners": []})
+        assert _f(d, "dose_metadata")["value"] == ["CTDIvol recorded", "Localizer available"]
+
+
 def _submission(**over):
     d = pd.draft_from_exam(_exam(), {}, CH, {"scanners": []}, 54)
     fields = {k: {"value": v.get("value"), "other": v.get("other", "")}
@@ -157,6 +177,22 @@ def _submission(**over):
 
 
 class TestValidate:
+    def test_dose_metadata_sent_in_option_order(self):
+        _d, rhythm = _submission(dose_metadata=["RDSR available", "CTDIvol recorded"])
+        payload, errors = pd.validate_submission(rhythm, CH)
+        assert "dose_metadata" not in errors
+        assert payload["dose_metadata"] == ["CTDIvol recorded", "RDSR available"]
+
+    def test_dose_metadata_rejects_unknown(self):
+        _d, rhythm = _submission(dose_metadata=["ctdi"])
+        _p, errors = pd.validate_submission(rhythm, CH)
+        assert "ctdi" in errors["dose_metadata"]
+
+    def test_dose_metadata_defaults_to_empty(self):
+        _d, rhythm = _submission()
+        payload, _e = pd.validate_submission(rhythm, CH)
+        assert payload["dose_metadata"] == []
+
     def test_valid_payload(self):
         _d, rhythm = _submission()
         payload, errors = pd.validate_submission(rhythm, CH)

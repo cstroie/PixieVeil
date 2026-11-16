@@ -98,6 +98,7 @@
                 note: res.profile_draft.note || '',
             } : null,
             fields: {}, mas: Object.assign({}, d.rhythm.fields.mas_inputs.value || {}),
+            dose: new Set((d.rhythm.fields.dose_metadata || {}).value || []),
             protocol_name: d.rhythm.protocol_name || '',
             region: d.rhythm.anatomical_region || '', indication: d.rhythm.clinical_indication || '',
             notes: d.rhythm.notes || '',
@@ -147,6 +148,21 @@
                     <input class="input" data-mas="${esc(l)}" value="${esc(form.mas[l] || '')}">
                     <span class="err" hidden></span></div>`).join('')}</div>
                 ${m.note && labels.some(l => form.mas[l]) ? `<p class="hint">${esc(m.note)}</p>` : ''}`;
+        }
+        function doseHtml() {
+            // Multi-select; pre-ticked only where the study proves it.
+            const list = ch.options('dose_metadata').filter(o => o.value !== OTHER);
+            if (!list.length) return '';
+            const dm = d.rhythm.fields.dose_metadata || {};
+            const fromStudy = new Set(dm.value || []);
+            return `<div class="field" data-field="rhythm.dose_metadata" style="margin-top:10px">
+                <span class="label"><span>Dose-relevant metadata available</span>${fromStudy.size ? badge('study') : ''}</span>
+                <div style="display:flex;flex-wrap:wrap;gap:4px 16px">${list.map(o => `
+                    <label style="display:flex;gap:6px;align-items:center;font-size:13px">
+                        <input type="checkbox" data-dose="${esc(o.value)}" ${form.dose.has(o.value) ? 'checked' : ''}>
+                        ${esc(o.display)}</label>`).join('')}</div>
+                ${dm.note ? `<span class="hint">${esc(dm.note)}</span>` : ''}
+                <span class="err" hidden></span></div>`;
         }
         function profileHtml() {
             if (form.scanner !== NEW || !form.newProfile) return '';
@@ -251,6 +267,7 @@
                             </div>
                             ${profileHtml()}
                             ${masHtml()}
+                            ${doseHtml()}
                             <div class="field" style="margin-top:10px"><span class="label">Notes</span>
                                 <textarea class="input" data-r="notes">${esc(form.notes)}</textarea></div>
                             ${existingHtml()}
@@ -285,6 +302,9 @@
             });
             dlg.querySelectorAll('[data-other]').forEach(el => { form.fields[el.dataset.other].other = el.value.trim(); });
             dlg.querySelectorAll('[data-mas]').forEach(el => { form.mas[el.dataset.mas] = el.value.trim(); });
+            if (dlg.querySelector('[data-dose]')) {
+                form.dose = new Set([...dlg.querySelectorAll('[data-dose]:checked')].map(el => el.dataset.dose));
+            }
             if (form.newProfile) {
                 const P = form.newProfile;
                 dlg.querySelectorAll('[data-p]').forEach(el => {
@@ -328,6 +348,7 @@
                         year_of_installation: { value: P.year_of_installation.value, other: P.year_of_installation.other } };
                 }
                 body.rhythm = { scanner: isNew ? '' : form.scanner, protocol_type: form.ptype, fields, mas_inputs: form.mas,
+                    dose_metadata: [...form.dose],
                     protocol_name: form.protocol_name, anatomical_region: form.local.region || form.region,
                     clinical_indication: form.local.clinical_indication || form.indication, notes: form.notes,
                     manufacturer: d.rhythm.manufacturer };

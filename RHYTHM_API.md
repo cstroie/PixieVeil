@@ -167,7 +167,9 @@ Other upload endpoints, not used yet:
 `anatomical_region`, `clinical_indication`, `scan_type`, `contrast`,
 `number_of_phases`, `auto_kvp_selection`, `kvp`, `auto_ma_modulation`, `mas_inputs`
 (`{label: value}`), `pitch`, `rotation_time`, `slice_thickness`, `scan_fov`,
-`kernel_class`, `reconstruction_algorithm`, `protocol_intent`, `notes` → `201` with
+`kernel_class`, `reconstruction_algorithm`, `protocol_intent`, `dose_metadata` (a list
+of `dose_metadata` option *values*, e.g. `["CTDIvol recorded", "RDSR available"]` —
+RHYTHM's protocol page maps them back to display names), `notes` → `201` with
 the record (`id`). `site_code` and `created_by` come from the token's user. Caveats
 in the vendored code:
 - the API does **not** check values against the option lists, and does **not**

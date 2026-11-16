@@ -215,6 +215,32 @@ def examination_group_for(choices: Choices, ptype: str | None,
     return None
 
 
+def dose_metadata_for(exam: dict, choices: Choices) -> tuple[list[str], str]:
+    """RHYTHM ``dose_metadata`` options this study demonstrably has, in
+    RHYTHM's option order, plus a note saying where each came from. Only
+    what the exam record proves — SSDE / water-equivalent diameter /
+    patient height are never claimed (PixieVeil doesn't derive them)."""
+    rdsr = exam.get("rdsr") or {}
+    acqs = rdsr.get("acquisitions") or []
+    series = exam.get("series") or []
+    weight = _num((exam.get("patient") or {}).get("weight_kg"))
+    evidence = {
+        "CTDIvol recorded": (
+            "RDSR" if any(a.get("mean_ctdivol_mgy") for a in acqs)
+            else "image headers" if any(x.get("ctdi_vol_mgy") for x in series) else None),
+        "DLP recorded": (
+            "RDSR" if rdsr.get("total_dlp_mgy_cm") or any(a.get("dlp_mgy_cm") for a in acqs)
+            else None),
+        "RDSR available": "dose report" if acqs else None,
+        "Patient weight recorded": f"{_fmt(weight)} kg" if weight is not None else None,
+        "Localizer available": (
+            "topogram series" if any(x.get("is_topogram") for x in series) else None),
+    }
+    values = [v for v in choices.values("dose_metadata") if evidence.get(v)]
+    note = "; ".join(f"{v}: {evidence[v]}" for v in values)
+    return values, note
+
+
 def split_kernel(kernel: Any) -> tuple[str, str | None]:
     """(kernel, iterative strength) from a ConvolutionKernel value, which
     may be multi-valued — Siemens writes ``['Br40f', '3']`` (kernel + ADMIRE
@@ -445,6 +471,10 @@ def draft_from_exam(exam: dict, headers: dict, choices: Choices, catalog_doc: di
                                 "replace with the console's reference value")
                        if any(mas.values()) else ""}
 
+    dose_meta, dose_note = dose_metadata_for(exam, choices)
+    f["dose_metadata"] = {"value": dose_meta, "source": STUDY if dose_meta else FILL,
+                          "note": dose_note}
+
     ctdi = [a.get("mean_ctdivol_mgy") for a in acqs if a.get("mean_ctdivol_mgy")]
     dlp = (exam.get("rdsr") or {}).get("total_dlp_mgy_cm")
     note_bits = [f"Drafted by PixieVeil from study {study_number:04d}" if study_number
@@ -473,7 +503,7 @@ def validate_submission(rhythm: dict, choices: Choices) -> tuple[dict, dict[str,
 
     ``rhythm`` = ``{"scanner": profile id, "protocol_type", "fields": {key:
     {"value", "other"?}}, "mas_inputs": {...}, "protocol_name",
-    "anatomical_region", "clinical_indication", "notes"}``. Returns
+    "anatomical_region", "clinical_indication", "notes", "dose_metadata": [...]}``. Returns
     (payload, errors by field). "Other: Please Specify" needs its text, which
     is sent in place of the option (as RHYTHM's GUI does).
     """
@@ -517,6 +547,19 @@ def validate_submission(rhythm: dict, choices: Choices) -> tuple[dict, dict[str,
                 continue
             value = other
         payload[key] = value
+    # Multi-select, sent as a list of option values (RHYTHM doesn't check
+    # them over the API, so we do). Kept in RHYTHM's option order.
+    dose_raw = rhythm.get("dose_metadata") or []
+    dose_allowed = [v for v in choices.values("dose_metadata") if v != OTHER]
+    if not isinstance(dose_raw, list):
+        errors["dose_metadata"] = "Must be a list"
+    else:
+        wanted = {str(v).strip() for v in dose_raw if str(v).strip()}
+        bad = sorted(wanted - set(dose_allowed)) if dose_allowed else []
+        if bad:
+            errors["dose_metadata"] = f"Not RHYTHM options: {', '.join(bad)}"
+        payload["dose_metadata"] = ([v for v in dose_allowed if v in wanted]
+                                    if dose_allowed else sorted(wanted))
     labels = choices.ma_inputs.get(str((fields.get("auto_ma_modulation") or {})
                                        .get("value") or ""), [])
     mas = rhythm.get("mas_inputs") or {}
