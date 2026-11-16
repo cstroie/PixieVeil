@@ -288,18 +288,18 @@
             return `<span class="pill ${tone}" title="RHYTHM ingest job state">RHYTHM ${esc(st)}</span>`;
         }
 
-        // Live progress (SSE "progress" events) — receive has no total.
-        const PROG_LABEL = { receive: 'Receiving', deface: 'Defacing', dicom: 'Sending', rhythm: 'RHYTHM', zip: 'Zipping' };
+        // Live progress — SSE "progress" events, seeded from /api/studies so a
+        // step already running shows at once. Text: "Defacing 2/9 · S0003 inference · 4m".
         function progressHtml(n) {
             const p = state.progress[n];
             if (!p) return '';
-            const name = PROG_LABEL[p.kind] || p.kind;
-            if (!p.total) return `<span class="live-prog">${esc(name)} ${fmtNum(p.done)} images</span>`;
-            const pct = Math.min(100, Math.round((p.done / p.total) * 100));
-            const txt = p.kind === 'rhythm' ? `${pct}%` : `${p.done}/${p.total}`;
-            return `<span class="live-prog" title="${esc(name)}${p.label ? ' · series ' + esc(p.label) : ''}">
-                <span class="bar"><i style="width:${pct}%"></i></span>${esc(name)} ${txt}</span>`;
+            const txt = PV.progressText(p);
+            if (!p.total) return `<span class="live-prog">${esc(txt)}</span>`;
+            return `<span class="live-prog" title="${esc(txt)}">
+                <span class="bar"><i style="width:${PV.progressPct(p)}%"></i></span>${esc(txt)}</span>`;
         }
+        // Keep the elapsed time ("· 4m") current between events.
+        setInterval(() => Object.keys(state.progress).forEach(paintProgress), 30000);
         function paintProgress(n) {
             document.querySelectorAll(`[data-prog="${n}"]`).forEach(el => { el.innerHTML = progressHtml(n); });
         }
@@ -376,6 +376,12 @@
                 if (!state.live) PV.setConn(true);  // SSE owns the indicator when present
                 state.studies = data.studies || [];
                 state.caps = data.capabilities || state.caps;
+                // The server's snapshot is authoritative: it also drops a
+                // step whose final event this page missed.
+                state.progress = {};
+                for (const s of state.studies) {
+                    if (s.progress) state.progress[s.study_number] = PV.stampProgress(s.progress);
+                }
                 if (state.filter === null) {
                     const fromUrl = new URL(location.href).searchParams.get('filter');
                     state.filter = FILTERS.some(f => f.key === fromUrl) ? fromUrl
@@ -1178,7 +1184,12 @@
             state.live = PV.live({
                 study: d => { delete state.progress[d.n]; paintProgress(d.n); changed(d); },
                 exam: changed,
-                progress: d => { state.progress[d.n] = d; paintProgress(d.n); },
+                progress: d => {
+                    // the final event (done == total) ends the step
+                    if (d.total && d.done >= d.total) delete state.progress[d.n];
+                    else state.progress[d.n] = PV.stampProgress(d);
+                    paintProgress(d.n);
+                },
                 resync: () => { state.progress = {}; touched.add('*'); if (state.sel != null) touched.add(state.sel); syncFromServer(); },
                 state: ok => { poller.slow(ok); PV.setConn(ok, ok ? 'Live' : 'Reconnecting…'); },
             });

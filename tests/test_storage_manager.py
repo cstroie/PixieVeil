@@ -902,7 +902,14 @@ class RecordingBus:
         self.events.append((type_, data))
 
     def progress(self, n, kind, done, total=None, label=None, *, force=False):
-        self.events.append(("progress", {"n": n, "kind": kind, "done": done, "total": total}))
+        self.events.append(("progress", {"n": n, "kind": kind, "done": done, "total": total,
+                                         "label": label}))
+
+    def clear_progress(self, n, *kinds):
+        self.events.append(("clear_progress", {"n": n, "kinds": kinds}))
+
+    def progress_snapshot(self):
+        return {}
 
     def counters(self):
         pass
@@ -937,6 +944,36 @@ class TestLiveEvents:
 
         prog = [(p["done"], p["total"]) for p in bus.of("progress") if p["kind"] == "deface"]
         assert prog == [(0, 2), (1, 2), (2, 2)]
+
+    def test_defacing_progress_names_series_and_stage(self, storage_manager, monkeypatch):
+        bus = storage_manager.events = RecordingBus()
+        sc = register_study(storage_manager, 1, "complete")
+        for i in (1, 2):
+            sc.add_series(f"series-uid-{i}", i, f"anon-{i}")
+            write_minimal_dicom(storage_manager.base_path / "0001" / f"{i:04d}" / "img.dcm",
+                                SeriesDescription="Head routine")
+        storage_manager.study_manager._base_path = storage_manager.base_path
+        storage_manager.defacer.enabled = True
+
+        def fake_deface(series_dir, data_dir=None, on_stage=None):
+            on_stage("inference")
+            return True
+        monkeypatch.setattr(storage_manager.defacer, "deface_series", fake_deface)
+
+        storage_manager._deface_study("study-uid-1", 1, storage_manager.base_path / "0001")
+
+        labels = [(p["done"], p["label"]) for p in bus.of("progress") if p["kind"] == "deface"]
+        assert labels == [(0, "S0001"), (0, "S0001 inference"),
+                          (1, "S0002"), (1, "S0002 inference"), (2, None)]
+
+    def test_study_list_carries_in_flight_progress(self, storage_manager):
+        register_study(storage_manager, 1, "defacing")
+        register_study(storage_manager, 2, "ready")
+        storage_manager.events.progress(1, "deface", 1, 4, label="S0002 inference", force=True)
+        by_n = {s["study_number"]: s for s in storage_manager.list_studies_summary_sync()}
+        assert by_n[1]["progress"]["label"] == "S0002 inference"
+        assert by_n[1]["progress"]["since"] <= by_n[1]["progress"]["at"]
+        assert by_n[2]["progress"] is None
 
 
 class TestCompletionLoop:

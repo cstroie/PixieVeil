@@ -878,6 +878,7 @@ class StorageManager:
                 return
 
             logger.info("Processing completed study: %04d (%s)", study_number, study_uid)
+            self.events.clear_progress(study_number, "receive")
             with self.lock:
                 self._recv_counts.pop(study_number, None)
 
@@ -917,6 +918,9 @@ class StorageManager:
                 finally:
                     with self.lock:
                         self._active_defacing -= 1
+                    # Normally gone already (final event); not after an
+                    # error or a shutdown mid-series.
+                    self.events.clear_progress(study_number, "deface")
             elif not already_processed:
                 # Defacing is off, but still classify series so a head scan
                 # is flagged (is_head=True, defaced=False) and the study is
@@ -1091,7 +1095,7 @@ class StorageManager:
         for idx, series_dir in enumerate(series_dirs):
             if not classify_only:
                 self.events.progress(study_number, "deface", idx, len(series_dirs),
-                                     label=series_dir.name, force=True)
+                                     label=f"S{series_dir.name}", force=True)
 
             series_number = int(series_dir.name) if series_dir.name.isdigit() else None
             orig_series_uid = (
@@ -1124,7 +1128,11 @@ class StorageManager:
                     untracked_head = untracked_head or not orig_series_uid
                     continue
                 logger.info("Defacing series %s in study %04d", series_dir.name, study_number)
-                ok = self.defacer.deface_series(series_dir, data_dir=self.base_path)
+                def on_stage(stage: str, idx: int = idx, name: str = series_dir.name) -> None:
+                    self.events.progress(study_number, "deface", idx, len(series_dirs),
+                                         label=f"S{name} {stage}", force=True)
+                ok = self.defacer.deface_series(series_dir, data_dir=self.base_path,
+                                                on_stage=on_stage)
                 if ok:
                     self.inc_counter('defacing', 'series_defaced')
                     if orig_series_uid:
@@ -1574,9 +1582,13 @@ class StorageManager:
         fields are copied out, so the live objects are never shared) plus its
         exam sidecar, read from disk, if any."""
         results = []
+        progress = self.events.progress_snapshot()
         for sc in sorted(self.study_manager.all_sidecars(), key=lambda s: s.study_number):
             _dir, location = self.resolve_study_dir(sc.study_number)
             entry = self._whitelist_sidecar(sc, location)
+            # In-flight step (deface / send / ...), so a page opened mid-step
+            # shows it before the next SSE progress event arrives.
+            entry["progress"] = progress.get(sc.study_number)
 
             exam_path = ExamSidecar.path_for(self.base_path, sc.study_number)
             # A corrupt sidecar must not render identically to "not yet
@@ -1741,6 +1753,7 @@ class StorageManager:
             return {"ok": False, "message": "DICOM send failed"}
         finally:
             self._manual_actions_in_progress.discard(study_number)
+            self.events.clear_progress(study_number, "dicom", "rhythm", "zip")
             with self.lock:
                 self._active_exporting -= 1
 
@@ -1842,6 +1855,7 @@ class StorageManager:
             return {"ok": False, "message": "HTTP upload failed"}
         finally:
             self._manual_actions_in_progress.discard(study_number)
+            self.events.clear_progress(study_number, "dicom", "rhythm", "zip")
             with self.lock:
                 self._active_exporting -= 1
 
@@ -2337,6 +2351,7 @@ class StorageManager:
                     "error_report": result.error_report}
         finally:
             self._manual_actions_in_progress.discard(study_number)
+            self.events.clear_progress(study_number, "dicom", "rhythm", "zip")
             with self.lock:
                 self._active_exporting -= 1
 
@@ -2416,6 +2431,7 @@ class StorageManager:
             return result
         finally:
             self._manual_actions_in_progress.discard(study_number)
+            self.events.clear_progress(study_number, "dicom", "rhythm", "zip")
 
     async def reopen_study(self, study_number: int) -> dict:
         """'Allow re-receive': delete a finished study's files and return it
@@ -2455,6 +2471,7 @@ class StorageManager:
                     "message": "Re-opened — send the study again to receive a new copy"}
         finally:
             self._manual_actions_in_progress.discard(study_number)
+            self.events.clear_progress(study_number, "dicom", "rhythm", "zip")
 
     _RHYTHM_TERMINAL = frozenset({"COMPLETE", "PARTIAL", "FAILED"})
 
@@ -2678,6 +2695,7 @@ class StorageManager:
             return {"ok": True, "data": merged}
         finally:
             self._manual_actions_in_progress.discard(study_number)
+            self.events.clear_progress(study_number, "dicom", "rhythm", "zip")
 
     def _save_exam_sync(self, study_number: int, manual_fields: dict,
                         actor: Optional[str] = None) -> Optional[Tuple[dict, List[Path]]]:
@@ -2819,3 +2837,4 @@ class StorageManager:
             return {"ok": True, "data": data}
         finally:
             self._manual_actions_in_progress.discard(study_number)
+            self.events.clear_progress(study_number, "dicom", "rhythm", "zip")

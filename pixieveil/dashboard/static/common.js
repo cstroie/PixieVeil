@@ -83,6 +83,40 @@ const PV = (() => {
         return `${m}m`;
     }
 
+    // ------------------------------------------------------------ live progress
+    // One in-flight step of a study, from an SSE "progress" event or the
+    // "progress" snapshot in /api/studies and /stats:
+    // {n, kind, done, total, label?, since, at} — since/at are server epoch
+    // seconds. stampProgress() records the clock skew at receipt, so the
+    // elapsed time stays right on a client whose clock differs.
+    const PROG_LABEL = { receive: 'Receiving', deface: 'Defacing', dicom: 'Sending',
+        rhythm: 'RHYTHM', zip: 'Zipping' };
+    function stampProgress(p) {
+        if (p && p.at) p._skew = Date.now() / 1000 - p.at;
+        return p;
+    }
+    function progressElapsed(p) {
+        if (!p || !p.since) return 0;
+        return Date.now() / 1000 - (p._skew || 0) - p.since;
+    }
+    // Condensed text, e.g. "Defacing 2/9 · S0003 inference · 4m".
+    function progressText(p) {
+        if (!p) return '';
+        const name = PROG_LABEL[p.kind] || p.kind;
+        if (!p.total) return `${name} ${fmtInt(p.done)} images`;
+        const parts = [p.kind === 'rhythm' ? `${name} ${progressPct(p)}%`
+            // deface: done = series finished, so the one running is done+1
+            : p.kind === 'deface' ? `${name} ${Math.min(p.done + 1, p.total)}/${p.total}`
+            : `${name} ${p.done}/${p.total}`];
+        if (p.label) parts.push(p.label);
+        const el = progressElapsed(p);
+        if (el >= 60) parts.push(fmtDuration(el));
+        return parts.join(' · ');
+    }
+    function progressPct(p) {
+        return p && p.total ? Math.min(100, Math.round((p.done / p.total) * 100)) : 0;
+    }
+
     // ------------------------------------------------------------ study vocabulary
     // Sidecar status → display label + pill tone.
     const STATUS = {
@@ -428,6 +462,7 @@ const PV = (() => {
 
     return {
         esc, pad4, fmtInt, fmtNum, fmtDate, fmtAgo, fmtDuration,
+        stampProgress, progressText, progressPct,
         icon, toast, modal, api, poll, live, debounce, setConn,
         get me() { return me; },
         STATUS, statusPill, FIELD_LABELS, missingLabels,

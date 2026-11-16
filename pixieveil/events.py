@@ -51,6 +51,11 @@ class EventBus:
         self._last_id = 0
         self._throttle_lock = threading.Lock()
         self._last_sent: dict[tuple, float] = {}
+        # Latest progress per (study, kind), kept even while unbound or
+        # throttled, so a page opened mid-step can show where things stand
+        # (see progress_snapshot). Dropped on the final step / clear_progress.
+        self._progress_lock = threading.Lock()
+        self._progress_now: dict[tuple[int, str], dict[str, Any]] = {}
 
     # -- lifecycle -------------------------------------------------------
     def bind(self, loop: asyncio.AbstractEventLoop) -> None:
@@ -85,14 +90,47 @@ class EventBus:
     def progress(self, n: int, kind: str, done: int, total: int | None = None,
                  label: str | None = None, *, force: bool = False) -> None:
         """Coalesced progress event: at most one per (study, kind) every
-        PROGRESS_INTERVAL_S, except the final one (done == total) or *force*."""
+        PROGRESS_INTERVAL_S, except the final one (done == total) or *force*.
+
+        Every event carries ``at`` (server time) and ``since`` — when the
+        current step (``done`` + ``label``) began — so a page can show how
+        long it has been running."""
+        now = time.time()
         final = total is not None and done >= total
+        key = (n, kind)
+        with self._progress_lock:
+            prev = self._progress_now.get(key)
+            same_step = prev is not None and prev["done"] == done and prev.get("label") == label
+            data: dict[str, Any] = {"n": n, "kind": kind, "done": done, "total": total,
+                                    "at": now, "since": prev["since"] if same_step else now}
+            if label is not None:
+                data["label"] = label
+            if final:
+                self._progress_now.pop(key, None)
+            else:
+                self._progress_now[key] = data
         if not (final or force) and not self._allow(("progress", n, kind), PROGRESS_INTERVAL_S):
             return
-        data: dict[str, Any] = {"n": n, "kind": kind, "done": done, "total": total}
-        if label is not None:
-            data["label"] = label
         self.publish("progress", **data)
+
+    def clear_progress(self, n: int, *kinds: str) -> None:
+        """Forget in-flight progress for study *n* (all kinds if none given)
+        — for a step that ended without its final event (error, cancel)."""
+        with self._progress_lock:
+            for key in [k for k in self._progress_now
+                        if k[0] == n and (not kinds or k[1] in kinds)]:
+                del self._progress_now[key]
+
+    def progress_snapshot(self) -> dict[int, dict[str, Any]]:
+        """Latest in-flight progress per study (the most recently updated
+        kind wins), each stamped with the current server time as ``at``."""
+        now = time.time()
+        out: dict[int, dict[str, Any]] = {}
+        with self._progress_lock:
+            for (n, _kind), data in self._progress_now.items():
+                if n not in out or data["at"] > out[n]["at"]:
+                    out[n] = data
+        return {n: {**d, "at": now} for n, d in out.items()}
 
     def counters(self) -> None:
         """Throttled 'counters changed' hint for the status page."""

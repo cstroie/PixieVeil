@@ -143,3 +143,42 @@ class TestThrottling:
                 bus.counters()
             return [e.type for e in _drain(sub)]
         assert asyncio.run(go()) == ["counters"]
+
+
+class TestProgressSnapshot:
+    """The bus keeps the latest in-flight step per study so a page opened
+    mid-step (e.g. 10 minutes into CPU inference) can show it at once."""
+
+    def test_snapshot_kept_while_unbound_and_dropped_on_final(self):
+        bus = EventBus()                       # never bound: no SSE at all
+        bus.progress(6, "deface", 1, 5, label="S0002 inference", force=True)
+        snap = bus.progress_snapshot()
+        assert snap[6]["done"] == 1 and snap[6]["label"] == "S0002 inference"
+        bus.progress(6, "deface", 5, 5)
+        assert bus.progress_snapshot() == {}
+
+    def test_since_kept_within_a_step_reset_on_next(self, monkeypatch):
+        bus = EventBus()                       # its constructor reads the clock too
+        clock = iter([100.0, 160.0, 220.0, 300.0])
+        monkeypatch.setattr(ev_mod.time, "time", lambda: next(clock))
+        bus.progress(6, "deface", 0, 3, label="S0001 inference", force=True)   # t=100
+        bus.progress(6, "deface", 0, 3, label="S0001 inference", force=True)   # t=160
+        assert bus._progress_now[(6, "deface")]["since"] == 100.0
+        bus.progress(6, "deface", 0, 3, label="S0001 writing", force=True)     # t=220
+        assert bus._progress_now[(6, "deface")]["since"] == 220.0
+
+    def test_throttled_updates_still_recorded(self):
+        bus = EventBus()
+        for i in range(10):
+            bus.progress(7, "dicom", i, 100)
+        assert bus.progress_snapshot()[7]["done"] == 9
+
+    def test_clear_progress(self):
+        bus = EventBus()
+        bus.progress(6, "deface", 0, 3, force=True)
+        bus.progress(6, "dicom", 1, 9)
+        bus.progress(7, "deface", 0, 3, force=True)
+        bus.clear_progress(6, "deface")
+        assert bus.progress_snapshot()[6]["kind"] == "dicom"
+        bus.clear_progress(6)
+        assert set(bus.progress_snapshot()) == {7}

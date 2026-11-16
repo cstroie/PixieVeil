@@ -553,3 +553,26 @@ class TestSeriesGeometry:
         with pytest.raises(ValueError, match="partial write-back"):
             d.nifti_to_dicom(str(nii), str(tmpl), str(out))
         assert not list(out.glob("*.dcm"))
+
+
+class TestDefaceStages:
+    def test_stages_reported_in_order(self, tmp_path):
+        d = make_defacer(tmp_path)
+        series_dir = tmp_path / "0001" / "0001"
+        series_dir.mkdir(parents=True)
+        (series_dir / "img1.dcm").write_bytes(b"ORIGINAL")
+        TestDefaceSeriesOrchestration()._stub_success(d)
+        stages = []
+        assert d.deface_series(series_dir, on_stage=stages.append) is True
+        assert stages == ["checking", "converting", "inference", "writing"]
+
+    def test_failing_callback_does_not_break_defacing(self, tmp_path):
+        d = make_defacer(tmp_path)
+        series_dir = tmp_path / "0001" / "0001"
+        series_dir.mkdir(parents=True)
+        (series_dir / "img1.dcm").write_bytes(b"ORIGINAL")
+        TestDefaceSeriesOrchestration()._stub_success(d)
+
+        def boom(stage):
+            raise RuntimeError("ui gone")
+        assert d.deface_series(series_dir, on_stage=boom) is True

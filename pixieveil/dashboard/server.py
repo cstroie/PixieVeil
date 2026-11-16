@@ -1371,6 +1371,9 @@ class Dashboard:
             },
             "pipeline": {
                 "active": sm.get_pipeline_status(),
+                # In-flight steps per study (deface series/stage, send %, ...)
+                "progress": sorted(sm.events.progress_snapshot().values(),
+                                   key=lambda p: p["n"]),
                 "status_counts": status_counts,
             },
             "kpis": kpis,

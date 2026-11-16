@@ -9,7 +9,6 @@
         .page-head { display: flex; align-items: baseline; gap: 12px 20px; flex-wrap: wrap; }
         .page-head h1 { font-size: 22px; }
         .page-head .meta { display: flex; gap: 6px 18px; flex-wrap: wrap; color: var(--text-dim); font-size: 13px; }
-        .page-head .meta .on { color: var(--ok); font-weight: 600; }
         .page-head .meta .off { color: var(--text-faint); }
         h2.section { font-size: 14px; font-weight: 650; margin-bottom: 10px; }
 
@@ -217,8 +216,18 @@
                 || '<span class="none">None</span>';
         }
 
+        // "0006 · Defacing 2/9 · S0003 inference · 4m" for the first study
+        // with an in-flight step of one of *kinds*, "+N more" for the rest.
+        function nowText(progress, kinds, fallback) {
+            const mine = progress.filter(p => kinds.includes(p.kind));
+            if (!mine.length) return fallback;
+            const more = mine.length > 1 ? ` (+${mine.length - 1} more)` : '';
+            return `${pad4(mine[0].n)} · ${PV.progressText(mine[0])}${more}`;
+        }
+
         function renderPipeline(data) {
             const a = data.pipeline.active || {};
+            const prog = (data.pipeline.progress || []).map(PV.stampProgress);
             const sc = data.pipeline.status_counts || {};
             const caps = data.capabilities || {};
             const cols = studies ? { 'st-receive': [], 'st-process': [], 'st-ready': [], 'st-exported': [] } : null;
@@ -227,10 +236,12 @@
 
             const blocked = (sc.defacing_failed || 0) + (sc.defacing_disabled || 0);
             renderStage('st-receive', col('st-receive'),
-                { count: sc.receiving, active: a.receiving, now: 'receiving images' });
+                { count: sc.receiving, active: a.receiving,
+                  now: nowText(prog, ['receive'], 'receiving images') });
             renderStage('st-process', col('st-process'), {
                 count: (sc.complete || 0) + (sc.defacing || 0) + blocked,
-                active: a.waiting || a.defacing, now: a.defacing ? 'defacing' : 'extracting',
+                active: a.waiting || a.defacing,
+                now: a.defacing ? nowText(prog, ['deface'], 'defacing') : 'extracting',
                 note: blocked
                     ? `<a href="/studies?filter=failed">${blocked} blocked on defacing</a>`
                     : (data.defacing_enabled ? 'Exam data extracted, head scans defaced'
@@ -239,12 +250,12 @@
             renderStage('st-ready', col('st-ready'), { count: sc.ready });
             const targets = [caps.dicom && 'DICOM', caps.http && 'HTTP', caps.rhythm && 'RHYTHM'].filter(Boolean);
             renderStage('st-exported', col('st-exported'), {
-                count: sc.archived, active: a.exporting, now: 'sending',
+                count: sc.archived, active: a.exporting,
+                now: nowText(prog, ['dicom', 'rhythm', 'zip'], 'sending'),
                 note: targets.length ? `Targets: ${esc(targets.join(', '))}` : 'No export target set',
             });
 
             document.getElementById('meta').innerHTML = [
-                `<span class="on">Running</span>`,
                 `<span>Up ${esc(PV.fmtDuration(data.uptime_s))}</span>`,
                 data.defacing_enabled ? '<span>Defacing on</span>' : '<span class="off">Defacing off</span>',
             ].join('');
@@ -351,6 +362,7 @@
             study: () => liveRefresh(true),
             exam: () => liveRefresh(true),
             counters: () => liveRefresh(false),
+            progress: () => liveRefresh(false),
             resync: () => liveRefresh(true),
             state: ok => { poller.slow(ok); PV.setConn(ok, ok ? 'Live' : 'Reconnecting…'); if (ok) liveRefresh(true); },
         });

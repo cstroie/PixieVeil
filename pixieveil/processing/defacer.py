@@ -16,6 +16,7 @@ import shutil
 import tempfile
 import threading
 from pathlib import Path
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 import pydicom
@@ -305,7 +306,8 @@ class Defacer:
     # ------------------------------------------------------------------
 
     def deface_series(self, series_dir: Path,
-                      data_dir: Path | None = None) -> bool:
+                      data_dir: Path | None = None,
+                      on_stage: Callable[[str], None] | None = None) -> bool:
         """
         Run the full defacing pipeline for one series directory.
 
@@ -321,6 +323,9 @@ class Defacer:
 
         Args:
             series_dir: Path to the series directory (base_path/NNNN/MMMM/).
+            on_stage: Optional callback, told each stage as it starts —
+                ``checking`` / ``converting`` / ``inference`` / ``writing`` —
+                for progress display. Must not raise.
 
         Returns:
             True on success, False if defacing was skipped or failed.
@@ -342,15 +347,24 @@ class Defacer:
 
         self._check_cancelled()
 
+        def stage(name: str) -> None:
+            if on_stage is not None:
+                try:
+                    on_stage(name)
+                except Exception:
+                    logger.debug("on_stage callback failed", exc_info=True)
+
         # Step 0: the volume can only be mapped back slice-for-slice if every
         # file is a distinct slice of one series. Checked before inference,
         # which can take many minutes on CPU.
+        stage("checking")
         problem = self.series_geometry_problem(series_dir)
         if problem is not None:
             logger.error("Cannot deface %s: %s", series_dir, problem)
             return False
 
         # Step 1: DICOM → NIfTI
+        stage("converting")
         try:
             nifti_path = self.dicom_to_nifti(str(series_dir), str(nifti_in_dir))
         except Exception as e:
@@ -360,6 +374,7 @@ class Defacer:
         logger.info("NIfTI files kept at %s for manual inspection", nifti_in_dir)
 
         # Step 2: external defacing tool (or nnUNet inference)
+        stage("inference")
         try:
             defaced_nifti = self._run_defacing_tool(
                 Path(nifti_path), nifti_in_dir, nifti_out_dir, data_dir=data_dir
@@ -371,6 +386,7 @@ class Defacer:
             return False
 
         # Step 3: defaced NIfTI → DICOM (using original series as template)
+        stage("writing")
         try:
             self.nifti_to_dicom(
                 str(defaced_nifti),
