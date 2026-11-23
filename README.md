@@ -52,6 +52,7 @@ All services run concurrently in a single asyncio event loop. Blocking I/O (ZIP 
 - aiohttp >= 3.0.0
 - pyyaml, pydantic
 - **Defacing only:** torch 2.4+, nnunetv2, gdown (installed automatically by `install.py`)
+- Or just Docker + Compose, which bundles all of the above (see [Docker](#docker))
 
 ## Installation
 
@@ -62,6 +63,15 @@ cd PixieVeil
 ```
 
 `./install` builds a `.python` virtualenv (Python 3.12), installs PixieVeil into it, and runs `install.py`, which interactively configures defacing (disabled / CPU / CUDA), installs the required packages, downloads the nnUNet model, and verifies the environment. See [INSTALL.md](INSTALL.md) for prerequisites, systemd/OpenRC service setup, and CLI flags, or [QUICKSTART.md](QUICKSTART.md) for a shorter walkthrough.
+
+### Docker
+
+```bash
+docker compose up -d --build        # VARIANT=cpu|cu126 for a defacing-capable image
+docker compose logs pixieveil       # one-time /setup code, then open :8070
+```
+
+See [INSTALL.md](INSTALL.md#docker) for image variants, GPU, volumes and upgrades.
 
 ## Configuration
 
@@ -430,7 +440,7 @@ The `/stats` response contains counters grouped into sections: **Processed**, **
 python pixieveil.py
 ```
 
-Stop with `Ctrl-C`. All services shut down gracefully with a 10-second timeout.
+Stop with `Ctrl-C`. All services shut down gracefully with a 10-second timeout. Under Docker the server starts with the container (`docker compose up -d`) and stops with `docker compose stop`.
 
 ## Supported DICOM SOP Classes
 

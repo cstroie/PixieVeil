@@ -5,6 +5,7 @@
 - Python 3.12+ (hard requirement — `install.py` gates on it, and defacing's `torch`/`nnUNetv2` wheels are pinned against it)
 - A DICOM-capable modality or test tool (e.g. `dcmtk`'s `storescu`/`echoscu`) to send images
 - Optional: an NVIDIA GPU + CUDA drivers, if you want defacing to run on GPU rather than CPU
+- Or, instead of Python: Docker with the Compose plugin (see [Docker](#docker) below)
 
 ## Install
 
@@ -235,25 +236,84 @@ and `UNINSTALL.md`.
 
 ## Docker
 
+An alternative to `./install` + systemd/OpenRC: the repo ships a `Dockerfile`,
+`docker-compose.yml` and a GPU override. Nothing needs to be installed on the
+host besides Docker (and, for GPU defacing, the NVIDIA Container Toolkit).
+
 ```bash
+git clone https://github.com/cstroie/PixieVeil.git
+cd PixieVeil
 docker compose up -d --build                 # slim image, defacing off
-VARIANT=cpu  docker compose up -d --build    # + nnU-Net (CPU torch)
-docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build   # CUDA 12 (NVIDIA Container Toolkit)
 docker compose logs pixieveil                # one-time /setup code
 ```
 
-Dashboard on `:8070`, DICOM C-STORE on `:4070`. State lives in two named
-volumes: `pixieveil-config` (`/app/config` — settings, users, protocols,
-session secret) and `pixieveil-data` (`/app/data` — studies, export, logs,
-nnU-Net model). Neither is baked into the image. First run goes through the
-`/setup` wizard. For defacing, download the model once into the volume:
+Then open `http://<host>:8070/` and complete the `/setup` wizard with that code.
+
+### Image variants
+
+Chosen at build time with the `VARIANT` build argument (the torch pins mirror
+`install.py`):
+
+| `VARIANT` | Contents | How |
+|---|---|---|
+| `none` (default) | PixieVeil only, no defacing | `docker compose up -d --build` |
+| `cpu` | + nnU-Net with CPU torch | `VARIANT=cpu docker compose up -d --build` |
+| `cu118` / `cu126` / `cu130` | + nnU-Net with CUDA torch | `VARIANT=cu126 docker compose up -d --build` |
+
+For GPU use, build a `cuXYZ` variant and add the override (reserves all NVIDIA
+GPUs; needs the NVIDIA Container Toolkit on the host):
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build
+```
+
+If CUDA isn't visible inside the container, the defacer falls back to CPU on
+its own (see the log at startup).
+
+### Ports and volumes
+
+| Port | Purpose |
+|---|---|
+| 4070 | DICOM C-STORE / C-ECHO — point the modality here (match `dicom_server.port` and AE title) |
+| 8070 | Dashboard |
+
+If you change `dicom_server.port` or `http_server.port` in settings, change the
+published ports in `docker-compose.yml` to match. Keep `ip: 0.0.0.0` inside the
+container.
+
+State lives in two named volumes, never in the image:
+
+- `pixieveil-config` → `/app/config`: `settings.yaml`, `users.yaml`, `protocols.yaml`, session secret. A fresh volume is seeded with the example files from the image.
+- `pixieveil-data` → `/app/data`: studies, export artifacts, logs, the nnU-Net model.
+
+To edit files directly on the host instead, replace a named volume with a bind
+mount (`./config:/app/config`) and `chown` it to UID 1000, which the container
+runs as.
+
+### Defacing
+
+Build a `cpu` or `cuXYZ` variant, enable defacing on `/settings` (or in
+`settings.yaml`), and fetch the model once into the data volume:
 
 ```bash
 docker compose exec pixieveil python install.py --download-model
 ```
 
+### Day to day
+
+```bash
+docker compose logs -f pixieveil                                  # follow logs
+docker compose exec pixieveil python -m pixieveil.auth add alice --admin   # manage users
+docker compose restart pixieveil                                  # restart (in-flight defacing is cancelled, then re-queued)
+docker compose up -d --build                                      # upgrade after git pull
+```
+
+`stop_grace_period` is 30 s so a stop cancels any running nnU-Net inference
+cleanly; studies not yet `ready` are re-queued on the next start.
+
 Behind a reverse proxy, forward the `Host` header (the dashboard's CSRF check
 compares it to `Origin`) and set `http_server.secure_cookies` only with TLS.
+The container's healthcheck polls `/health`.
 
 ## Log rotation
 

@@ -27,6 +27,23 @@ To download the model separately at any time:
 python install.py --download-model
 ```
 
+### Or: Docker
+
+No Python needed on the host:
+
+```bash
+git clone https://github.com/cstroie/PixieVeil
+cd PixieVeil
+docker compose up -d --build     # VARIANT=cpu / cu126 for defacing
+docker compose logs pixieveil    # shows the one-time setup code
+```
+
+Open `http://localhost:8070/`, finish the setup wizard, and skip ahead to
+"Send a test image" (DICOM port 4070 is already published). Settings, users and
+data live in the `pixieveil-config` / `pixieveil-data` volumes; edit settings on
+`/settings`, or `docker compose exec pixieveil python -m pixieveil.auth …` for
+users. Details: [INSTALL.md](INSTALL.md#docker).
+
 ## Minimum configuration
 
 Copy `config/settings.example.yaml` to `config/settings.yaml` and set at least the values below. Once the server runs, admins can change the RHYTHM connection, retention, series filter and defacing on the dashboard's **Settings** page instead ([SETTINGS.md](SETTINGS.md)).

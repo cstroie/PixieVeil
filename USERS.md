@@ -50,6 +50,7 @@ exists, re-running the installer doesn't ask again.
 python -m pixieveil.auth <command> …        # inside the venv
 ./pixieveil.sh users <command> …            # same thing via the control script
 sudo -u pixieveil ./pixieveil.sh users …    # system-wide install
+docker compose exec pixieveil python -m pixieveil.auth <command> …   # Docker
 ```
 
 | Command | Effect |

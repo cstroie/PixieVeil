@@ -4,6 +4,10 @@ PixieVeil/
 ├── install                         # Bootstrap: .python venv (python3.12) + pip install -e . + install.py;
 │                                   # also does systemd/openrc system-service setup
 ├── install.py                      # Interactive setup: torch/nnunetv2 install + model download
+├── Dockerfile                      # Container image (VARIANT build arg: none / cpu / cuXYZ)
+├── docker-compose.yml              # Ports 4070/8070 + config/data volumes
+├── docker-compose.gpu.yml          # NVIDIA GPU reservation override
+├── .dockerignore                   # Keeps settings/users/secrets out of the image
 ├── pixieveil.service               # systemd unit
 ├── pixieveil.openrc                # OpenRC init script (Alpine and others)
 ├── pyproject.toml
