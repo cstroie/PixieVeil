@@ -270,6 +270,19 @@ docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build
 If CUDA isn't visible inside the container, the defacer falls back to CPU on
 its own (see the log at startup).
 
+### Prebuilt image
+
+A CPU-defacing image is published to GitHub Container Registry by
+`.github/workflows/docker.yml` (on `v*` tags or a manual run):
+
+```bash
+docker pull ghcr.io/cstroie/pixieveil:cpu
+```
+
+To use it instead of building, replace `build:` in `docker-compose.yml` with
+`image: ghcr.io/cstroie/pixieveil:cpu`. Tags: `cpu` (latest), `<version>-cpu`,
+`<short-sha>-cpu`. CUDA images aren't prebuilt; build them locally.
+
 ### Ports and volumes
 
 | Port | Purpose |
