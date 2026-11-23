@@ -66,6 +66,14 @@ cd PixieVeil
 
 ### Docker
 
+A prebuilt CPU image (with nnU-Net defacing support) is published to GitHub Container Registry:
+
+```bash
+docker pull ghcr.io/cstroie/pixieveil:cpu
+```
+
+Or build it yourself with Compose:
+
 ```bash
 docker compose up -d --build        # VARIANT=cpu|cu126 for a defacing-capable image
 docker compose logs pixieveil       # one-time /setup code, then open :8070
