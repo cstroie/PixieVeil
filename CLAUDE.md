@@ -32,6 +32,9 @@ pip install -e .
 # needs install.py afterwards for a CUDA-matched torch build
 pip install -e ".[deface]"
 
+# Docker (Dockerfile, docker-compose[.gpu].yml; VARIANT=none|cpu|cu126) — see INSTALL.md
+docker compose up -d --build
+
 # Dashboard users (no web sign-up): add/passwd/list/disable/enable/delete/
 # admin/logout/token-add/token-list/token-revoke
 python -m pixieveil.auth add alice --admin

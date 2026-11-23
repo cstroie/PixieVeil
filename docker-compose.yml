@@ -1,0 +1,22 @@
+# docker compose up -d --build
+# Dashboard: http://localhost:8070  (setup code: docker compose logs pixieveil)
+# Defacing: build with  VARIANT=cpu  or  VARIANT=cu126  (see docker-compose.gpu.yml)
+services:
+  pixieveil:
+    build:
+      context: .
+      args:
+        VARIANT: ${VARIANT:-none}
+    image: pixieveil:${VARIANT:-none}
+    restart: unless-stopped
+    ports:
+      - "4070:4070"   # DICOM C-STORE (match dicom_server.port / modality config)
+      - "8070:8070"   # dashboard
+    volumes:
+      - pixieveil-config:/app/config
+      - pixieveil-data:/app/data
+    stop_grace_period: 30s   # let in-flight defacing be cancelled cleanly
+
+volumes:
+  pixieveil-config:
+  pixieveil-data:

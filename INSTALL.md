@@ -233,6 +233,28 @@ Re-running `./install systemd`/`openrc` is safe — it reuses the account if
 it already exists and just refreshes the venv, permissions, unit/init file,
 and `UNINSTALL.md`.
 
+## Docker
+
+```bash
+docker compose up -d --build                 # slim image, defacing off
+VARIANT=cpu  docker compose up -d --build    # + nnU-Net (CPU torch)
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build   # CUDA 12 (NVIDIA Container Toolkit)
+docker compose logs pixieveil                # one-time /setup code
+```
+
+Dashboard on `:8070`, DICOM C-STORE on `:4070`. State lives in two named
+volumes: `pixieveil-config` (`/app/config` — settings, users, protocols,
+session secret) and `pixieveil-data` (`/app/data` — studies, export, logs,
+nnU-Net model). Neither is baked into the image. First run goes through the
+`/setup` wizard. For defacing, download the model once into the volume:
+
+```bash
+docker compose exec pixieveil python install.py --download-model
+```
+
+Behind a reverse proxy, forward the `Host` header (the dashboard's CSRF check
+compares it to `Origin`) and set `http_server.secure_cookies` only with TLS.
+
 ## Log rotation
 
 `pixieveil.log` rotates itself (5 MB × 3). The anonymization trail

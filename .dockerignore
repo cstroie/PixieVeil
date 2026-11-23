@@ -1,0 +1,27 @@
+.git
+.gitmodules
+.python
+.venv*
+.mypy_cache
+.pytest_cache
+__pycache__
+*.egg-info
+.aider*
+.vscode
+.claude
+data
+examples
+reference
+tests
+*.log
+*.pid
+*.md.bak
+# secrets / local state must never enter the image
+config/settings.yaml
+config/users.yaml
+config/protocols.yaml
+config/rhythm_protocols.yaml
+config/.session_secret
+config/.setup_code
+config/.setup_complete
+config/*.bak*

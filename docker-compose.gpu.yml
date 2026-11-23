@@ -1,0 +1,14 @@
+# docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build
+# Needs the NVIDIA Container Toolkit on the host and VARIANT=cu126 (or cu118/cu130).
+services:
+  pixieveil:
+    build:
+      args:
+        VARIANT: ${VARIANT:-cu126}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
